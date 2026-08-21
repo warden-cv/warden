@@ -1,0 +1,67 @@
+<div id="login-view" class="auth-shell">
+  <div class="auth-glow"></div>
+  <section class="login-card">
+    <div class="brand brand-large"><span class="brand-mark">W</span><span>Warden</span></div>
+    <p class="eyebrow">Linux server console</p>
+    <h1>Your server.<br><span>Under watch.</span></h1>
+    <p class="login-copy">A private control surface for the machine you trust Warden to manage.</p>
+    <form id="login-form" autocomplete="on">
+      <label for="password">Administrator password</label>
+      <div class="password-row"><input id="password" name="password" type="password" autocomplete="current-password" required autofocus><button class="icon-button" type="button" id="toggle-password" aria-label="Show password">◉</button></div>
+      <button class="primary-button" type="submit">Unlock Warden <span>→</span></button>
+      <p id="login-error" class="form-error" role="alert"></p>
+    </form>
+    <div class="auth-foot"><span class="status-dot"></span><span>Secure session · no browser-stored credentials</span></div>
+  </section>
+</div>
+
+<div id="app-view" class="app-shell" hidden>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">W</span><span>Warden</span></div>
+    <nav class="nav-stack" aria-label="Primary">
+      <button class="nav-item active" data-view="monitor"><span class="nav-icon">◫</span><span>Overview</span></button>
+      <button class="nav-item" data-view="files"><span class="nav-icon">⌁</span><span>Files</span></button>
+      <button class="nav-item" data-view="terminal"><span class="nav-icon">›_</span><span>Terminal</span></button>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="server-pill"><span class="status-dot"></span><div><strong id="side-host">Server</strong><small id="side-uptime">Connecting…</small></div></div>
+      <button id="logout" class="nav-item muted"><span class="nav-icon">↪</span><span>Sign out</span></button>
+    </div>
+  </aside>
+
+  <main class="workspace">
+    <header class="topbar">
+      <div><p class="eyebrow" id="section-kicker">Live system</p><h2 id="section-title">Overview</h2></div>
+      <div class="topbar-actions"><span id="clock" class="clock"></span><span class="version-chip" id="version-chip">v0.1.0</span></div>
+    </header>
+
+    <section class="view active" id="view-monitor">
+      <div class="hero-metrics">
+        <article class="metric-card primary-metric"><div class="metric-head"><span>CPU</span><span class="metric-tag">LIVE</span></div><strong id="cpu-value">0%</strong><p id="load-value">Load 0.00</p><canvas id="cpu-chart"></canvas></article>
+        <article class="metric-card"><div class="metric-head"><span>Memory</span><span>RAM</span></div><strong id="mem-value">—</strong><p id="mem-detail">— of —</p><div class="radial"><svg viewBox="0 0 120 120"><circle class="radial-track" cx="60" cy="60" r="51"/><circle id="mem-ring" class="radial-value" cx="60" cy="60" r="51"/></svg><span id="mem-percent">0%</span></div></article>
+        <article class="metric-card"><div class="metric-head"><span>Storage</span><span>ROOT</span></div><strong id="disk-value">—</strong><p id="disk-detail">— of —</p><div class="radial"><svg viewBox="0 0 120 120"><circle class="radial-track" cx="60" cy="60" r="51"/><circle id="disk-ring" class="radial-value disk" cx="60" cy="60" r="51"/></svg><span id="disk-percent">0%</span></div></article>
+      </div>
+      <div class="monitor-grid">
+        <article class="panel graph-panel"><div class="panel-head"><div><p class="eyebrow">Activity</p><h3>System pressure</h3></div><div class="legend"><span><i class="legend-cpu"></i>CPU</span><span><i class="legend-load"></i>Load</span></div></div><canvas id="system-chart"></canvas></article>
+        <article class="panel system-panel"><div class="panel-head"><div><p class="eyebrow">Machine</p><h3>At a glance</h3></div><span class="online-badge">● Online</span></div><dl class="system-list"><div><dt>Hostname</dt><dd id="host-value">—</dd></div><div><dt>Uptime</dt><dd id="uptime-value">—</dd></div><div><dt>Processes</dt><dd id="proc-value">—</dd></div><div><dt>Load average</dt><dd id="loads-value">—</dd></div><div><dt>Warden runtime</dt><dd id="goroutine-value">—</dd></div></dl></article>
+      </div>
+    </section>
+
+    <section class="view" id="view-files">
+      <div class="files-toolbar panel"><div class="crumbs" id="breadcrumbs"></div><div class="toolbar-actions"><input type="file" id="upload-input" hidden><button id="upload-button" class="secondary-button">↑ Upload</button><button id="new-folder" class="secondary-button">＋ Folder</button><button id="new-file" class="primary-small">＋ File</button></div></div>
+      <div class="file-layout">
+        <article class="panel file-browser"><div class="file-head"><span>Name</span><span>Size</span><span>Modified</span><span></span></div><div id="file-list" class="file-list"></div></article>
+        <article class="panel editor-panel" id="editor-panel">
+          <div class="editor-head"><div><p class="eyebrow">Editor</p><h3 id="editor-name">Select a file</h3></div><div class="editor-actions"><span id="editor-status" class="editor-status">No file open</span><button id="download-file" class="icon-button" title="Download" disabled>↓</button><button id="save-file" class="primary-small" disabled>Save</button></div></div>
+          <div class="editor-tabs"><span id="editor-path">Choose a text file from the explorer.</span><span id="editor-language"></span></div>
+          <div class="code-editor" id="code-editor"><pre id="highlight-layer" aria-hidden="true"><code></code></pre><textarea id="editor" spellcheck="false" disabled aria-label="File editor"></textarea></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="view" id="view-terminal">
+      <article class="panel terminal-shell"><div class="terminal-head"><div><span class="terminal-dot red"></span><span class="terminal-dot amber"></span><span class="terminal-dot green"></span><strong>warden@<span id="terminal-host">server</span></strong></div><div><span id="terminal-state" class="terminal-state">Disconnected</span><button id="terminal-reconnect" class="secondary-button">Reconnect</button></div></div><div class="terminal-body" id="terminal-output" tabindex="0"><pre></pre><textarea id="terminal-input" aria-label="Terminal input" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea></div><div class="terminal-foot"><span>Interactive PTY · authenticated WebSocket</span><span>Click terminal to focus</span></div></article>
+    </section>
+  </main>
+</div>
+<div id="toast-root" aria-live="polite"></div>

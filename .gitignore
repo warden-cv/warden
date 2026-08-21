@@ -1,0 +1,4 @@
+/warden
+/warden-audit.log
+*.tmp
+.DS_Store
