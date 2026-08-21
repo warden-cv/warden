@@ -386,3 +386,14 @@ textarea.editor-surface:not(:disabled){cursor:text}
 /* Structured admin mutations */
 .admin-toolbar{display:flex;align-items:center;gap:7px;margin:0 0 10px}.admin-form{display:flex;align-items:flex-end;gap:10px;margin:0 0 14px;padding:12px;border:1px solid var(--line);border-radius:8px;background:#1b1c1d}.admin-form-fields{display:flex;align-items:end;gap:10px;flex:1;min-width:0}.admin-form label{display:grid;gap:5px;min-width:140px;flex:1}.admin-form label>span{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}.admin-form input,.admin-form select{height:34px;min-width:0;border:1px solid #3a3b3c;border-radius:6px;background:#151617;color:#e4e5e5;padding:0 10px;font:11px var(--sans);outline:none}.admin-form input:focus,.admin-form select:focus{border-color:#59605b;box-shadow:0 0 0 2px rgba(78,203,113,.08)}.admin-form-actions{display:flex;gap:7px;align-items:center}.admin-actions{display:flex;gap:5px;flex-wrap:wrap;align-items:center}.admin-action{height:27px;padding:0 8px;border:1px solid #444;border-radius:5px;background:#242526;color:#c9cbcb;font:9px var(--sans);cursor:pointer;white-space:nowrap}.admin-action:hover{background:#2d2f2f;border-color:#555}.admin-action.danger{color:#e6a0a0;border-color:#5a3a3a;background:#251d1d}.admin-action.danger:hover{background:#312121;border-color:#704545}.admin-table.cols-4 .admin-table-head,.admin-table.cols-4 .admin-table-row{grid-template-columns:minmax(190px,1.25fr) minmax(130px,.75fr) minmax(150px,.9fr) minmax(230px,1.15fr)}
 @media(max-width:1100px){.admin-form{align-items:stretch;flex-direction:column}.admin-form-fields{flex-wrap:wrap}.admin-table.cols-4 .admin-table-head,.admin-table.cols-4 .admin-table-row{grid-template-columns:minmax(170px,1.1fr) minmax(120px,.7fr) minmax(140px,.8fr) minmax(200px,1fr)}}
+
+/* Checkpoint 8: keep the editor empty state anchored while the tree grows. */
+.editor-main{height:100%;overflow:hidden}
+.code-editor{height:100%;min-height:0}
+.editor-placeholder{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:72px}
+
+/* Scope filters for long service/account lists. */
+.admin-scope-toggle{display:inline-flex;gap:2px;margin:0 0 12px;padding:3px;border:1px solid var(--line);border-radius:7px;background:#1b1c1d}
+.admin-scope-toggle button{border:0;border-radius:5px;padding:6px 10px;background:transparent;color:var(--muted);font-size:10px;font-weight:650;cursor:pointer}
+.admin-scope-toggle button:hover{color:#fff;background:#252627}
+.admin-scope-toggle button.active{background:#303132;color:#fff}

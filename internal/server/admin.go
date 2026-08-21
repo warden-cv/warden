@@ -59,11 +59,11 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 	case "firewall":
 		env = collectFirewall()
 	case "services":
-		env = collectServices()
+		env = collectServices(r.URL.Query().Get("scope"))
 	case "ssh":
 		env = collectSSH()
 	case "users":
-		env = collectUsers()
+		env = collectUsers(r.URL.Query().Get("scope"))
 	default:
 		http.NotFound(w, r)
 		return
@@ -340,17 +340,29 @@ func collectFirewall() adminEnvelope {
 	return adminEnvelope{Kind: "firewall", Available: true, Data: map[string]any{"status": status, "rules": rows}}
 }
 
-func collectServices() adminEnvelope {
+func collectServices(scope string) adminEnvelope {
 	type service struct {
 		Name        string `json:"name"`
 		Load        string `json:"load"`
 		Active      string `json:"active"`
 		Sub         string `json:"sub"`
 		Description string `json:"description"`
+		Scope       string `json:"scope"`
 	}
-	out, err := fixedCommand(3*time.Second, "systemctl", "list-units", "--type=service", "--all", "--no-pager", "--no-legend", "--plain")
+	if scope != "user" {
+		scope = "system"
+	}
+	args := []string{"list-units", "--type=service", "--all", "--no-pager", "--no-legend", "--plain"}
+	if scope == "user" {
+		args = append([]string{"--user"}, args...)
+	}
+	out, err := fixedCommand(3*time.Second, "systemctl", args...)
 	if err != nil {
-		return adminEnvelope{Kind: "services", Available: false, Message: "systemd services are not available."}
+		msg := "systemd services are not available."
+		if scope == "user" {
+			msg = "The current user's systemd service manager is not available."
+		}
+		return adminEnvelope{Kind: "services", Available: false, Message: msg, Data: map[string]any{"scope": scope}}
 	}
 	rows := []service{}
 	for _, line := range strings.Split(string(out), "\n") {
@@ -358,12 +370,12 @@ func collectServices() adminEnvelope {
 		if len(fields) < 5 {
 			continue
 		}
-		rows = append(rows, service{Name: fields[0], Load: fields[1], Active: fields[2], Sub: fields[3], Description: strings.Join(fields[4:], " ")})
+		rows = append(rows, service{Name: fields[0], Load: fields[1], Active: fields[2], Sub: fields[3], Description: strings.Join(fields[4:], " "), Scope: scope})
 	}
 	if len(rows) > 300 {
 		rows = rows[:300]
 	}
-	return adminEnvelope{Kind: "services", Available: true, Data: map[string]any{"services": rows}}
+	return adminEnvelope{Kind: "services", Available: true, Data: map[string]any{"services": rows, "scope": scope}}
 }
 
 func collectSSH() adminEnvelope {
@@ -400,15 +412,38 @@ func collectSSH() adminEnvelope {
 	return adminEnvelope{Kind: "ssh", Available: true, Data: map[string]any{"active": active, "settings": settings}}
 }
 
-func collectUsers() adminEnvelope {
-	type userRow struct {
-		Name  string `json:"name"`
-		UID   int    `json:"uid"`
-		GID   int    `json:"gid"`
-		Home  string `json:"home"`
-		Shell string `json:"shell"`
-		Login bool   `json:"login"`
+func loginUIDMin() int {
+	f, err := os.Open("/etc/login.defs")
+	if err != nil {
+		return 1000
 	}
+	defer f.Close()
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		fields := strings.Fields(s.Text())
+		if len(fields) >= 2 && fields[0] == "UID_MIN" {
+			if n, err := strconv.Atoi(fields[1]); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 1000
+}
+
+func collectUsers(scope string) adminEnvelope {
+	type userRow struct {
+		Name   string `json:"name"`
+		UID    int    `json:"uid"`
+		GID    int    `json:"gid"`
+		Home   string `json:"home"`
+		Shell  string `json:"shell"`
+		Login  bool   `json:"login"`
+		System bool   `json:"system"`
+	}
+	if scope != "system" {
+		scope = "regular"
+	}
+	uidMin := loginUIDMin()
 	b, err := os.ReadFile("/etc/passwd")
 	if err != nil {
 		return adminEnvelope{Kind: "users", Available: false, Message: "/etc/passwd is not readable."}
@@ -423,9 +458,16 @@ func collectUsers() adminEnvelope {
 		gid, _ := strconv.Atoi(f[3])
 		sh := f[6]
 		login := sh != "/usr/sbin/nologin" && sh != "/bin/false" && sh != "/usr/bin/nologin"
-		rows = append(rows, userRow{Name: f[0], UID: uid, GID: gid, Home: f[5], Shell: sh, Login: login})
+		system := uid < uidMin
+		if scope == "regular" && system {
+			continue
+		}
+		if scope == "system" && !system {
+			continue
+		}
+		rows = append(rows, userRow{Name: f[0], UID: uid, GID: gid, Home: f[5], Shell: sh, Login: login, System: system})
 	}
-	return adminEnvelope{Kind: "users", Available: true, Data: map[string]any{"users": rows}}
+	return adminEnvelope{Kind: "users", Available: true, Data: map[string]any{"users": rows, "scope": scope, "uidMin": uidMin}}
 }
 
 func fixedCommand(timeout time.Duration, name string, args ...string) ([]byte, error) {
@@ -454,6 +496,7 @@ type adminActionRequest struct {
 	Schedule   string `json:"schedule,omitempty"`
 	Command    string `json:"command,omitempty"`
 	Password   string `json:"password,omitempty"`
+	Scope      string `json:"scope,omitempty"`
 	RemoveHome bool   `json:"removeHome,omitempty"`
 }
 
@@ -673,7 +716,13 @@ func actionService(q adminActionRequest) (string, error) {
 	default:
 		return "", errors.New("unsupported service action")
 	}
-	out, err := fixedCommand(12*time.Second, "systemctl", q.Action, q.Name)
+	args := []string{q.Action, q.Name}
+	if q.Scope == "user" {
+		args = append([]string{"--user"}, args...)
+	} else if q.Scope != "" && q.Scope != "system" {
+		return "", errors.New("invalid service scope")
+	}
+	out, err := fixedCommand(12*time.Second, "systemctl", args...)
 	if err != nil {
 		return "", commandError("service action failed", out, err)
 	}

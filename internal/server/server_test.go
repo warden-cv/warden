@@ -210,6 +210,16 @@ func TestServiceActionUsesStructuredArguments(t *testing.T) {
 	if string(got) != "restart\nnginx.service\n" {
 		t.Fatalf("args=%q", got)
 	}
+	if _, err := actionService(adminActionRequest{Action: "restart", Name: "pipewire.service", Scope: "user"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "--user\nrestart\npipewire.service\n" {
+		t.Fatalf("user args=%q", got)
+	}
 	if _, err := actionService(adminActionRequest{Action: "restart", Name: "nginx.service;touch-pwned"}); err == nil {
 		t.Fatal("unsafe service name accepted")
 	}
