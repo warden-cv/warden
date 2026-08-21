@@ -22,6 +22,36 @@ type fileEntry struct {
 	Modified int64  `json:"modified"`
 }
 
+func (f *fileAPI) startPath(home string) string {
+	if home == "" {
+		return "/"
+	}
+	abs, err := filepath.Abs(home)
+	if err != nil {
+		return "/"
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "/"
+	}
+	rel, err := filepath.Rel(f.root, real)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "/"
+	}
+	if rel == "." {
+		return "/"
+	}
+	return "/" + filepath.ToSlash(rel)
+}
+func (f *fileAPI) shellStart(home string) string {
+	start := f.startPath(home)
+	if start == "/" {
+		return f.root
+	}
+	return filepath.Join(f.root, filepath.FromSlash(strings.TrimPrefix(start, "/")))
+}
+func (f *fileAPI) virtualRootLabel() string { return f.root }
+
 func newFiles(root string) (*fileAPI, error) {
 	abs, e := filepath.Abs(root)
 	if e != nil {

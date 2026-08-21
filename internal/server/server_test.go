@@ -156,3 +156,36 @@ func TestZipCompressAndSafeExtract(t *testing.T) {
 		t.Fatalf("extracted=%q", b)
 	}
 }
+
+func TestFileStartPrefersHomeWithinRoot(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home", "alice")
+	if err := os.MkdirAll(home, 0750); err != nil {
+		t.Fatal(err)
+	}
+	f, err := newFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.startPath(home); got != "/home/alice" {
+		t.Fatalf("startPath=%q want /home/alice", got)
+	}
+	if got := f.shellStart(home); got != home {
+		t.Fatalf("shellStart=%q want %q", got, home)
+	}
+}
+
+func TestFileStartFallsBackToConfiguredRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	f, err := newFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.startPath(outside); got != "/" {
+		t.Fatalf("startPath=%q want /", got)
+	}
+	if got := f.shellStart(outside); got != root {
+		t.Fatalf("shellStart=%q want %q", got, root)
+	}
+}

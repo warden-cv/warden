@@ -34,7 +34,7 @@ func main() {
 	}
 	fs := flag.NewFlagSet("warden", flag.ExitOnError)
 	listen := fs.String("listen", env("WARDEN_LISTEN", "127.0.0.1:8080"), "listen address")
-	root := fs.String("root", env("WARDEN_FILE_ROOT", "/"), "filesystem root exposed by Warden")
+	root := fs.String("root", env("WARDEN_FILE_ROOT", "/"), "filesystem root exposed by Warden file APIs (terminal is not sandboxed by this)")
 	static := fs.String("static", env("WARDEN_STATIC_DIR", "public"), "Nift-built frontend directory")
 	fs.Parse(os.Args[1:])
 	pass := os.Getenv("WARDEN_PASSWORD_HASH")
@@ -42,7 +42,7 @@ func main() {
 		fatal(errors.New("WARDEN_PASSWORD_HASH is required; run `warden hash-password <password>`"))
 	}
 	secureDefault := !isLoopbackListen(*listen)
-	cfg := server.Config{Listen: *listen, FileRoot: *root, StaticDir: *static, PasswordHash: pass, Version: version, SecureCookies: envBool("WARDEN_SECURE_COOKIES", secureDefault), TrustProxy: envBool("WARDEN_TRUST_PROXY", false)}
+	cfg := server.Config{Listen: *listen, FileRoot: *root, HomeDir: home(), StaticDir: *static, PasswordHash: pass, Version: version, SecureCookies: envBool("WARDEN_SECURE_COOKIES", secureDefault), TrustProxy: envBool("WARDEN_TRUST_PROXY", false)}
 	if err := server.Run(cfg); err != nil {
 		fatal(err)
 	}

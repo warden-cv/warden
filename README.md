@@ -35,10 +35,10 @@ Then run Warden:
 
 ```sh
 export WARDEN_PASSWORD_HASH='pbkdf2-sha256$...'
-./warden --root /
+./warden
 ```
 
-Open `http://127.0.0.1:8080`. The default filesystem boundary is `/`; use `--root /some/subtree` (or `WARDEN_FILE_ROOT`) when you intentionally want a narrower view.
+Open `http://127.0.0.1:8080`. Explorer and Terminal start in the server user's home directory, while the default Explorer/Editor filesystem boundary remains `/`, so the root breadcrumb can navigate to the whole machine. Use `--root /some/subtree` (or `WARDEN_FILE_ROOT`) when you intentionally want a narrower **file-management** view. This does not sandbox the PTY shell; terminal privilege must be controlled separately when Warden gains user/role levels.
 
 Warden binds to loopback by default. Loopback development automatically uses a non-Secure session cookie so plain `http://127.0.0.1` works correctly. Non-loopback listeners default to Secure cookies; behind an HTTPS reverse proxy set `WARDEN_SECURE_COOKIES=true` explicitly.
 
@@ -51,7 +51,8 @@ Warden is intentionally a privileged application. This first slice establishes r
 - state-changing API calls require a per-session CSRF token;
 - authentication attempts are rate-limited per client address;
 - WebSocket terminal upgrade requires an authenticated session, matching Origin and CSRF token;
-- every filesystem path is resolved inside one configured root, including symlink resolution;
+- every Explorer/Editor filesystem path is resolved inside one configured file-management root, including symlink resolution;
+- that file root is not misrepresented as a terminal sandbox: the PTY runs with the Warden process user's OS authority;
 - editor saves are temporary-file + fsync + atomic rename and preserve existing mode bits;
 - privileged actions are written to `warden-audit.log` with mode `0600`;
 - static responses receive restrictive CSP/frame/referrer/content-type headers.
@@ -60,4 +61,4 @@ This is not yet a completed security audit. Before an Internet-facing release, W
 
 ## Product direction
 
-Warden v1 focuses on authenticated monitoring, a full filesystem explorer, workspace-oriented code/text editing, and an interactive PTY terminal. Planned later administration modules include certificates, cron, Docker, fail2ban, firewall, services, SSH, users and website management.
+Warden v1 focuses on authenticated monitoring, a full filesystem explorer, workspace-oriented code/text editing, and an interactive PTY terminal. The sidebar now also contains first structured, read-oriented administration pages for certificates, cron, Docker, fail2ban, firewall, services, SSH and users. These pages intentionally present typed state rather than raw command output; privileged mutations will be added only after their authority and failure guarantees are designed. Website management remains a later module.

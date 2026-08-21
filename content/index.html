@@ -18,6 +18,12 @@
       <button class="nav-item" data-view="explorer"><span class="nav-icon">⌁</span><span>Explorer</span></button>
       <button class="nav-item" data-view="editor"><span class="nav-icon">⌘</span><span>Editor</span></button>
       <button class="nav-item" data-view="terminal"><span class="nav-icon">›_</span><span>Terminal</span></button>
+      <div class="nav-group">
+        <button class="nav-item nav-group-toggle" id="system-menu-toggle" aria-expanded="false"><span class="nav-icon">◆</span><span>System</span><span class="nav-chevron">▸</span></button>
+        <div class="nav-submenu" id="system-menu" hidden>
+          <button class="nav-subitem" data-admin="certs">Certificates</button><button class="nav-subitem" data-admin="cron">Cron jobs</button><button class="nav-subitem" data-admin="docker">Docker</button><button class="nav-subitem" data-admin="fail2ban">Fail2ban</button><button class="nav-subitem" data-admin="firewall">Firewall</button><button class="nav-subitem" data-admin="services">Services</button><button class="nav-subitem" data-admin="ssh">SSH</button><button class="nav-subitem" data-admin="users">Users</button>
+        </div>
+      </div>
     </nav>
     <div class="sidebar-foot">
       <div class="server-pill"><span class="status-dot"></span><div><strong id="side-host">Server</strong><small id="side-uptime">Connecting…</small></div></div>
@@ -58,7 +64,7 @@
 
     <section class="view" id="view-explorer">
       <div class="explorer-shell panel">
-        <div class="files-toolbar"><div class="crumbs" id="breadcrumbs"></div><div class="toolbar-actions"><div id="selection-actions" class="selection-actions"><span class="selection-count"><span id="selected-count">0</span> selected</span><button data-bulk="download">Download</button><button data-bulk="compress">Compress</button><button data-bulk="extract">Extract</button><button data-bulk="copy">Copy</button><button data-bulk="move">Move</button><button data-bulk="delete" class="danger-text">Delete</button><button id="clear-selection" title="Clear selection">×</button></div><input type="file" id="upload-input" hidden><button id="upload-button" class="secondary-button">↑ Upload</button><button id="new-folder" class="secondary-button">＋ Folder</button><button id="new-file" class="primary-small">＋ File</button></div></div>
+        <div class="files-toolbar"><div class="crumb-area"><div class="crumbs" id="breadcrumbs"></div><button id="explorer-home" class="path-jump" title="Home directory">⌂ Home</button></div><div class="toolbar-actions"><div id="selection-actions" class="selection-actions"><span class="selection-count"><span id="selected-count">0</span> selected</span><button data-bulk="download">Download</button><button data-bulk="compress">Compress</button><button data-bulk="extract">Extract</button><button data-bulk="copy">Copy</button><button data-bulk="move">Move</button><button data-bulk="delete" class="danger-text">Delete</button><button id="clear-selection" title="Clear selection">×</button></div><input type="file" id="upload-input" hidden><button id="upload-button" class="secondary-button">↑ Upload</button><button id="new-folder" class="secondary-button">＋ Folder</button><button id="new-file" class="primary-small">＋ File</button></div></div>
         <div class="file-head"><span class="check-col"><input id="select-all-files" type="checkbox" aria-label="Select all"></span><span>Name</span><span>Size</span><span>Modified</span><span></span></div>
         <div id="file-list" class="file-list"></div>
       </div>
@@ -88,6 +94,12 @@
       </div>
     </section>
 
+    <section class="view" id="view-admin">
+      <div class="admin-page panel">
+        <div class="admin-page-head"><div><p class="eyebrow" id="admin-eyebrow">System</p><h3 id="admin-heading">System</h3><p id="admin-description">Structured server administration.</p></div><button id="admin-refresh" class="secondary-button compact">↻ Refresh</button></div>
+        <div id="admin-content" class="admin-content"><div class="admin-loading">Choose a system page from the sidebar.</div></div>
+      </div>
+    </section>
     <section class="view" id="view-terminal">
       <article class="panel terminal-shell"><div class="terminal-head"><div><span class="terminal-dot red"></span><span class="terminal-dot amber"></span><span class="terminal-dot green"></span><strong>warden@<span id="terminal-host">server</span></strong></div><div><span id="terminal-state" class="terminal-state">Disconnected</span><button id="terminal-reconnect" class="secondary-button compact">Reconnect</button></div></div><div class="terminal-body" id="terminal-output" tabindex="0"><pre id="terminal-screen"></pre><textarea id="terminal-input" aria-label="Terminal input" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea></div><div class="terminal-foot"><span>Interactive PTY · authenticated WebSocket</span><span>Click terminal to focus</span></div></article>
     </section>

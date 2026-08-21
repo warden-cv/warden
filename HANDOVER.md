@@ -319,3 +319,13 @@ Terminal output is a PTY stream and should preserve terminal semantics where War
 ### Post-v1 administration roadmap
 
 Once Auth, Monitor, Explorer, Editor and Terminal are mature and security-tested, planned administration areas include certificates, cron jobs, Docker, fail2ban, firewall, services, SSH, user management and websites. Add these as focused modules rather than turning v1 into a shallow collection of panels.
+
+
+## Warden-specific architecture notes — system pages
+
+- Explorer and Terminal should start in the server user's home directory for normal UX.
+- The default Explorer/Editor filesystem boundary is `/`, so users with full file authority can navigate from home to root. `--root` / `WARDEN_FILE_ROOT` may narrow the file-management boundary.
+- Do **not** describe `--root` as a terminal sandbox. The PTY runs with the OS authority of the Warden process user and can leave its starting directory. Future Warden role/user levels must explicitly control terminal authority.
+- In both Explorer and Editor, clicking a directory name navigates into it; clicking its chevron expands/collapses it inline.
+- The System submenu contains structured read-oriented pages for Certificates, Cron jobs, Docker, Fail2ban, Firewall, Services, SSH and Users. Prefer typed fields, tables, state pills, summaries and deliberate actions over dumping command stdout into a textarea.
+- Treat mutations in those system modules as privileged product guarantees. Add them only with explicit authorization semantics, controlled failures, audit events and adversarial tests.

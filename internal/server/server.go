@@ -14,8 +14,8 @@ import (
 )
 
 type Config struct {
-	Listen, FileRoot, StaticDir, PasswordHash, Version string
-	SecureCookies, TrustProxy                          bool
+	Listen, FileRoot, HomeDir, StaticDir, PasswordHash, Version string
+	SecureCookies, TrustProxy                                   bool
 }
 type app struct {
 	cfg   Config
@@ -48,6 +48,7 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/files/extract", a.protect(a.extract))
 	mux.HandleFunc("/api/workspace/search", a.protect(a.workspaceSearch))
 	mux.HandleFunc("/api/workspace/replace", a.protect(a.workspaceReplace))
+	mux.HandleFunc("/api/admin/", a.protect(a.admin))
 	mux.HandleFunc("/api/terminal", a.terminal)
 	mux.Handle("/", http.FileServer(http.Dir(cfg.StaticDir)))
 	srv := &http.Server{Addr: cfg.Listen, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second}
@@ -73,7 +74,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.audit.Printf("auth_login ip=%s", clientIP(r))
-	jsonOut(w, map[string]any{"ok": true, "csrf": csrf, "version": a.cfg.Version})
+	jsonOut(w, a.sessionPayload(csrf))
 }
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 	a.auth.logout(w, r)
@@ -86,8 +87,17 @@ func (a *app) session(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", 401)
 		return
 	}
-	jsonOut(w, map[string]any{"ok": true, "csrf": s.CSRF, "version": a.cfg.Version})
+	jsonOut(w, a.sessionPayload(s.CSRF))
 }
+func (a *app) sessionPayload(csrf string) map[string]any {
+	return map[string]any{
+		"ok": true, "csrf": csrf, "version": a.cfg.Version,
+		"fileStart":     a.files.startPath(a.cfg.HomeDir),
+		"fileRoot":      a.files.virtualRootLabel(),
+		"terminalStart": a.files.shellStart(a.cfg.HomeDir),
+	}
+}
+
 func (a *app) monitor(w http.ResponseWriter, r *http.Request)   { jsonOut(w, monitor(a.files.root)) }
 func (a *app) listFiles(w http.ResponseWriter, r *http.Request) { a.files.list(w, r) }
 func (a *app) file(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +144,7 @@ func (a *app) terminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.audit.Printf("terminal_open ip=%s", clientIP(r))
-	if e := servePTY(w, r, a.files.root); e != nil {
+	if e := servePTY(w, r, a.files.shellStart(a.cfg.HomeDir)); e != nil {
 		a.audit.Printf("terminal_error ip=%s err=%q", clientIP(r), e)
 	}
 }
