@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -40,7 +41,8 @@ func main() {
 	if pass == "" {
 		fatal(errors.New("WARDEN_PASSWORD_HASH is required; run `warden hash-password <password>`"))
 	}
-	cfg := server.Config{Listen: *listen, FileRoot: *root, StaticDir: *static, PasswordHash: pass, Version: version, SecureCookies: envBool("WARDEN_SECURE_COOKIES", true), TrustProxy: envBool("WARDEN_TRUST_PROXY", false)}
+	secureDefault := !isLoopbackListen(*listen)
+	cfg := server.Config{Listen: *listen, FileRoot: *root, StaticDir: *static, PasswordHash: pass, Version: version, SecureCookies: envBool("WARDEN_SECURE_COOKIES", secureDefault), TrustProxy: envBool("WARDEN_TRUST_PROXY", false)}
 	if err := server.Run(cfg); err != nil {
 		fatal(err)
 	}
@@ -57,6 +59,14 @@ func env(k, d string) string {
 		return v
 	}
 	return d
+}
+func isLoopbackListen(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 func envBool(k string, d bool) bool {
 	v := os.Getenv(k)

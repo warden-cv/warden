@@ -6,8 +6,8 @@ Warden is a dark, security-first web console for Linux servers. Nift owns the fr
 
 - Secure session login with rate limiting, CSRF protection and audit events.
 - Live Linux monitor backed by `/proc` and `statfs`, with browser-rendered history graphs.
-- Confined file explorer with create/delete/rename/copy/move/upload/download.
-- Integrated syntax-highlighting text editor with atomic saves and permission preservation.
+- Dedicated file explorer with size/modified columns, multi-select operations and create/delete/rename/copy/move/upload/download.
+- Separate VS Code-style editor workspace with its own file browser, multi-file tabs, syntax highlighting, atomic saves and permission preservation.
 - Interactive Linux PTY over an authenticated WebSocket.
 - Dark mode only by design.
 
@@ -35,14 +35,12 @@ Then run Warden:
 
 ```sh
 export WARDEN_PASSWORD_HASH='pbkdf2-sha256$...'
-# Local development over HTTP needs Secure cookies disabled explicitly.
-export WARDEN_SECURE_COOKIES=false
 ./warden --root "$HOME"
 ```
 
 Open `http://127.0.0.1:8080`.
 
-For a real deployment, keep secure cookies enabled and place Warden behind HTTPS (or terminate TLS directly in a later deployment slice). Warden binds to loopback by default.
+Warden binds to loopback by default. Loopback development automatically uses a non-Secure session cookie so plain `http://127.0.0.1` works correctly. Non-loopback listeners default to Secure cookies; behind an HTTPS reverse proxy set `WARDEN_SECURE_COOKIES=true` explicitly.
 
 ## Security boundary in this slice
 

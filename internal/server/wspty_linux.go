@@ -54,7 +54,7 @@ func servePTY(w http.ResponseWriter, r *http.Request, cwd string) error {
 	cmd.Stdout = slave
 	cmd.Stderr = slave
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: int(slave.Fd())}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	if e = cmd.Start(); e != nil {
 		return e
 	}

@@ -1,17 +1,12 @@
 <div id="login-view" class="auth-shell">
-  <div class="auth-glow"></div>
   <section class="login-card">
-    <div class="brand brand-large"><span class="brand-mark">W</span><span>Warden</span></div>
-    <p class="eyebrow">Linux server console</p>
-    <h1>Your server.<br><span>Under watch.</span></h1>
-    <p class="login-copy">A private control surface for the machine you trust Warden to manage.</p>
+    <div class="brand brand-login"><span class="brand-mark">W</span><span>Warden</span></div>
+    <h1>Unlock Warden</h1>
     <form id="login-form" autocomplete="on">
-      <label for="password">Administrator password</label>
-      <div class="password-row"><input id="password" name="password" type="password" autocomplete="current-password" required autofocus><button class="icon-button" type="button" id="toggle-password" aria-label="Show password">◉</button></div>
-      <button class="primary-button" type="submit">Unlock Warden <span>→</span></button>
+      <div class="password-row"><input id="password" name="password" type="password" placeholder="Password" autocomplete="current-password" required autofocus><button class="icon-button" type="button" id="toggle-password" aria-label="Show password">◉</button></div>
+      <button class="primary-button" type="submit">Unlock</button>
       <p id="login-error" class="form-error" role="alert"></p>
     </form>
-    <div class="auth-foot"><span class="status-dot"></span><span>Secure session · no browser-stored credentials</span></div>
   </section>
 </div>
 
@@ -20,7 +15,8 @@
     <div class="brand"><span class="brand-mark">W</span><span>Warden</span></div>
     <nav class="nav-stack" aria-label="Primary">
       <button class="nav-item active" data-view="monitor"><span class="nav-icon">◫</span><span>Overview</span></button>
-      <button class="nav-item" data-view="files"><span class="nav-icon">⌁</span><span>Files</span></button>
+      <button class="nav-item" data-view="explorer"><span class="nav-icon">⌁</span><span>Explorer</span></button>
+      <button class="nav-item" data-view="editor"><span class="nav-icon">⌘</span><span>Editor</span></button>
       <button class="nav-item" data-view="terminal"><span class="nav-icon">›_</span><span>Terminal</span></button>
     </nav>
     <div class="sidebar-foot">
@@ -36,31 +32,46 @@
     </header>
 
     <section class="view active" id="view-monitor">
-      <div class="hero-metrics">
-        <article class="metric-card primary-metric"><div class="metric-head"><span>CPU</span><span class="metric-tag">LIVE</span></div><strong id="cpu-value">0%</strong><p id="load-value">Load 0.00</p><canvas id="cpu-chart"></canvas></article>
-        <article class="metric-card"><div class="metric-head"><span>Memory</span><span>RAM</span></div><strong id="mem-value">—</strong><p id="mem-detail">— of —</p><div class="radial"><svg viewBox="0 0 120 120"><circle class="radial-track" cx="60" cy="60" r="51"/><circle id="mem-ring" class="radial-value" cx="60" cy="60" r="51"/></svg><span id="mem-percent">0%</span></div></article>
-        <article class="metric-card"><div class="metric-head"><span>Storage</span><span>ROOT</span></div><strong id="disk-value">—</strong><p id="disk-detail">— of —</p><div class="radial"><svg viewBox="0 0 120 120"><circle class="radial-track" cx="60" cy="60" r="51"/><circle id="disk-ring" class="radial-value disk" cx="60" cy="60" r="51"/></svg><span id="disk-percent">0%</span></div></article>
-      </div>
-      <div class="monitor-grid">
-        <article class="panel graph-panel"><div class="panel-head"><div><p class="eyebrow">Activity</p><h3>System pressure</h3></div><div class="legend"><span><i class="legend-cpu"></i>CPU</span><span><i class="legend-load"></i>Load</span></div></div><canvas id="system-chart"></canvas></article>
-        <article class="panel system-panel"><div class="panel-head"><div><p class="eyebrow">Machine</p><h3>At a glance</h3></div><span class="online-badge">● Online</span></div><dl class="system-list"><div><dt>Hostname</dt><dd id="host-value">—</dd></div><div><dt>Uptime</dt><dd id="uptime-value">—</dd></div><div><dt>Processes</dt><dd id="proc-value">—</dd></div><div><dt>Load average</dt><dd id="loads-value">—</dd></div><div><dt>Warden runtime</dt><dd id="goroutine-value">—</dd></div></dl></article>
+      <div class="view-scroll monitor-scroll">
+        <div class="hero-metrics">
+          <article class="metric-card primary-metric"><div class="metric-head"><span>CPU</span><span class="metric-tag">LIVE</span></div><strong id="cpu-value">0%</strong><p id="load-value">Load 0.00</p><canvas id="cpu-chart"></canvas></article>
+          <article class="metric-card"><div class="metric-head"><span>Memory</span><span>RAM</span></div><strong id="mem-value">—</strong><p id="mem-detail">— of —</p><div class="radial"><svg viewBox="0 0 120 120"><circle class="radial-track" cx="60" cy="60" r="51"/><circle id="mem-ring" class="radial-value" cx="60" cy="60" r="51"/></svg><span id="mem-percent">0%</span></div></article>
+          <article class="metric-card"><div class="metric-head"><span>Storage</span><span>ROOT</span></div><strong id="disk-value">—</strong><p id="disk-detail">— of —</p><div class="radial"><svg viewBox="0 0 120 120"><circle class="radial-track" cx="60" cy="60" r="51"/><circle id="disk-ring" class="radial-value disk" cx="60" cy="60" r="51"/></svg><span id="disk-percent">0%</span></div></article>
+        </div>
+        <div class="monitor-grid">
+          <article class="panel graph-panel"><div class="panel-head"><div><p class="eyebrow">Activity</p><h3>System pressure</h3></div><div class="legend"><span><i></i>CPU</span><span><i class="load-dot"></i>Load</span></div></div><canvas id="system-chart"></canvas></article>
+          <article class="panel system-panel"><div class="panel-head"><div><p class="eyebrow">Machine</p><h3>At a glance</h3></div><span class="online-badge">● Online</span></div><dl class="system-list"><div><dt>Hostname</dt><dd id="host-value">—</dd></div><div><dt>Uptime</dt><dd id="uptime-value">—</dd></div><div><dt>Processes</dt><dd id="proc-value">—</dd></div><div><dt>Load average</dt><dd id="loads-value">—</dd></div><div><dt>Warden runtime</dt><dd id="goroutine-value">—</dd></div></dl></article>
+        </div>
       </div>
     </section>
 
-    <section class="view" id="view-files">
-      <div class="files-toolbar panel"><div class="crumbs" id="breadcrumbs"></div><div class="toolbar-actions"><input type="file" id="upload-input" hidden><button id="upload-button" class="secondary-button">↑ Upload</button><button id="new-folder" class="secondary-button">＋ Folder</button><button id="new-file" class="primary-small">＋ File</button></div></div>
-      <div class="file-layout">
-        <article class="panel file-browser"><div class="file-head"><span>Name</span><span>Size</span><span>Modified</span><span></span></div><div id="file-list" class="file-list"></div></article>
-        <article class="panel editor-panel" id="editor-panel">
-          <div class="editor-head"><div><p class="eyebrow">Editor</p><h3 id="editor-name">Select a file</h3></div><div class="editor-actions"><span id="editor-status" class="editor-status">No file open</span><button id="download-file" class="icon-button" title="Download" disabled>↓</button><button id="save-file" class="primary-small" disabled>Save</button></div></div>
-          <div class="editor-tabs"><span id="editor-path">Choose a text file from the explorer.</span><span id="editor-language"></span></div>
-          <div class="code-editor" id="code-editor"><pre id="highlight-layer" aria-hidden="true"><code></code></pre><textarea id="editor" spellcheck="false" disabled aria-label="File editor"></textarea></div>
-        </article>
+    <section class="view" id="view-explorer">
+      <div class="explorer-shell panel">
+        <div class="files-toolbar"><div class="crumbs" id="breadcrumbs"></div><div class="toolbar-actions"><input type="file" id="upload-input" hidden><button id="upload-button" class="secondary-button">↑ Upload</button><button id="new-folder" class="secondary-button">＋ Folder</button><button id="new-file" class="primary-small">＋ File</button></div></div>
+        <div id="selection-toolbar" class="selection-toolbar" hidden><strong><span id="selected-count">0</span> selected</strong><span></span><button data-bulk="copy">Copy</button><button data-bulk="move">Move</button><button data-bulk="delete" class="danger-text">Delete</button><button id="clear-selection">Clear</button></div>
+        <div class="file-head"><span class="check-col"><input id="select-all-files" type="checkbox" aria-label="Select all"></span><span>Name</span><span>Size</span><span>Modified</span><span></span></div>
+        <div id="file-list" class="file-list"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-editor">
+      <div class="editor-workbench panel">
+        <aside class="editor-explorer">
+          <div class="editor-side-head"><span>FILES</span><button id="editor-refresh" title="Refresh">↻</button></div>
+          <div class="editor-side-path" id="editor-tree-path">/</div>
+          <div id="editor-tree" class="editor-tree"></div>
+        </aside>
+        <div class="editor-main">
+          <div id="editor-tabs" class="editor-tabs"><div class="editor-empty-tab">No files open</div></div>
+          <div class="editor-toolbar"><span id="editor-path">Open a file from the sidebar.</span><div><span id="editor-status" class="editor-status">No file open</span><button id="download-file" class="secondary-button compact" disabled>Download</button><button id="save-file" class="primary-small" disabled>Save</button></div></div>
+          <div class="code-editor empty" id="code-editor"><pre id="highlight-layer" aria-hidden="true"><code></code></pre><textarea id="editor" spellcheck="false" disabled aria-label="File editor"></textarea><div id="editor-placeholder" class="editor-placeholder"><strong>Select a text file</strong><span>Use the Files sidebar to open one or more files.</span></div></div>
+          <div class="editor-statusbar"><span id="editor-language">Plain Text</span><span id="editor-position">Ln 1, Col 1</span></div>
+        </div>
       </div>
     </section>
 
     <section class="view" id="view-terminal">
-      <article class="panel terminal-shell"><div class="terminal-head"><div><span class="terminal-dot red"></span><span class="terminal-dot amber"></span><span class="terminal-dot green"></span><strong>warden@<span id="terminal-host">server</span></strong></div><div><span id="terminal-state" class="terminal-state">Disconnected</span><button id="terminal-reconnect" class="secondary-button">Reconnect</button></div></div><div class="terminal-body" id="terminal-output" tabindex="0"><pre></pre><textarea id="terminal-input" aria-label="Terminal input" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea></div><div class="terminal-foot"><span>Interactive PTY · authenticated WebSocket</span><span>Click terminal to focus</span></div></article>
+      <article class="panel terminal-shell"><div class="terminal-head"><div><span class="terminal-dot red"></span><span class="terminal-dot amber"></span><span class="terminal-dot green"></span><strong>warden@<span id="terminal-host">server</span></strong></div><div><span id="terminal-state" class="terminal-state">Disconnected</span><button id="terminal-reconnect" class="secondary-button compact">Reconnect</button></div></div><div class="terminal-body" id="terminal-output" tabindex="0"><pre></pre><textarea id="terminal-input" aria-label="Terminal input" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea></div><div class="terminal-foot"><span>Interactive PTY · authenticated WebSocket</span><span>Click terminal to focus</span></div></article>
     </section>
   </main>
 </div>
