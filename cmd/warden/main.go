@@ -34,7 +34,7 @@ func main() {
 	}
 	fs := flag.NewFlagSet("warden", flag.ExitOnError)
 	listen := fs.String("listen", env("WARDEN_LISTEN", "127.0.0.1:8080"), "listen address")
-	root := fs.String("root", env("WARDEN_FILE_ROOT", home()), "filesystem root exposed by Warden")
+	root := fs.String("root", env("WARDEN_FILE_ROOT", "/"), "filesystem root exposed by Warden")
 	static := fs.String("static", env("WARDEN_STATIC_DIR", "public"), "Nift-built frontend directory")
 	fs.Parse(os.Args[1:])
 	pass := os.Getenv("WARDEN_PASSWORD_HASH")

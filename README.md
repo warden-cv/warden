@@ -35,10 +35,10 @@ Then run Warden:
 
 ```sh
 export WARDEN_PASSWORD_HASH='pbkdf2-sha256$...'
-./warden --root "$HOME"
+./warden --root /
 ```
 
-Open `http://127.0.0.1:8080`.
+Open `http://127.0.0.1:8080`. The default filesystem boundary is `/`; use `--root /some/subtree` (or `WARDEN_FILE_ROOT`) when you intentionally want a narrower view.
 
 Warden binds to loopback by default. Loopback development automatically uses a non-Secure session cookie so plain `http://127.0.0.1` works correctly. Non-loopback listeners default to Secure cookies; behind an HTTPS reverse proxy set `WARDEN_SECURE_COOKIES=true` explicitly.
 

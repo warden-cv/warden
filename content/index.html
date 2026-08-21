@@ -39,11 +39,11 @@
         </article>
         <article class="metric-card">
           <div class="card-title-row"><h3>Memory</h3><span>RAM</span></div>
-          <strong id="mem-value">—</strong><p id="mem-detail">— of —</p><div class="radial"><svg viewBox="0 0 120 120"><circle class="radial-track" cx="60" cy="60" r="51"/><circle id="mem-ring" class="radial-value" cx="60" cy="60" r="51"/></svg><span id="mem-percent">0%</span></div>
+          <strong id="mem-value">—</strong><p id="mem-detail">— of —</p><canvas id="mem-chart" class="metric-spark"></canvas><div class="radial"><svg viewBox="0 0 120 120"><circle class="radial-track" cx="60" cy="60" r="51"/><circle id="mem-ring" class="radial-value" cx="60" cy="60" r="51"/></svg><span id="mem-percent">0%</span></div>
         </article>
         <article class="metric-card">
           <div class="card-title-row"><h3>Storage</h3><span>ROOT</span></div>
-          <strong id="disk-value">—</strong><p id="disk-detail">— of —</p><div class="radial"><svg viewBox="0 0 120 120"><circle class="radial-track" cx="60" cy="60" r="51"/><circle id="disk-ring" class="radial-value disk" cx="60" cy="60" r="51"/></svg><span id="disk-percent">0%</span></div>
+          <strong id="disk-value">—</strong><p id="disk-detail">— of —</p><canvas id="disk-chart" class="metric-spark"></canvas><div class="radial"><svg viewBox="0 0 120 120"><circle class="radial-track" cx="60" cy="60" r="51"/><circle id="disk-ring" class="radial-value disk" cx="60" cy="60" r="51"/></svg><span id="disk-percent">0%</span></div>
         </article>
         <article class="panel system-panel">
           <div class="card-title-row"><h3>Machine</h3><span class="online-badge">● Online</span></div>
@@ -93,5 +93,5 @@
     </section>
   </main>
 </div>
-<div id="media-modal" class="media-modal" hidden><div class="media-backdrop" data-close-media></div><section class="media-dialog"><header><div><strong id="media-title">Preview</strong><span id="media-meta"></span></div><div><a id="media-download" class="secondary-button compact" href="#">Download</a><button id="media-close" class="secondary-button compact">Close</button></div></header><div id="media-stage" class="media-stage"></div></section></div>
+<div id="media-modal" class="media-modal" hidden><div class="media-backdrop" data-close-media></div><section class="media-dialog"><header><div><strong id="media-title">Preview</strong><span id="media-meta"></span><span id="media-count" class="media-count"></span></div><div><a id="media-download" class="secondary-button compact" href="#">Download</a><button id="media-close" class="secondary-button compact">Close</button></div></header><div id="media-stage" class="media-stage"></div></section></div>
 <div id="toast-root" aria-live="polite"></div>
