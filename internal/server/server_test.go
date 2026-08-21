@@ -189,3 +189,43 @@ func TestFileStartFallsBackToConfiguredRoot(t *testing.T) {
 		t.Fatalf("shellStart=%q want %q", got, root)
 	}
 }
+
+func TestServiceActionUsesStructuredArguments(t *testing.T) {
+	bin := t.TempDir()
+	logPath := filepath.Join(bin, "args.log")
+	script := filepath.Join(bin, "systemctl")
+	body := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$WARDEN_TEST_ARGS\"\nexit 0\n"
+	if err := os.WriteFile(script, []byte(body), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WARDEN_TEST_ARGS", logPath)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if _, err := actionService(adminActionRequest{Action: "restart", Name: "nginx.service"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "restart\nnginx.service\n" {
+		t.Fatalf("args=%q", got)
+	}
+	if _, err := actionService(adminActionRequest{Action: "restart", Name: "nginx.service;touch-pwned"}); err == nil {
+		t.Fatal("unsafe service name accepted")
+	}
+}
+
+func TestAdminInputValidation(t *testing.T) {
+	if validCronSchedule("* * * * *; rm -rf /") {
+		t.Fatal("invalid cron schedule accepted")
+	}
+	if _, err := actionFail2ban(adminActionRequest{Action: "ban", Name: "sshd", Target: "not-an-ip"}); err == nil {
+		t.Fatal("invalid fail2ban IP accepted")
+	}
+	if _, err := actionFirewall(adminActionRequest{Action: "allow", Target: "22/tcp\nmalicious"}); err == nil {
+		t.Fatal("newline firewall target accepted")
+	}
+	if _, err := actionUser(adminActionRequest{Action: "lock", Name: "bad;user"}); err == nil {
+		t.Fatal("unsafe username accepted")
+	}
+}
