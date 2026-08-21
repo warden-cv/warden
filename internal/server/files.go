@@ -100,6 +100,11 @@ func (f *fileAPI) read(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, p)
 		return
 	}
+	if r.URL.Query().Get("raw") == "1" {
+		w.Header().Set("Content-Disposition", "inline")
+		http.ServeFile(w, r, p)
+		return
+	}
 	if info.Size() > 2<<20 {
 		http.Error(w, "file too large for editor (2 MiB limit)", 413)
 		return
@@ -124,28 +129,10 @@ func (f *fileAPI) write(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mode := fs.FileMode(0640)
-	if info, e := os.Stat(p); e == nil {
+	if info, statErr := os.Stat(p); statErr == nil {
 		mode = info.Mode().Perm()
 	}
-	tmp, e := os.CreateTemp(filepath.Dir(p), ".warden-save-*")
-	if e != nil {
-		http.Error(w, e.Error(), 500)
-		return
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if e = tmp.Chmod(mode); e == nil {
-		_, e = tmp.Write(body)
-	}
-	if e == nil {
-		e = tmp.Sync()
-	}
-	if ce := tmp.Close(); e == nil {
-		e = ce
-	}
-	if e == nil {
-		e = os.Rename(name, p)
-	}
+	e = writeAtomicPath(p, body, mode)
 	if e != nil {
 		http.Error(w, e.Error(), 500)
 		return
@@ -229,6 +216,28 @@ func copyFile(src, dst string) error {
 	ce := out.Close()
 	if e == nil {
 		e = ce
+	}
+	return e
+}
+
+func writeAtomicPath(p string, body []byte, mode fs.FileMode) error {
+	tmp, e := os.CreateTemp(filepath.Dir(p), ".warden-save-*")
+	if e != nil {
+		return e
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if e = tmp.Chmod(mode); e == nil {
+		_, e = tmp.Write(body)
+	}
+	if e == nil {
+		e = tmp.Sync()
+	}
+	if ce := tmp.Close(); e == nil {
+		e = ce
+	}
+	if e == nil {
+		e = os.Rename(name, p)
 	}
 	return e
 }

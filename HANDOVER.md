@@ -303,3 +303,19 @@ Security invariants for development:
 - A feature is not "secure" merely because the happy path works. Add negative/adversarial tests as security-sensitive slices mature.
 
 Do not turn Warden into an IDE or a general orchestration platform. The editor exists to safely edit server files; the terminal exists to provide an explicitly privileged shell; the monitor exists to explain machine state clearly.
+
+### Warden v1 editor/explorer direction
+
+The Editor is workspace-oriented. A workspace is a directory inside the configured Warden filesystem root. Workspace search/replace may traverse regular text files beneath that directory, but must not follow symlinks or special files. Regex search uses Go's regexp/RE2 semantics. Bulk replacement is a privileged write operation and must remain atomic per file.
+
+Explorer and Editor are separate product surfaces:
+
+- Explorer is for filesystem administration: metadata, multi-selection, upload/download, copy/move/delete, ZIP compression/extraction and media preview.
+- Editor is for text/code work: workspace tree, multi-file tabs, syntax highlighting, accurate caret/native text behavior, save/download and workspace-wide find/replace.
+- Do not merge Explorer back into Editor. The Editor may have its own compact workspace tree, VS Code-style, without replacing the richer Explorer.
+
+Terminal output is a PTY stream and should preserve terminal semantics where Warden supports them, including common ANSI/SGR colours. Do not render raw control sequences as user-visible text.
+
+### Post-v1 administration roadmap
+
+Once Auth, Monitor, Explorer, Editor and Terminal are mature and security-tested, planned administration areas include certificates, cron jobs, Docker, fail2ban, firewall, services, SSH, user management and websites. Add these as focused modules rather than turning v1 into a shallow collection of panels.

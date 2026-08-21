@@ -71,3 +71,88 @@ func TestFileWriteAtomicAndPreservesMode(t *testing.T) {
 		t.Fatalf("mode = %o", st.Mode().Perm())
 	}
 }
+
+func TestWorkspaceSearchAndReplaceConfined(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello world\nHELLO again\n"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sub", "b.txt"), []byte("hello there\n"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("hello secret\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(root, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	f, err := newFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := f.searchWorkspace(workspaceQuery{Root: "/", Query: "hello", CaseSensitive: false}, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m) != 3 {
+		t.Fatalf("matches=%d want 3: %#v", len(m), m)
+	}
+
+	body := `{"Root":"/","Query":"hello","Replacement":"bye","Regex":false,"CaseSensitive":false}`
+	r := httptest.NewRequest("POST", "/api/workspace/replace", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	f.workspaceReplace(w, r)
+	if w.Code != 200 {
+		t.Fatalf("replace status %d: %s", w.Code, w.Body.String())
+	}
+	b, _ := os.ReadFile(filepath.Join(root, "a.txt"))
+	if string(b) != "bye world\nbye again\n" {
+		t.Fatalf("a.txt=%q", b)
+	}
+	secret, _ := os.ReadFile(filepath.Join(outside, "secret.txt"))
+	if string(secret) != "hello secret\n" {
+		t.Fatalf("symlink target was modified: %q", secret)
+	}
+}
+
+func TestZipCompressAndSafeExtract(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "folder"), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "folder", "a.txt"), []byte("alpha"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	f, err := newFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cr := httptest.NewRequest("POST", "/api/files/compress", strings.NewReader(`{"paths":["/folder"],"target":"/bundle.zip"}`))
+	cw := httptest.NewRecorder()
+	f.compress(cw, cr)
+	if cw.Code != 200 {
+		t.Fatalf("compress status %d: %s", cw.Code, cw.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "bundle.zip")); err != nil {
+		t.Fatal(err)
+	}
+
+	er := httptest.NewRequest("POST", "/api/files/extract", strings.NewReader(`{"Path":"/bundle.zip","Target":"/out"}`))
+	ew := httptest.NewRecorder()
+	f.extract(ew, er)
+	if ew.Code != 200 {
+		t.Fatalf("extract status %d: %s", ew.Code, ew.Body.String())
+	}
+	b, err := os.ReadFile(filepath.Join(root, "out", "folder", "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "alpha" {
+		t.Fatalf("extracted=%q", b)
+	}
+}

@@ -70,8 +70,7 @@
 		
 		    <section class="view" id="view-explorer">
 		      <div class="explorer-shell panel">
-		        <div class="files-toolbar"><div class="crumbs" id="breadcrumbs"></div><div class="toolbar-actions"><input type="file" id="upload-input" hidden><button id="upload-button" class="secondary-button">↑ Upload</button><button id="new-folder" class="secondary-button">＋ Folder</button><button id="new-file" class="primary-small">＋ File</button></div></div>
-		        <div id="selection-toolbar" class="selection-toolbar is-empty"><strong><span id="selected-count">0</span> selected</strong><span></span><button data-bulk="copy">Copy</button><button data-bulk="move">Move</button><button data-bulk="delete" class="danger-text">Delete</button><button id="clear-selection">Clear</button></div>
+		        <div class="files-toolbar"><div class="crumbs" id="breadcrumbs"></div><div class="toolbar-actions"><div id="selection-actions" class="selection-actions"><span class="selection-count"><span id="selected-count">0</span> selected</span><button data-bulk="download">Download</button><button data-bulk="compress">Compress</button><button data-bulk="extract">Extract</button><button data-bulk="copy">Copy</button><button data-bulk="move">Move</button><button data-bulk="delete" class="danger-text">Delete</button><button id="clear-selection" title="Clear selection">×</button></div><input type="file" id="upload-input" hidden><button id="upload-button" class="secondary-button">↑ Upload</button><button id="new-folder" class="secondary-button">＋ Folder</button><button id="new-file" class="primary-small">＋ File</button></div></div>
 		        <div class="file-head"><span class="check-col"><input id="select-all-files" type="checkbox" aria-label="Select all"></span><span>Name</span><span>Size</span><span>Modified</span><span></span></div>
 		        <div id="file-list" class="file-list"></div>
 		      </div>
@@ -80,14 +79,22 @@
 		    <section class="view" id="view-editor">
 		      <div class="editor-workbench panel">
 		        <aside class="editor-explorer">
-		          <div class="editor-side-head"><span>FILES</span><button id="editor-refresh" title="Refresh">↻</button></div>
+		          <div class="editor-side-head"><span>WORKSPACE</span><div><button id="editor-open-workspace" title="Open workspace">Open</button><button id="editor-refresh" title="Refresh">↻</button></div></div>
 		          <div class="editor-side-path" id="editor-tree-path">/</div>
+		          <div class="editor-mode-tabs"><button class="active" data-editor-mode="files">Files</button><button data-editor-mode="search">Search</button></div>
 		          <div id="editor-tree" class="editor-tree"></div>
+		          <div id="workspace-search" class="workspace-search" hidden>
+		            <div class="search-row"><input id="workspace-query" placeholder="Search workspace"><button id="workspace-case" class="toggle-button" title="Match case">Aa</button><button id="workspace-regex" class="toggle-button" title="Use regular expression">.*</button></div>
+		            <div class="search-row"><input id="workspace-replacement" placeholder="Replace"><button id="workspace-find" class="primary-small">Find</button></div>
+		            <button id="workspace-replace-all" class="secondary-button wide">Replace all matches</button>
+		            <div id="workspace-search-summary" class="search-summary">Enter a search term.</div>
+		            <div id="workspace-results" class="workspace-results"></div>
+		          </div>
 		        </aside>
 		        <div class="editor-main">
 		          <div id="editor-tabs" class="editor-tabs"><div class="editor-empty-tab">No files open</div></div>
 		          <div class="editor-toolbar"><span id="editor-path">Open a file from the sidebar.</span><div><span id="editor-status" class="editor-status">No file open</span><button id="download-file" class="secondary-button compact" disabled>Download</button><button id="save-file" class="primary-small" disabled>Save</button></div></div>
-		          <div class="code-editor empty" id="code-editor"><div id="editor" class="editor-surface" contenteditable="false" spellcheck="false" role="textbox" aria-multiline="true" aria-label="File editor"></div><div id="editor-placeholder" class="editor-placeholder"><strong>Select a text file</strong><span>Use the Files sidebar to open one or more files.</span></div></div>
+		          <div class="code-editor empty" id="code-editor"><pre id="editor-highlight" class="editor-highlight" aria-hidden="true"></pre><textarea id="editor" class="editor-surface" spellcheck="false" aria-label="File editor" disabled></textarea><div id="editor-placeholder" class="editor-placeholder"><strong>Select a text file</strong><span>Use the workspace sidebar to open one or more files.</span></div></div>
 		          <div class="editor-statusbar"><span id="editor-language">Plain Text</span><span id="editor-position">Ln 1, Col 1</span></div>
 		        </div>
 		      </div>
@@ -98,6 +105,7 @@
 		    </section>
 		  </main>
 		</div>
+		<div id="media-modal" class="media-modal" hidden><div class="media-backdrop" data-close-media></div><section class="media-dialog"><header><div><strong id="media-title">Preview</strong><span id="media-meta"></span></div><div><a id="media-download" class="secondary-button compact" href="#">Download</a><button id="media-close" class="secondary-button compact">Close</button></div></header><div id="media-stage" class="media-stage"></div></section></div>
 		<div id="toast-root" aria-live="polite"></div>
 	</body>
 </html>

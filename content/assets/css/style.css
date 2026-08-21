@@ -42,3 +42,63 @@
 
 @media(max-width:900px){.monitor-layout{grid-template-columns:1fr;grid-template-rows:repeat(4,minmax(120px,1fr)) minmax(180px,1.4fr);overflow:auto}.monitor-layout .graph-panel{grid-column:auto}.editor-workbench{grid-template-columns:190px minmax(0,1fr)}}
 .term-cursor{display:inline-block;min-width:.62em;background:#d7d9da;color:#111213;animation:termblink 1.05s steps(1) infinite}@keyframes termblink{50%{background:transparent;color:inherit}}
+
+/* checkpoint 4: workspace editor, non-shifting explorer actions, media previews */
+.explorer-shell{grid-template-rows:auto 36px minmax(0,1fr)}
+.files-toolbar{min-height:58px}
+.toolbar-actions{display:flex;align-items:center;gap:10px;min-width:0}
+.selection-actions{display:none;align-items:center;gap:5px;padding-right:10px;margin-right:2px;border-right:1px solid var(--line)}
+.selection-actions.visible{display:flex}
+.selection-actions button{border:1px solid var(--line2);border-radius:6px;padding:7px 8px;background:#292a2b;color:var(--text);font-size:10px}
+.selection-actions button:hover:not(:disabled){background:#333435}
+.selection-actions .danger-text{color:#f08b8b}
+.selection-actions .selection-count{color:var(--muted2);font-size:10px;white-space:nowrap;padding-right:2px}
+.file-empty{display:grid;place-items:center;min-height:150px;color:var(--muted);font-size:11px}
+
+.editor-workbench{grid-template-columns:290px minmax(0,1fr)}
+.editor-explorer{grid-template-rows:40px 42px 32px minmax(0,1fr);position:relative}
+.editor-side-head>div{display:flex;gap:3px}
+.editor-side-head button{border:1px solid transparent;border-radius:5px;background:transparent;color:var(--muted);padding:4px 6px;font-size:9px}
+.editor-side-head button:hover{background:#272829;color:#fff}
+.editor-mode-tabs{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line);background:#1d1e1f}
+.editor-mode-tabs button{border:0;border-bottom:1px solid transparent;background:transparent;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.07em}
+.editor-mode-tabs button.active{color:#fff;border-bottom-color:var(--green);background:#222324}
+.workspace-search{min-height:0;overflow:auto;padding:9px;background:#1b1c1d}
+.search-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px;margin-bottom:6px}
+.search-row:nth-child(2){grid-template-columns:minmax(0,1fr) auto}
+.search-row input{min-width:0;border:1px solid var(--line2);border-radius:5px;background:#151617;color:var(--text);outline:0;padding:7px 8px;font:10px var(--mono)}
+.search-row input:focus{border-color:#555a57}
+.toggle-button{min-width:31px;border:1px solid var(--line2);border-radius:5px;background:#242526;color:var(--muted2);font:9px var(--mono)}
+.toggle-button.active{color:var(--green);border-color:#48604f;background:#253029}
+.secondary-button.wide{width:100%;margin-bottom:8px}
+.search-summary{padding:5px 2px 7px;color:var(--muted);font-size:9px}
+.workspace-results{display:grid;gap:2px}
+.search-result{display:block;width:100%;border:0;border-radius:4px;padding:7px;background:transparent;color:var(--muted2);text-align:left;font-family:var(--mono)}
+.search-result:hover{background:#292a2b;color:#fff}
+.search-result strong,.search-result small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.search-result strong{font-size:9px;font-weight:650}.search-result strong span{color:var(--green);font-weight:500}.search-result small{margin-top:3px;color:var(--muted);font-size:8px}
+
+.code-editor{background:#151617;overflow:hidden}
+.editor-highlight,.editor-surface{position:absolute;inset:0;width:100%;height:100%;box-sizing:border-box;margin:0;border:0;padding:14px 16px;white-space:pre;overflow:auto;tab-size:2;font-family:var(--mono);font-size:12px;line-height:1.65;letter-spacing:0;font-variant-ligatures:none}
+.editor-highlight{z-index:1;pointer-events:none;color:#d7d9da;background:#151617;scrollbar-width:none}
+.editor-highlight::-webkit-scrollbar{display:none}
+textarea.editor-surface{z-index:2;resize:none;outline:0;background:transparent;color:transparent;-webkit-text-fill-color:transparent;caret-color:#f4f4f4;overflow:auto}
+textarea.editor-surface::selection{background:#4ecb7152;-webkit-text-fill-color:transparent}
+textarea.editor-surface:disabled{cursor:default}
+textarea.editor-surface:not(:disabled){cursor:text}
+
+.media-modal{position:fixed;inset:0;z-index:300;display:grid;place-items:center;padding:34px}
+.media-backdrop{position:absolute;inset:0;background:#070808dc;backdrop-filter:blur(7px)}
+.media-dialog{position:relative;z-index:1;width:min(1180px,92vw);height:min(820px,88vh);display:grid;grid-template-rows:52px minmax(0,1fr);overflow:hidden;border:1px solid var(--line2);border-radius:12px;background:#171819;box-shadow:0 28px 90px #000b}
+.media-dialog header{display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-bottom:1px solid var(--line)}
+.media-dialog header>div{display:flex;align-items:center;gap:10px;min-width:0}.media-dialog header strong{font-size:12px}.media-dialog header span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font:9px var(--mono)}
+.media-stage{display:grid;place-items:center;min-width:0;min-height:0;padding:16px;background:#101112;overflow:auto}
+.media-stage img,.media-stage video{max-width:100%;max-height:100%;object-fit:contain}.media-stage audio{width:min(680px,90%)}
+
+.terminal-body pre span{white-space:pre}
+.term-cursor{display:inline-block;min-width:.62em;animation:termblink 1.05s steps(1) infinite;outline:1px solid #cfd2d0;outline-offset:-1px}
+@keyframes termblink{50%{outline-color:transparent}}
+
+@media(max-width:1050px){.selection-actions .selection-count{display:none}.selection-actions button{padding:7px 6px}.editor-workbench{grid-template-columns:250px minmax(0,1fr)}}
+@media(max-width:900px){.editor-workbench{grid-template-columns:210px minmax(0,1fr)}.selection-actions{position:absolute;right:190px;background:#1f2021;padding-left:6px}.selection-actions [data-bulk="copy"],.selection-actions [data-bulk="move"]{display:none}}
+.editor-tree,.workspace-search{grid-row:4;min-height:0}

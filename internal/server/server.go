@@ -43,6 +43,11 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/files", a.protect(a.listFiles))
 	mux.HandleFunc("/api/file", a.protect(a.file))
 	mux.HandleFunc("/api/files/mutate", a.protect(a.mutate))
+	mux.HandleFunc("/api/files/archive", a.protect(a.archiveDownload))
+	mux.HandleFunc("/api/files/compress", a.protect(a.compress))
+	mux.HandleFunc("/api/files/extract", a.protect(a.extract))
+	mux.HandleFunc("/api/workspace/search", a.protect(a.workspaceSearch))
+	mux.HandleFunc("/api/workspace/replace", a.protect(a.workspaceReplace))
 	mux.HandleFunc("/api/terminal", a.terminal)
 	mux.Handle("/", http.FileServer(http.Dir(cfg.StaticDir)))
 	srv := &http.Server{Addr: cfg.Listen, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second}
@@ -99,6 +104,20 @@ func (a *app) file(w http.ResponseWriter, r *http.Request) {
 func (a *app) mutate(w http.ResponseWriter, r *http.Request) {
 	a.audit.Printf("file_mutate ip=%s", clientIP(r))
 	a.files.mutate(w, r)
+}
+func (a *app) archiveDownload(w http.ResponseWriter, r *http.Request) { a.files.archiveDownload(w, r) }
+func (a *app) compress(w http.ResponseWriter, r *http.Request) {
+	a.audit.Printf("file_compress ip=%s", clientIP(r))
+	a.files.compress(w, r)
+}
+func (a *app) extract(w http.ResponseWriter, r *http.Request) {
+	a.audit.Printf("file_extract ip=%s", clientIP(r))
+	a.files.extract(w, r)
+}
+func (a *app) workspaceSearch(w http.ResponseWriter, r *http.Request) { a.files.workspaceSearch(w, r) }
+func (a *app) workspaceReplace(w http.ResponseWriter, r *http.Request) {
+	a.audit.Printf("workspace_replace ip=%s", clientIP(r))
+	a.files.workspaceReplace(w, r)
 }
 func (a *app) terminal(w http.ResponseWriter, r *http.Request) {
 	s, ok := a.auth.get(r)

@@ -6,9 +6,9 @@ Warden is a dark, security-first web console for Linux servers. Nift owns the fr
 
 - Secure session login with rate limiting, CSRF protection and audit events.
 - Live Linux monitor backed by `/proc` and `statfs`, with browser-rendered history graphs.
-- Dedicated file explorer with size/modified columns, multi-select operations and create/delete/rename/copy/move/upload/download.
-- Separate VS Code-style editor workspace with its own file browser, multi-file tabs, syntax highlighting, atomic saves and permission preservation.
-- Interactive Linux PTY over an authenticated WebSocket.
+- Dedicated file explorer with size/modified columns, multi-select operations, create/delete/rename/copy/move/upload/download, ZIP compress/extract, and inline image/video/audio preview.
+- Separate VS Code-style editor workspace with its own file browser, multi-file tabs, syntax highlighting, native Ctrl+Z undo/redo behavior, atomic saves, permission preservation, and workspace-wide search/replace with regex support.
+- Interactive Linux PTY over an authenticated WebSocket, including common ANSI/SGR colour preservation.
 - Dark mode only by design.
 
 ## Build the frontend
@@ -57,3 +57,7 @@ Warden is intentionally a privileged application. This first slice establishes r
 - static responses receive restrictive CSP/frame/referrer/content-type headers.
 
 This is not yet a completed security audit. Before an Internet-facing release, Warden still needs the planned adversarial security corpus, explicit reverse-proxy trust model, session revocation UX, optional 2FA, terminal resize messages, stronger audit structure/rotation, and platform/deployment hardening.
+
+## Product direction
+
+Warden v1 focuses on authenticated monitoring, a full filesystem explorer, workspace-oriented code/text editing, and an interactive PTY terminal. Planned later administration modules include certificates, cron, Docker, fail2ban, firewall, services, SSH, users and website management.
