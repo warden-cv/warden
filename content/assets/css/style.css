@@ -461,3 +461,7 @@ textarea.editor-surface::selection{background:transparent!important;-webkit-text
 .file-context-menu button{border:0;border-radius:4px;padding:7px 9px;background:transparent;color:#d9dbdb;text-align:left;font-size:10px}
 .file-context-menu button:hover{background:#303233;color:#fff}.file-context-menu button.danger{color:#ef9696}.file-context-menu button.danger:hover{background:#3a2525}
 .file-row.dragging,.tree-row.dragging{opacity:.48}.file-row.drop-target,.tree-row.drop-target{background:#2a3b30!important;box-shadow:inset 0 0 0 1px #63d68188}
+
+/* Shared desktop-style context menu refinements. */
+.file-context-menu .context-menu-separator{height:1px;margin:4px 3px;background:var(--line)}
+.file-context-menu button:disabled{opacity:.42;cursor:default}.file-context-menu button:disabled:hover{background:transparent;color:#d9dbdb}

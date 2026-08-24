@@ -1,6 +1,6 @@
 (()=>{'use strict';
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-let csrf='',version='',homePath='/',currentPath='/',workspaceRoot='',editorTreePath='/',terminalRoot='/',ws=null,monitorTimer=null,currentAdmin='certs';
+let csrf='',version='',homePath='/',currentPath='/',workspaceRoot='',editorTreePath='/',terminalRoot='/',terminalCwd='/',ws=null,monitorTimer=null,currentAdmin='certs';
 const history={cpu:[],load:[],memory:[],disk:[]}, selected=new Set(), tabs=new Map(), expandedDirs=new Set(), editorExpandedDirs=new Set(), adminScopes={services:'system',users:'regular'};
 let mediaPreview={items:[],index:-1,path:''};
 let activeFile='',workspaceRegex=false,workspaceCase=false,workspaceSearchRoot='',multiSelections=[],selectionSeed='',multiUndoStack=[],multiRedoStack=[],workspaceUndoStack=[],applyingMultiEdit=false,lastEditKind='native';
@@ -120,6 +120,23 @@ function closeTab(path){const t=tabs.get(path);if(t?.dirty&&!confirm(`Discard un
 function clearEditor(){clearMultiSelections();activeFile='';$('#code-editor').classList.add('empty');const ed=$('#editor');ed.value='';ed.disabled=true;$('#editor-highlight').textContent='';$('#editor-occurrences').textContent='';$('#editor-path').textContent='Open a file from the sidebar.';$('#editor-language').textContent='Plain Text';$('#editor-position').textContent='Ln 1, Col 1';$('#editor-status').textContent='No file open';$('#save-file').disabled=true;$('#download-file').disabled=true}
 function setEditorStatus(t){$('#editor-status').textContent=t.dirty?'Unsaved':'Saved';$('#editor-status').className='editor-status'+(t.dirty?' dirty':'')}
 const editor=$('#editor'),highlight=$('#editor-highlight'),occurrences=$('#editor-occurrences');
+async function writeClipboard(text){try{await navigator.clipboard.writeText(text);return true}catch{toast('Clipboard write was blocked by the browser.',true);return false}}
+async function readClipboard(){try{return await navigator.clipboard.readText()}catch{toast('Clipboard read was blocked by the browser.',true);return null}}
+function showActionContextMenu(e,actions){e.preventDefault();e.stopPropagation();closeFileContextMenu();const menu=document.createElement('div');menu.className='file-context-menu';for(const a of actions){if(a.separator){const sep=document.createElement('div');sep.className='context-menu-separator';menu.append(sep);continue}const b=document.createElement('button');b.textContent=a.label;b.disabled=!!a.disabled;b.onclick=async()=>{closeFileContextMenu();if(!b.disabled)await a.run?.()};menu.append(b)}document.body.append(menu);fileContextMenu=menu;const pad=8,r=menu.getBoundingClientRect();menu.style.left=Math.max(pad,Math.min(e.clientX,innerWidth-r.width-pad))+'px';menu.style.top=Math.max(pad,Math.min(e.clientY,innerHeight-r.height-pad))+'px'}
+function selectedEditorText(){const a=editor.selectionStart,b=editor.selectionEnd;return a===b?'':editor.value.slice(Math.min(a,b),Math.max(a,b))}
+async function editorPaste(){if(!activeFile)return;const text=await readClipboard();if(text===null)return;if(multiSelections.length>1){applyMultiEdit(text);return}const a=editor.selectionStart,b=editor.selectionEnd;editor.setRangeText(text,a,b,'end');editor.dispatchEvent(new Event('input',{bubbles:true}));editor.focus()}
+async function editorCut(){const text=selectedEditorText();if(!text)return;if(!(await writeClipboard(text)))return;const a=editor.selectionStart,b=editor.selectionEnd;editor.setRangeText('',a,b,'end');editor.dispatchEvent(new Event('input',{bubbles:true}));editor.focus()}
+function editorFindSelection(){const text=selectedEditorText();const tab=$('[data-editor-mode="search"]');if(tab)tab.click();if(text&&!/\n/.test(text))$('#workspace-query').value=text;setTimeout(()=>$('#workspace-query').focus(),0)}
+editor.addEventListener('contextmenu',e=>{const selected=selectedEditorText();showActionContextMenu(e,[
+  {label:'Cut',disabled:!activeFile||!selected,run:editorCut},
+  {label:'Copy',disabled:!selected,run:()=>writeClipboard(selected)},
+  {label:'Paste',disabled:!activeFile,run:editorPaste},
+  {label:'Select All',disabled:!activeFile||!editor.value,run:()=>{editor.focus();editor.select();renderOccurrences();updateCaret()}},
+  {separator:true},
+  {label:'Find Selection',disabled:!activeFile||!selected,run:editorFindSelection},
+  {label:'Save',disabled:!activeFile||!tabs.get(activeFile)?.dirty,run:saveEditor},
+  {label:'Save All',disabled:![...tabs.values()].some(t=>t.dirty),run:saveAllEditors}
+])});
 editor.addEventListener('input',()=>{if(!activeFile)return;if(!applyingMultiEdit){lastEditKind='native';multiRedoStack=[]}const t=tabs.get(activeFile);t.content=editor.value;t.dirty=t.content!==t.saved;setEditorStatus(t);renderTabs();renderHighlight();updateCaret()});
 editor.addEventListener('scroll',()=>{highlight.scrollTop=editor.scrollTop;highlight.scrollLeft=editor.scrollLeft;occurrences.scrollTop=editor.scrollTop;occurrences.scrollLeft=editor.scrollLeft});
 editor.addEventListener('click',()=>{clearMultiSelections();updateCaret();renderOccurrences()});
@@ -208,7 +225,7 @@ async function loadAdmin(kind){const box=$('#admin-content');box.innerHTML='<div
 // Terminal: shared editor/full-view PTY with ANSI SGR colour preservation.
 const term={lines:[[]],row:0,col:0,mode:'normal',seq:'',osc:'',oscEsc:false,style:{fg:null,bg:null,bold:false,dim:false,underline:false,inverse:false}};
 let integratedTerminalOpen=localStorage.getItem('warden.editorTerminalOpen')==='1';
-let terminalCwd=homePath,terminalResizeTimer=null,terminalAtPrompt=false,pendingTerminalCwd='';
+let terminalResizeTimer=null,terminalAtPrompt=false,pendingTerminalCwd='';
 function cloneStyle(){return{...term.style}}
 function terminalReset(){term.lines=[[]];term.row=0;term.col=0;term.mode='normal';term.seq='';term.osc='';term.oscEsc=false;term.style={fg:null,bg:null,bold:false,dim:false,underline:false,inverse:false};renderTerminal()}
 function termEnsureRow(r){while(term.lines.length<=r)term.lines.push([])}
@@ -235,6 +252,17 @@ function setIntegratedTerminal(open,focus=true){integratedTerminalOpen=!!open;lo
 function toggleIntegratedTerminal(){if(!$('#view-editor').classList.contains('active')){switchView('editor');setIntegratedTerminal(true);return}setIntegratedTerminal(!integratedTerminalOpen)}
 function promoteTerminal(){moveTerminal($('#terminal-full-mount'));$('#terminal-placement').textContent='Editor';$('#terminal-placement').title='Return terminal to editor';connectTerminal();requestAnimationFrame(terminalResize)}
 function openTerminalHere(path){const target=normalPath(path||workspaceRoot||homePath);if(!ws||ws.readyState>1){setTerminalCwd(target);switchView('editor');setIntegratedTerminal(true);connectTerminal(target);return}requestTerminalDirectory(target);switchView('editor');setIntegratedTerminal(true);setTimeout(terminalResize,50)}
+function terminalSelectedText(){const sel=window.getSelection();if(!sel||sel.isCollapsed)return'';const output=$('#terminal-output');if(!output)return'';const anchor=sel.anchorNode&&output.contains(sel.anchorNode),focus=sel.focusNode&&output.contains(sel.focusNode);return anchor&&focus?sel.toString():''}
+async function terminalPaste(){const text=await readClipboard();if(text===null||!text)return;if(!ws||ws.readyState!==1){toast('Terminal is not connected.',true);return}ws.send(text);$('#terminal-input').focus()}
+function terminalSelectAll(){const screen=$('#terminal-screen'),sel=window.getSelection();if(!screen||!sel)return;const range=document.createRange();range.selectNodeContents(screen);sel.removeAllRanges();sel.addRange(range)}
+$('#terminal-output').addEventListener('contextmenu',e=>{const selected=terminalSelectedText();showActionContextMenu(e,[
+  {label:'Copy',disabled:!selected,run:()=>writeClipboard(selected)},
+  {label:'Paste',disabled:!ws||ws.readyState!==1,run:terminalPaste},
+  {label:'Select All',run:terminalSelectAll},
+  {separator:true},
+  {label:'Clear Terminal',disabled:!ws||ws.readyState!==1,run:()=>{ws.send('\x0c');$('#terminal-input').focus()}},
+  {label:'Reconnect',run:()=>$('#terminal-reconnect').click()}
+])});
 $('#terminal-reconnect').onclick=()=>{if(ws)ws.close();setTimeout(()=>connectTerminal(terminalCwd),120)};$('#terminal-output').onclick=()=>$('#terminal-input').focus();$('#terminal-input').addEventListener('keydown',e=>{if(!ws||ws.readyState!==1)return;let s='';if(e.ctrlKey&&e.key.length===1)s=String.fromCharCode(e.key.toUpperCase().charCodeAt(0)-64);else if(e.key==='Enter'){s='\r';terminalAtPrompt=false}else if(e.key==='Backspace')s='\x7f';else if(e.key==='Tab')s='\t';else if(e.key==='Escape')s='\x1b';else if(e.key==='ArrowUp')s='\x1b[A';else if(e.key==='ArrowDown')s='\x1b[B';else if(e.key==='ArrowRight')s='\x1b[C';else if(e.key==='ArrowLeft')s='\x1b[D';else if(e.key.length===1&&!e.metaKey&&!e.altKey)s=e.key;if(s){e.preventDefault();ws.send(s)}});
 $('#editor-terminal-toggle').onclick=toggleIntegratedTerminal;$('#terminal-hide').onclick=()=>setIntegratedTerminal(false);$('#terminal-placement').onclick=()=>{if($('#view-terminal').classList.contains('active')){integratedTerminalOpen=true;localStorage.setItem('warden.editorTerminalOpen','1');switchView('editor')}else switchView('terminal')};
 addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='`'){e.preventDefault();toggleIntegratedTerminal()}});
