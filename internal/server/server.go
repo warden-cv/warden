@@ -49,6 +49,8 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/workspace/search", a.protect(a.workspaceSearch))
 	mux.HandleFunc("/api/workspace/replace", a.protect(a.workspaceReplace))
 	mux.HandleFunc("/api/workspace/replace/undo", a.protect(a.workspaceUndoReplace))
+	mux.HandleFunc("/api/source-control/status", a.protect(a.sourceControlStatus))
+	mux.HandleFunc("/api/source-control/mutate", a.protect(a.sourceControlMutate))
 	mux.HandleFunc("/api/admin/", a.protect(a.admin))
 	mux.HandleFunc("/api/terminal", a.terminal)
 	mux.Handle("/", http.FileServer(http.Dir(cfg.StaticDir)))
@@ -133,6 +135,13 @@ func (a *app) workspaceReplace(w http.ResponseWriter, r *http.Request) {
 func (a *app) workspaceUndoReplace(w http.ResponseWriter, r *http.Request) {
 	a.audit.Printf("workspace_replace_undo ip=%s", clientIP(r))
 	a.files.workspaceUndoReplace(w, r)
+}
+func (a *app) sourceControlStatus(w http.ResponseWriter, r *http.Request) {
+	a.files.sourceControlStatus(w, r)
+}
+func (a *app) sourceControlMutate(w http.ResponseWriter, r *http.Request) {
+	a.audit.Printf("source_control_mutate ip=%s", clientIP(r))
+	a.files.sourceControlMutate(w, r)
 }
 func (a *app) terminal(w http.ResponseWriter, r *http.Request) {
 	s, ok := a.auth.get(r)

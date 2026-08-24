@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -257,5 +258,41 @@ func TestAdminInputValidation(t *testing.T) {
 	}
 	if _, err := actionUser(adminActionRequest{Action: "lock", Name: "bad;user"}); err == nil {
 		t.Fatal("unsafe username accepted")
+	}
+}
+
+func TestSourceControlStatusAndStage(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	cmd := exec.Command("git", "init", "-q", root)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	f, err := newFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusReq := httptest.NewRequest("GET", "/api/source-control/status?root=/", nil)
+	statusW := httptest.NewRecorder()
+	f.sourceControlStatus(statusW, statusReq)
+	if statusW.Code != 200 || !strings.Contains(statusW.Body.String(), `"untracked":true`) {
+		t.Fatalf("status=%d body=%s", statusW.Code, statusW.Body.String())
+	}
+	stageReq := httptest.NewRequest("POST", "/api/source-control/mutate", strings.NewReader(`{"Root":"/","Action":"stage","Path":"a.txt"}`))
+	stageW := httptest.NewRecorder()
+	f.sourceControlMutate(stageW, stageReq)
+	if stageW.Code != 200 {
+		t.Fatalf("stage=%d body=%s", stageW.Code, stageW.Body.String())
+	}
+	statusReq = httptest.NewRequest("GET", "/api/source-control/status?root=/", nil)
+	statusW = httptest.NewRecorder()
+	f.sourceControlStatus(statusW, statusReq)
+	if statusW.Code != 200 || !strings.Contains(statusW.Body.String(), `"staged":true`) {
+		t.Fatalf("status after stage=%d body=%s", statusW.Code, statusW.Body.String())
 	}
 }

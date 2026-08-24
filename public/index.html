@@ -87,7 +87,7 @@
 		        <aside class="editor-explorer">
 		          <div class="editor-side-head"><span>WORKSPACE</span><div><button id="editor-open-workspace" title="Open workspace">Open</button><button id="editor-close-workspace" title="Close workspace" disabled>Close</button><button id="editor-refresh" title="Refresh">↻</button></div></div>
 		          <div class="editor-side-path" id="editor-tree-path">/</div>
-		          <div class="editor-mode-tabs"><button class="active" data-editor-mode="files">Files</button><button data-editor-mode="search">Search</button></div>
+		          <div class="editor-mode-tabs"><button class="active" data-editor-mode="files">Files</button><button data-editor-mode="search">Search</button><button data-editor-mode="source">Source</button></div>
 		          <div id="editor-tree" class="editor-tree"></div>
 		          <div id="workspace-search" class="workspace-search" hidden>
 		            <div class="search-row"><input id="workspace-query" placeholder="Search workspace"><button id="workspace-case" class="toggle-button" title="Match case">Aa</button><button id="workspace-regex" class="toggle-button" title="Use regular expression">.*</button></div>
@@ -95,6 +95,12 @@
 		            <button id="workspace-replace-all" class="secondary-button wide" disabled>Replace all matches</button>
 		            <div id="workspace-search-summary" class="search-summary">Enter a search term.</div>
 		            <div id="workspace-results" class="workspace-results"></div>
+		          </div>
+		          <div id="source-control" class="source-control" hidden>
+		            <div class="source-head"><div><strong id="source-branch">Source control</strong><span id="source-summary">Open a Git workspace.</span></div><button id="source-refresh" title="Refresh source control">↻</button></div>
+		            <div class="source-commit"><input id="source-commit-message" placeholder="Commit message" disabled><button id="source-commit" class="primary-small" disabled>Commit</button></div>
+		            <div class="source-actions"><button id="source-stage-all" class="secondary-button compact" disabled>Stage all</button><button id="source-unstage-all" class="secondary-button compact" disabled>Unstage all</button></div>
+		            <div id="source-files" class="source-files"><div class="source-empty">Open a workspace to use Git source control.</div></div>
 		          </div>
 		        </aside>
 		        <div id="editor-sidebar-resizer" class="editor-sidebar-resizer" title="Drag to resize file menu"></div>
