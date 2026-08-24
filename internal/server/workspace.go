@@ -1,7 +1,9 @@
 package server
 
 import (
-	"bufio"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type workspaceMatch struct {
@@ -20,6 +23,22 @@ type workspaceMatch struct {
 type workspaceQuery struct {
 	Root, Query, Replacement string
 	Regex, CaseSensitive     bool
+}
+type workspaceUndoFile struct {
+	path, virtual string
+	before        []byte
+	afterHash     [32]byte
+	mode          os.FileMode
+}
+type workspaceUndo struct {
+	created time.Time
+	files   []workspaceUndoFile
+}
+type workspaceChange struct {
+	physical, virtual string
+	before, after     []byte
+	mode              os.FileMode
+	replacements      int
 }
 
 func (f *fileAPI) workspaceSearch(w http.ResponseWriter, r *http.Request) {
@@ -35,6 +54,7 @@ func (f *fileAPI) workspaceSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOut(w, matches)
 }
+
 func (f *fileAPI) workspaceReplace(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method", 405)
@@ -55,7 +75,10 @@ func (f *fileAPI) workspaceReplace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	changed, replacements := 0, 0
+
+	changes := make([]workspaceChange, 0)
+	replacements, backupBytes := 0, int64(0)
+	const maxUndoBytes = int64(32 << 20)
 	err = filepath.WalkDir(root, func(p string, d os.DirEntry, e error) error {
 		if e != nil {
 			return nil
@@ -95,19 +118,137 @@ func (f *fileAPI) workspaceReplace(w http.ResponseWriter, r *http.Request) {
 		if n <= 0 {
 			return nil
 		}
-		if e = writeAtomicPath(p, []byte(next), info.Mode().Perm()); e != nil {
-			return e
+		backupBytes += int64(len(b))
+		if backupBytes > maxUndoBytes {
+			return errWorkspaceUndoTooLarge
 		}
-		changed++
+		rel, relErr := filepath.Rel(f.root, p)
+		if relErr != nil {
+			return relErr
+		}
+		changes = append(changes, workspaceChange{physical: p, virtual: "/" + filepath.ToSlash(rel), before: append([]byte(nil), b...), after: []byte(next), mode: info.Mode().Perm(), replacements: n})
 		replacements += n
 		return nil
 	})
+	if err == errWorkspaceUndoTooLarge {
+		http.Error(w, "replace all is too large for safe undo (32 MiB limit)", http.StatusRequestEntityTooLarge)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	jsonOut(w, map[string]any{"ok": true, "files": changed, "replacements": replacements})
+	if len(changes) == 0 {
+		jsonOut(w, map[string]any{"ok": true, "files": 0, "replacements": 0, "paths": []string{}})
+		return
+	}
+
+	token, err := newWorkspaceUndoToken()
+	if err != nil {
+		http.Error(w, "could not create replace-all undo transaction", 500)
+		return
+	}
+	written := 0
+	for i, c := range changes {
+		if err = writeAtomicPath(c.physical, c.after, c.mode.Perm()); err != nil {
+			for j := written - 1; j >= 0; j-- {
+				_ = writeAtomicPath(changes[j].physical, changes[j].before, changes[j].mode.Perm())
+			}
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		written = i + 1
+	}
+	undo := &workspaceUndo{created: time.Now(), files: make([]workspaceUndoFile, 0, len(changes))}
+	paths := make([]string, 0, len(changes))
+	for _, c := range changes {
+		undo.files = append(undo.files, workspaceUndoFile{path: c.physical, virtual: c.virtual, before: c.before, afterHash: sha256.Sum256(c.after), mode: c.mode})
+		paths = append(paths, c.virtual)
+	}
+	f.workspaceMu.Lock()
+	f.pruneWorkspaceUndosLocked()
+	f.workspaceUndos[token] = undo
+	f.workspaceMu.Unlock()
+	jsonOut(w, map[string]any{"ok": true, "files": len(changes), "replacements": replacements, "paths": paths, "undoToken": token})
 }
+
+var errWorkspaceUndoTooLarge = &workspaceUndoLimitError{}
+
+type workspaceUndoLimitError struct{}
+
+func (*workspaceUndoLimitError) Error() string { return "workspace replace undo limit exceeded" }
+
+func newWorkspaceUndoToken() (string, error) {
+	var b [16]byte
+	if _, e := rand.Read(b[:]); e != nil {
+		return "", e
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+func (f *fileAPI) pruneWorkspaceUndosLocked() {
+	cutoff := time.Now().Add(-15 * time.Minute)
+	for k, v := range f.workspaceUndos {
+		if v.created.Before(cutoff) {
+			delete(f.workspaceUndos, k)
+		}
+	}
+	if len(f.workspaceUndos) < 8 {
+		return
+	}
+	var oldest string
+	var t time.Time
+	for k, v := range f.workspaceUndos {
+		if oldest == "" || v.created.Before(t) {
+			oldest = k
+			t = v.created
+		}
+	}
+	delete(f.workspaceUndos, oldest)
+}
+func (f *fileAPI) workspaceUndoReplace(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method", 405)
+		return
+	}
+	var q struct {
+		Token string `json:"token"`
+	}
+	if json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&q) != nil || q.Token == "" {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	f.workspaceMu.Lock()
+	undo := f.workspaceUndos[q.Token]
+	f.workspaceMu.Unlock()
+	if undo == nil {
+		http.Error(w, "replace-all undo is no longer available", 409)
+		return
+	}
+	for _, u := range undo.files {
+		b, e := os.ReadFile(u.path)
+		if e != nil || sha256.Sum256(b) != u.afterHash {
+			http.Error(w, "cannot undo replace all because a changed file was modified again", 409)
+			return
+		}
+	}
+	restored := 0
+	for i, u := range undo.files {
+		if e := writeAtomicPath(u.path, u.before, u.mode.Perm()); e != nil {
+			http.Error(w, e.Error(), 500)
+			return
+		}
+		restored = i + 1
+	}
+	f.workspaceMu.Lock()
+	delete(f.workspaceUndos, q.Token)
+	f.workspaceMu.Unlock()
+	paths := make([]string, 0, len(undo.files))
+	for _, u := range undo.files {
+		paths = append(paths, u.virtual)
+	}
+	jsonOut(w, map[string]any{"ok": true, "files": restored, "paths": paths})
+}
+
 func (f *fileAPI) searchWorkspace(q workspaceQuery, limit int) ([]workspaceMatch, error) {
 	root, err := f.resolve(q.Root, false)
 	if err != nil {
@@ -139,38 +280,44 @@ func (f *fileAPI) searchWorkspace(q workspaceQuery, limit int) ([]workspaceMatch
 		if e != nil || looksBinary(b) {
 			return nil
 		}
-		sc := bufio.NewScanner(strings.NewReader(string(b)))
-		sc.Buffer(make([]byte, 64<<10), 2<<20)
-		line := 0
-		for sc.Scan() {
-			line++
-			txt := sc.Text()
-			locs := re.FindAllStringIndex(txt, -1)
-			for _, loc := range locs {
-				rel, _ := filepath.Rel(f.root, p)
-				preview := strings.TrimSpace(txt)
-				if len(preview) > 180 {
-					preview = preview[:180] + "…"
+		text := string(b)
+		lines := strings.Split(text, "\n")
+		offset := 0
+		for i, line := range lines {
+			idx := re.FindAllStringIndex(line, -1)
+			for _, loc := range idx {
+				rel, relErr := filepath.Rel(f.root, p)
+				if relErr != nil {
+					continue
 				}
-				out = append(out, workspaceMatch{Path: "/" + filepath.ToSlash(rel), Line: line, Column: loc[0] + 1, Preview: preview})
+				preview := strings.TrimSpace(line)
+				if len(preview) > 220 {
+					preview = preview[:220]
+				}
+				out = append(out, workspaceMatch{Path: "/" + filepath.ToSlash(rel), Line: i + 1, Column: loc[0] + 1, Preview: preview})
 				if len(out) >= limit {
-					return filepath.SkipAll
+					return io.EOF
 				}
 			}
+			offset += len(line) + 1
+			_ = offset
 		}
 		return nil
 	})
+	if err == io.EOF {
+		err = nil
+	}
 	return out, err
 }
 func compileWorkspacePattern(q workspaceQuery) (*regexp.Regexp, error) {
-	pat := q.Query
+	pattern := q.Query
 	if !q.Regex {
-		pat = regexp.QuoteMeta(pat)
+		pattern = regexp.QuoteMeta(pattern)
 	}
 	if !q.CaseSensitive {
-		pat = "(?i)" + pat
+		pattern = "(?i)" + pattern
 	}
-	return regexp.Compile(pat)
+	return regexp.Compile(pattern)
 }
 func looksBinary(b []byte) bool {
 	n := len(b)

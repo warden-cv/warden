@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -109,6 +110,13 @@ func TestWorkspaceSearchAndReplaceConfined(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("replace status %d: %s", w.Code, w.Body.String())
 	}
+	var replaced struct {
+		UndoToken string   `json:"undoToken"`
+		Paths     []string `json:"paths"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &replaced); err != nil || replaced.UndoToken == "" || len(replaced.Paths) != 2 {
+		t.Fatalf("replace response=%s err=%v", w.Body.String(), err)
+	}
 	b, _ := os.ReadFile(filepath.Join(root, "a.txt"))
 	if string(b) != "bye world\nbye again\n" {
 		t.Fatalf("a.txt=%q", b)
@@ -116,6 +124,18 @@ func TestWorkspaceSearchAndReplaceConfined(t *testing.T) {
 	secret, _ := os.ReadFile(filepath.Join(outside, "secret.txt"))
 	if string(secret) != "hello secret\n" {
 		t.Fatalf("symlink target was modified: %q", secret)
+	}
+
+	undoBody := `{"token":"` + replaced.UndoToken + `"}`
+	ur := httptest.NewRequest("POST", "/api/workspace/replace/undo", strings.NewReader(undoBody))
+	uw := httptest.NewRecorder()
+	f.workspaceUndoReplace(uw, ur)
+	if uw.Code != 200 {
+		t.Fatalf("undo status %d: %s", uw.Code, uw.Body.String())
+	}
+	b, _ = os.ReadFile(filepath.Join(root, "a.txt"))
+	if string(b) != "hello world\nHELLO again\n" {
+		t.Fatalf("undo a.txt=%q", b)
 	}
 }
 

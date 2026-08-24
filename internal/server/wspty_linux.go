@@ -7,6 +7,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -15,7 +16,9 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -53,13 +56,18 @@ func servePTY(w http.ResponseWriter, r *http.Request, cwd string) error {
 	cmd.Stdin = slave
 	cmd.Stdout = slave
 	cmd.Stderr = slave
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	promptCommand := `printf '\033]777;warden-cwd=%s\007' "$PWD"`
+	if existing := os.Getenv("PROMPT_COMMAND"); existing != "" {
+		promptCommand += ";" + existing
+	}
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "PROMPT_COMMAND="+promptCommand)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	if e = cmd.Start(); e != nil {
 		return e
 	}
 	slave.Close()
 	done := make(chan struct{})
+	control := &ptyControlState{shellPID: cmd.Process.Pid, done: done}
 	go func() {
 		buf := make([]byte, 8192)
 		for {
@@ -83,7 +91,13 @@ func servePTY(w http.ResponseWriter, r *http.Request, cwd string) error {
 		}
 		switch op {
 		case 1, 2:
-			master.Write(p)
+			if handled, controlErr := handlePTYControl(master, p, control); handled {
+				if controlErr != nil {
+					continue
+				}
+				continue
+			}
+			control.write(master, p)
 		case 8:
 			goto end
 		case 9:
@@ -96,6 +110,123 @@ end:
 	<-done
 	return nil
 }
+
+type winsize struct {
+	Row, Col, Xpixel, Ypixel uint16
+}
+
+type ptyControlState struct {
+	mu       sync.Mutex
+	writeMu  sync.Mutex
+	pending  string
+	worker   bool
+	shellPID int
+	done     <-chan struct{}
+}
+
+func (s *ptyControlState) write(master *os.File, p []byte) (int, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return master.Write(p)
+}
+
+func (s *ptyControlState) queueCwd(master *os.File, path string) {
+	s.mu.Lock()
+	s.pending = path
+	if s.worker {
+		s.mu.Unlock()
+		return
+	}
+	s.worker = true
+	s.mu.Unlock()
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.done:
+				s.mu.Lock()
+				s.worker = false
+				s.mu.Unlock()
+				return
+			case <-ticker.C:
+				if !shellOwnsPTY(master, s.shellPID) {
+					continue
+				}
+				s.mu.Lock()
+				path := s.pending
+				s.pending = ""
+				if path == "" {
+					s.worker = false
+					s.mu.Unlock()
+					return
+				}
+				s.mu.Unlock()
+				cmd := "cd -- " + shellSingleQuote(path) + "\r"
+				_, _ = s.write(master, []byte(cmd))
+				s.mu.Lock()
+				s.worker = false
+				next := s.pending
+				s.mu.Unlock()
+				if next != "" {
+					s.queueCwd(master, next)
+				}
+				return
+			}
+		}
+	}()
+}
+
+func shellOwnsPTY(master *os.File, shellPID int) bool {
+	var foreground int32
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), uintptr(syscall.TIOCGPGRP), uintptr(unsafe.Pointer(&foreground)))
+	if errno != 0 {
+		return false
+	}
+	pgid, err := syscall.Getpgid(shellPID)
+	return err == nil && int(foreground) == pgid
+}
+
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+func handlePTYControl(master *os.File, p []byte, state *ptyControlState) (bool, error) {
+	const prefix = "\x00warden:"
+	if !strings.HasPrefix(string(p), prefix) {
+		return false, nil
+	}
+	var q struct {
+		Type string `json:"type"`
+		Cols uint16 `json:"cols"`
+		Rows uint16 `json:"rows"`
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(p[len(prefix):], &q); err != nil {
+		return true, err
+	}
+	switch q.Type {
+	case "resize":
+		if q.Cols < 20 || q.Rows < 4 || q.Cols > 1000 || q.Rows > 1000 {
+			return true, errors.New("invalid PTY size")
+		}
+		ws := winsize{Row: q.Rows, Col: q.Cols}
+		_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), uintptr(syscall.TIOCSWINSZ), uintptr(unsafe.Pointer(&ws)))
+		if errno != 0 {
+			return true, errno
+		}
+		return true, nil
+	case "cwd":
+		if q.Path == "" || strings.ContainsAny(q.Path, "\x00\r\n") {
+			return true, errors.New("invalid PTY cwd")
+		}
+		state.queueCwd(master, q.Path)
+		return true, nil
+	default:
+		return true, errors.New("unknown PTY control")
+	}
+}
+
 func openPTY() (*os.File, *os.File, error) {
 	m, e := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
 	if e != nil {

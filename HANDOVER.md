@@ -306,13 +306,14 @@ Do not turn Warden into an IDE or a general orchestration platform. The editor e
 
 ### Warden v1 editor/explorer direction
 
-The Editor is workspace-oriented. A workspace is a directory inside the configured Warden filesystem root. Workspace search/replace may traverse regular text files beneath that directory, but must not follow symlinks or special files. Regex search uses Go's regexp/RE2 semantics. Bulk replacement is a privileged write operation and must remain atomic per file.
+The Editor is workspace-oriented. A workspace is a directory inside the configured Warden filesystem root. Workspace search/replace may traverse regular text files beneath that directory, but must not follow symlinks or special files. Regex search uses Go's regexp/RE2 semantics. Bulk replacement is a privileged write operation. It is collected before writes, must remain atomic per file, and returns a short-lived guarded undo transaction; undo must refuse to clobber a file that changed again after the replacement.
 
 Explorer and Editor are separate product surfaces:
 
 - Explorer is for filesystem administration: metadata, multi-selection, upload/download, copy/move/delete, ZIP compression/extraction and media preview.
-- Editor is for text/code work: workspace tree, multi-file tabs, syntax highlighting, accurate caret/native text behavior, save/download and workspace-wide find/replace.
+- Editor is for text/code work: resizable workspace tree, explicit open/close workspace lifecycle, multi-file tabs, syntax highlighting, readable occurrence highlighting, Ctrl+D next-occurrence multi-editing with Ctrl+Z/Ctrl+Shift+Z undo/redo for those edits, Ctrl+Shift+S save-all, accurate caret/native text behavior, save/download and undoable workspace-wide find/replace.
 - Do not merge Explorer back into Editor. The Editor may have its own compact workspace tree, VS Code-style, without replacing the richer Explorer.
+- Opening/changing an Editor workspace also retargets the shared terminal cwd to that workspace; closing the workspace returns it to the configured home start. The PTY backend checks the terminal foreground process group and queues the `cd` until Bash owns the PTY again, so cwd handoff does not depend on shell prompt customisation and does not inject into a running child process.
 
 Terminal output is a PTY stream and should preserve terminal semantics where Warden supports them, including common ANSI/SGR colours. Do not render raw control sequences as user-visible text.
 

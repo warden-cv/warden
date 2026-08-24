@@ -48,6 +48,7 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/files/extract", a.protect(a.extract))
 	mux.HandleFunc("/api/workspace/search", a.protect(a.workspaceSearch))
 	mux.HandleFunc("/api/workspace/replace", a.protect(a.workspaceReplace))
+	mux.HandleFunc("/api/workspace/replace/undo", a.protect(a.workspaceUndoReplace))
 	mux.HandleFunc("/api/admin/", a.protect(a.admin))
 	mux.HandleFunc("/api/terminal", a.terminal)
 	mux.Handle("/", http.FileServer(http.Dir(cfg.StaticDir)))
@@ -129,6 +130,10 @@ func (a *app) workspaceReplace(w http.ResponseWriter, r *http.Request) {
 	a.audit.Printf("workspace_replace ip=%s", clientIP(r))
 	a.files.workspaceReplace(w, r)
 }
+func (a *app) workspaceUndoReplace(w http.ResponseWriter, r *http.Request) {
+	a.audit.Printf("workspace_replace_undo ip=%s", clientIP(r))
+	a.files.workspaceUndoReplace(w, r)
+}
 func (a *app) terminal(w http.ResponseWriter, r *http.Request) {
 	s, ok := a.auth.get(r)
 	if !ok {
@@ -143,8 +148,22 @@ func (a *app) terminal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "origin", 403)
 		return
 	}
-	a.audit.Printf("terminal_open ip=%s", clientIP(r))
-	if e := servePTY(w, r, a.files.shellStart(a.cfg.HomeDir)); e != nil {
+	cwd := a.files.shellStart(a.cfg.HomeDir)
+	if q := r.URL.Query().Get("cwd"); q != "" {
+		if resolved, e := a.files.resolve(q, false); e == nil {
+			if info, statErr := os.Stat(resolved); statErr == nil && info.IsDir() {
+				cwd = resolved
+			} else {
+				http.Error(w, "terminal cwd must be a directory", 400)
+				return
+			}
+		} else {
+			http.Error(w, "invalid terminal cwd", 400)
+			return
+		}
+	}
+	a.audit.Printf("terminal_open ip=%s cwd=%q", clientIP(r), cwd)
+	if e := servePTY(w, r, cwd); e != nil {
 		a.audit.Printf("terminal_error ip=%s err=%q", clientIP(r), e)
 	}
 }

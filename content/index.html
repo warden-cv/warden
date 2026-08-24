@@ -73,7 +73,7 @@
     <section class="view" id="view-editor">
       <div class="editor-workbench panel">
         <aside class="editor-explorer">
-          <div class="editor-side-head"><span>WORKSPACE</span><div><button id="editor-open-workspace" title="Open workspace">Open</button><button id="editor-refresh" title="Refresh">↻</button></div></div>
+          <div class="editor-side-head"><span>WORKSPACE</span><div><button id="editor-open-workspace" title="Open workspace">Open</button><button id="editor-close-workspace" title="Close workspace">Close</button><button id="editor-refresh" title="Refresh">↻</button></div></div>
           <div class="editor-side-path" id="editor-tree-path">/</div>
           <div class="editor-mode-tabs"><button class="active" data-editor-mode="files">Files</button><button data-editor-mode="search">Search</button></div>
           <div id="editor-tree" class="editor-tree"></div>
@@ -85,11 +85,15 @@
             <div id="workspace-results" class="workspace-results"></div>
           </div>
         </aside>
+        <div id="editor-sidebar-resizer" class="editor-sidebar-resizer" title="Drag to resize file menu"></div>
         <div class="editor-main">
           <div id="editor-tabs" class="editor-tabs"><div class="editor-empty-tab">No files open</div></div>
           <div class="editor-toolbar"><span id="editor-path">Open a file from the sidebar.</span><div><span id="editor-status" class="editor-status">No file open</span><button id="download-file" class="secondary-button compact" disabled>Download</button><button id="save-file" class="primary-small" disabled>Save</button></div></div>
-          <div class="code-editor empty" id="code-editor"><pre id="editor-highlight" class="editor-highlight" aria-hidden="true"></pre><textarea id="editor" class="editor-surface" spellcheck="false" aria-label="File editor" disabled></textarea><div id="editor-placeholder" class="editor-placeholder"><strong>Select a text file</strong><span>Use the workspace sidebar to open one or more files.</span></div></div>
-          <div class="editor-statusbar"><span id="editor-language">Plain Text</span><span id="editor-position">Ln 1, Col 1</span></div>
+          <div class="code-editor empty" id="code-editor"><pre id="editor-highlight" class="editor-highlight" aria-hidden="true"></pre><pre id="editor-occurrences" class="editor-occurrences" aria-hidden="true"></pre><textarea id="editor" class="editor-surface" spellcheck="false" aria-label="File editor" disabled></textarea><div id="editor-placeholder" class="editor-placeholder"><strong>Select a text file</strong><span>Use the workspace sidebar to open one or more files.</span></div></div>
+          <div id="editor-terminal-panel" class="editor-terminal-panel" hidden><div id="editor-terminal-resizer" class="editor-terminal-resizer" title="Drag to resize terminal"></div><div id="editor-terminal-mount" class="terminal-mount">
+            <article id="shared-terminal" class="panel terminal-shell"><div class="terminal-head"><div><span class="terminal-dot red"></span><span class="terminal-dot amber"></span><span class="terminal-dot green"></span><strong>warden@<span id="terminal-host">server</span></strong><span id="terminal-cwd" class="terminal-cwd">~</span></div><div><span id="terminal-state" class="terminal-state">Disconnected</span><button id="terminal-reconnect" class="secondary-button compact">Reconnect</button><button id="terminal-placement" class="secondary-button compact" title="Open full Terminal view">Expand</button><button id="terminal-hide" class="secondary-button compact" title="Hide integrated terminal">×</button></div></div><div class="terminal-body" id="terminal-output" tabindex="0"><pre id="terminal-screen"></pre><textarea id="terminal-input" aria-label="Terminal input" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea></div><div class="terminal-foot"><span>Interactive PTY · authenticated WebSocket</span><span>Ctrl+` toggles · session stays alive</span></div></article>
+          </div></div>
+          <div class="editor-statusbar"><span><button id="editor-terminal-toggle" class="editor-status-action" title="Toggle terminal (Ctrl+`)">›_ Terminal</button></span><span id="editor-language">Plain Text</span><span id="editor-position">Ln 1, Col 1</span></div>
         </div>
       </div>
     </section>
@@ -101,7 +105,7 @@
       </div>
     </section>
     <section class="view" id="view-terminal">
-      <article class="panel terminal-shell"><div class="terminal-head"><div><span class="terminal-dot red"></span><span class="terminal-dot amber"></span><span class="terminal-dot green"></span><strong>warden@<span id="terminal-host">server</span></strong></div><div><span id="terminal-state" class="terminal-state">Disconnected</span><button id="terminal-reconnect" class="secondary-button compact">Reconnect</button></div></div><div class="terminal-body" id="terminal-output" tabindex="0"><pre id="terminal-screen"></pre><textarea id="terminal-input" aria-label="Terminal input" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea></div><div class="terminal-foot"><span>Interactive PTY · authenticated WebSocket</span><span>Click terminal to focus</span></div></article>
+      <div id="terminal-full-mount" class="terminal-mount terminal-full-mount"></div>
     </section>
   </main>
 </div>

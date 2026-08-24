@@ -10,9 +10,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
-type fileAPI struct{ root string }
+type fileAPI struct {
+	root           string
+	workspaceMu    sync.Mutex
+	workspaceUndos map[string]*workspaceUndo
+}
 type fileEntry struct {
 	Name     string `json:"name"`
 	Path     string `json:"path"`
@@ -61,7 +66,7 @@ func newFiles(root string) (*fileAPI, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &fileAPI{root: real}, nil
+	return &fileAPI{root: real, workspaceUndos: make(map[string]*workspaceUndo)}, nil
 }
 func (f *fileAPI) resolve(rel string, allowMissing bool) (string, error) {
 	rel = filepath.Clean("/" + rel)
