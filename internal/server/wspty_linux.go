@@ -150,7 +150,7 @@ func (s *ptyControlState) queueCwd(master *os.File, path string) {
 				s.mu.Unlock()
 				return
 			case <-ticker.C:
-				if !shellOwnsPTY(master, s.shellPID) {
+				if !shellOwnsPTY(s.shellPID) {
 					continue
 				}
 				s.mu.Lock()
@@ -177,14 +177,29 @@ func (s *ptyControlState) queueCwd(master *os.File, path string) {
 	}()
 }
 
-func shellOwnsPTY(master *os.File, shellPID int) bool {
-	var foreground int32
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), uintptr(syscall.TIOCGPGRP), uintptr(unsafe.Pointer(&foreground)))
-	if errno != 0 {
+func shellOwnsPTY(shellPID int) bool {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(shellPID) + "/stat")
+	if err != nil {
 		return false
 	}
-	pgid, err := syscall.Getpgid(shellPID)
-	return err == nil && int(foreground) == pgid
+	pgid, tPGID, ok := procStatProcessGroups(string(b))
+	return ok && pgid > 0 && pgid == tPGID
+}
+
+func procStatProcessGroups(stat string) (pgid, tPGID int, ok bool) {
+	// comm (field 2) may contain spaces, so parse fields only after its final ')'.
+	end := strings.LastIndexByte(stat, ')')
+	if end < 0 || end+2 >= len(stat) {
+		return 0, 0, false
+	}
+	fields := strings.Fields(stat[end+2:])
+	// fields[2] is pgrp (stat field 5); fields[5] is tpgid (field 8).
+	if len(fields) < 6 {
+		return 0, 0, false
+	}
+	pgid, err1 := strconv.Atoi(fields[2])
+	tPGID, err2 := strconv.Atoi(fields[5])
+	return pgid, tPGID, err1 == nil && err2 == nil
 }
 
 func shellSingleQuote(s string) string {
