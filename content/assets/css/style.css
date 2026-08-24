@@ -465,3 +465,7 @@ textarea.editor-surface::selection{background:transparent!important;-webkit-text
 /* Shared desktop-style context menu refinements. */
 .file-context-menu .context-menu-separator{height:1px;margin:4px 3px;background:var(--line)}
 .file-context-menu button:disabled{opacity:.42;cursor:default}.file-context-menu button:disabled:hover{background:transparent;color:#d9dbdb}
+
+/* Native primary selection: browser owns drag/selection paint; Warden only paints supplementary matches. */
+textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-fill-color:transparent!important}
+.editor-occurrences .occurrence-primary{background:transparent!important;box-shadow:none!important;border-radius:0!important}
