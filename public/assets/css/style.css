@@ -64,11 +64,11 @@
 .editor-mode-tabs button{border:0;border-bottom:1px solid transparent;background:transparent;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.07em}
 .editor-mode-tabs button.active{color:#fff;border-bottom-color:var(--green);background:#222324}
 .workspace-search{min-height:0;overflow:auto;padding:9px;background:#1b1c1d}
-.search-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px;margin-bottom:6px}
+.search-row{display:grid;width:100%;min-width:0;grid-template-columns:minmax(0,1fr) 31px 31px;gap:4px;margin-bottom:6px;overflow:hidden}
 .search-row:nth-child(2){grid-template-columns:minmax(0,1fr) auto}.search-row.search-only{grid-template-columns:1fr}.search-row.search-only .primary-small{width:100%}
-.search-row input{min-width:0;border:1px solid var(--line2);border-radius:5px;background:#151617;color:var(--text);outline:0;padding:7px 8px;font:10px var(--mono)}
+.search-row input{width:100%;min-width:0;border:1px solid var(--line2);border-radius:5px;background:#151617;color:var(--text);outline:0;padding:7px 8px;font:10px var(--mono)}
 .search-row input:focus{border-color:#555a57}
-.toggle-button{min-width:31px;border:1px solid var(--line2);border-radius:5px;background:#242526;color:var(--muted2);font:9px var(--mono)}
+.toggle-button{width:31px;min-width:0;border:1px solid var(--line2);border-radius:5px;background:#242526;color:var(--muted2);font:9px var(--mono)}
 .toggle-button.active{color:var(--green);border-color:#48604f;background:#253029}
 .secondary-button.wide{width:100%;margin-bottom:8px}
 .search-summary{padding:5px 2px 7px;color:var(--muted);font-size:9px}
@@ -100,7 +100,7 @@ textarea.editor-surface:not(:disabled){cursor:text}
 @keyframes termblink{50%{outline-color:transparent}}
 
 @media(max-width:1050px){.selection-actions .selection-count{display:none}.selection-actions button{padding:7px 6px}}
-@media(max-width:900px){.editor-workbench{--editor-sidebar-width:210px}.selection-actions{position:absolute;right:190px;background:#1f2021;padding-left:6px}.selection-actions [data-bulk="copy"],.selection-actions [data-bulk="move"]{display:none}}
+@media(max-width:900px){.selection-actions{position:absolute;right:190px;background:#1f2021;padding-left:6px}.selection-actions [data-bulk="copy"],.selection-actions [data-bulk="move"]{display:none}}
 .editor-tree,.workspace-search{grid-row:4;min-height:0}
 
 /* checkpoint 5: root explorer, inline tree expansion, wrapped editor, denser monitor */
