@@ -197,14 +197,26 @@ func (f *fileAPI) mutate(w http.ResponseWriter, r *http.Request) {
 	case "rename", "move":
 		var t string
 		t, e = f.resolve(q.Target, true)
-		if e == nil {
-			e = os.Rename(p, t)
+		if e == nil && p != t {
+			if _, statErr := os.Lstat(t); statErr == nil {
+				e = errors.New("target already exists")
+			} else if !errors.Is(statErr, os.ErrNotExist) {
+				e = statErr
+			} else {
+				e = os.Rename(p, t)
+			}
 		}
 	case "copy":
 		var t string
 		t, e = f.resolve(q.Target, true)
 		if e == nil {
-			e = copyPath(p, t)
+			if _, statErr := os.Lstat(t); statErr == nil {
+				e = errors.New("target already exists")
+			} else if !errors.Is(statErr, os.ErrNotExist) {
+				e = statErr
+			} else {
+				e = copyPath(p, t)
+			}
 		}
 	default:
 		http.Error(w, "unsupported operation", 400)

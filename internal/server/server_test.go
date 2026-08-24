@@ -296,3 +296,30 @@ func TestSourceControlStatusAndStage(t *testing.T) {
 		t.Fatalf("status after stage=%d body=%s", statusW.Code, statusW.Body.String())
 	}
 }
+
+func TestFileMutateRefusesOverwrite(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("a"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("b"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	f, err := newFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []string{"move", "rename", "copy"} {
+		body := `{"Op":"` + op + `","Path":"/a.txt","Target":"/b.txt"}`
+		r := httptest.NewRequest("POST", "/api/files/mutate", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		f.mutate(w, r)
+		if w.Code == 200 {
+			t.Fatalf("%s unexpectedly overwrote existing target", op)
+		}
+		b, readErr := os.ReadFile(filepath.Join(root, "b.txt"))
+		if readErr != nil || string(b) != "b" {
+			t.Fatalf("%s changed target: %q %v", op, b, readErr)
+		}
+	}
+}
