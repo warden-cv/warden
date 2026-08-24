@@ -130,6 +130,32 @@ func (s *ptyControlState) write(master *os.File, p []byte) (int, error) {
 	return master.Write(p)
 }
 
+func (s *ptyControlState) writeHidden(master *os.File, p []byte) (int, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	var term syscall.Termios
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), uintptr(syscall.TCGETS), uintptr(unsafe.Pointer(&term)))
+	if errno != 0 {
+		return 0, errno
+	}
+	original := term
+	term.Lflag &^= syscall.ECHO | syscall.ECHONL
+	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), uintptr(syscall.TCSETS), uintptr(unsafe.Pointer(&term)))
+	if errno != 0 {
+		return 0, errno
+	}
+	n, err := master.Write(p)
+	_, _, restoreErrno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), uintptr(syscall.TCSETS), uintptr(unsafe.Pointer(&original)))
+	if err != nil {
+		return n, err
+	}
+	if restoreErrno != 0 {
+		return n, restoreErrno
+	}
+	return n, nil
+}
+
 func (s *ptyControlState) queueCwd(master *os.File, path string) {
 	s.mu.Lock()
 	s.pending = path
@@ -163,7 +189,7 @@ func (s *ptyControlState) queueCwd(master *os.File, path string) {
 				}
 				s.mu.Unlock()
 				cmd := "cd -- " + shellSingleQuote(path) + "\r"
-				_, _ = s.write(master, []byte(cmd))
+				_, _ = s.writeHidden(master, []byte(cmd))
 				s.mu.Lock()
 				s.worker = false
 				next := s.pending
