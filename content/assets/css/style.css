@@ -63,10 +63,10 @@
 .editor-mode-tabs{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line);background:#1d1e1f}
 .editor-mode-tabs button{border:0;border-bottom:1px solid transparent;background:transparent;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.07em}
 .editor-mode-tabs button.active{color:#fff;border-bottom-color:var(--green);background:#222324}
-.workspace-search{min-height:0;overflow:auto;padding:9px;background:#1b1c1d}
-.search-row{display:grid;width:100%;min-width:0;grid-template-columns:minmax(0,1fr) 31px 31px;gap:4px;margin-bottom:6px;overflow:hidden}
+.workspace-search{width:100%;min-width:0;min-height:0;overflow:auto;padding:9px;background:#1b1c1d}
+.search-row{display:grid;width:100%;max-width:100%;min-width:0;grid-template-columns:minmax(0,1fr) 31px 31px;gap:4px;margin-bottom:6px;overflow:hidden}
 .search-row:nth-child(2){grid-template-columns:minmax(0,1fr) auto}.search-row.search-only{grid-template-columns:1fr}.search-row.search-only .primary-small{width:100%}
-.search-row input{width:100%;min-width:0;border:1px solid var(--line2);border-radius:5px;background:#151617;color:var(--text);outline:0;padding:7px 8px;font:10px var(--mono)}
+.search-row input{display:block;width:100%;max-width:100%;min-width:0;border:1px solid var(--line2);border-radius:5px;background:#151617;color:var(--text);outline:0;padding:7px 8px;font:10px var(--mono)}
 .search-row input:focus{border-color:#555a57}
 .toggle-button{width:31px;min-width:0;border:1px solid var(--line2);border-radius:5px;background:#242526;color:var(--muted2);font:9px var(--mono)}
 .toggle-button.active{color:var(--green);border-color:#48604f;background:#253029}
@@ -424,6 +424,17 @@ textarea.editor-surface:not(:disabled){cursor:text}
 /* Editor occurrence highlighting and Ctrl+D multi-selection overlay. */
 .editor-occurrences{position:absolute;z-index:2;inset:0;width:100%;height:100%;box-sizing:border-box;margin:0;border:0;padding:14px 16px;overflow:auto;tab-size:2;font:12px/1.65 var(--mono);letter-spacing:0;font-variant-ligatures:none;pointer-events:none;color:transparent;background:transparent;scrollbar-width:none}
 .editor-occurrences::-webkit-scrollbar{display:none}
-.editor-occurrences .occurrence-match{color:transparent;background:transparent;box-shadow:inset 0 -1px #8d949870}
-.editor-occurrences .occurrence-selected{background:#4ecb7114;box-shadow:inset 0 0 0 1px #7ae394c7;border-radius:2px}
+.editor-occurrences .occurrence-match{color:transparent;background:#8d949826;box-shadow:inset 0 0 0 1px #8d949845;border-radius:2px}
+.editor-occurrences .occurrence-selected{background:#4ecb7138;box-shadow:inset 0 0 0 1px #7ae394d9;border-radius:2px}
 textarea.editor-surface{z-index:3}
+
+/* Keep the resizable editor sidebar usable even when deliberately narrowed. */
+.editor-explorer{container-type:inline-size}
+@container (max-width:220px){
+  .workspace-search{padding:7px}
+  .workspace-search .search-row:first-child{grid-template-columns:minmax(0,1fr) 31px}
+  .workspace-search .search-row:first-child #workspace-query{grid-column:1/-1}
+  .workspace-search .search-row:first-child #workspace-case{grid-column:1}
+  .workspace-search .search-row:first-child #workspace-regex{grid-column:2}
+  .workspace-search .search-row:first-child .toggle-button{width:100%;height:29px}
+}
