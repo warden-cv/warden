@@ -422,7 +422,7 @@ textarea.editor-surface:not(:disabled){cursor:text}
 .tree-row .tree-name{flex:1}.tree-terminal{display:none;flex:0 0 auto;width:28px;height:22px;border:0;border-radius:4px;background:transparent;color:#85898c;font:9px var(--mono)}.tree-row:hover .tree-terminal,.tree-terminal:focus{display:block}.tree-terminal:hover{background:#303132;color:#fff}.terminal-probe{position:absolute;visibility:hidden;pointer-events:none;font:12px/1.55 var(--mono);white-space:pre}
 
 /* Editor occurrence highlighting and Ctrl+D multi-selection overlay. */
-.editor-occurrences{position:absolute;z-index:2;inset:0;width:100%;height:100%;box-sizing:border-box;margin:0;border:0;padding:14px 16px;overflow:auto;tab-size:2;font:12px/1.65 var(--mono);letter-spacing:0;font-variant-ligatures:none;pointer-events:none;color:transparent;background:transparent;scrollbar-width:none}
+.code-editor pre.editor-occurrences{position:absolute;z-index:2;inset:0;width:100%;height:100%;box-sizing:border-box;margin:0;border:0;padding:14px 16px;overflow:auto;tab-size:2;font:12px/1.65 var(--mono);letter-spacing:0;font-variant-ligatures:none;pointer-events:none;color:transparent;background:transparent;scrollbar-width:none}
 .editor-occurrences::-webkit-scrollbar{display:none}
 .editor-occurrences .occurrence-match{color:transparent;background:#5578a24d;box-shadow:inset 0 0 0 1px #7898bd66;border-radius:2px}
 .editor-occurrences .occurrence-selected{background:#4ecb7152;box-shadow:inset 0 0 0 1px #7ae394cc;border-radius:2px}
