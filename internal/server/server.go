@@ -70,6 +70,7 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/source-control/status", a.require("source.read", a.sourceControlStatus))
 	mux.HandleFunc("/api/source-control/mutate", a.require("source.write", a.sourceControlMutate))
 	mux.HandleFunc("/api/admin/", a.protect(a.admin))
+	mux.HandleFunc("/api/warden/export", a.require("settings.manage", a.exportConfiguration))
 	mux.HandleFunc("/api/terminal", a.terminal)
 	mux.Handle("/", http.FileServer(http.Dir(cfg.StaticDir)))
 	srv := &http.Server{Addr: cfg.Listen, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second}
@@ -169,6 +170,17 @@ func (a *app) sessionPayload(s session) map[string]any {
 		"fileRoot":      a.files.virtualRootLabel(),
 		"terminalStart": a.files.shellStart(a.cfg.HomeDir),
 	}
+}
+
+func (a *app) exportConfiguration(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="warden-config-export.json"`)
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(a.portableConfig())
 }
 
 func (a *app) monitor(w http.ResponseWriter, r *http.Request)   { jsonOut(w, monitor(a.files.root)) }

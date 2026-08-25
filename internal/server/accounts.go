@@ -520,6 +520,7 @@ type accountView struct {
 	Roles           []string
 	Identities      []identityView
 	CreatedAt       time.Time
+	Environment     []map[string]string
 }
 
 func publicAccount(a account) accountView {
@@ -534,7 +535,9 @@ func (a *app) collectAccessConfiguration() adminEnvelope {
 	accounts := a.accounts.listAccounts()
 	views := make([]accountView, 0, len(accounts))
 	for _, acct := range accounts {
-		views = append(views, publicAccount(acct))
+		v := publicAccount(acct)
+		v.Environment = sortedEnvironment(a.config.environmentSnapshot().Accounts[acct.ID])
+		views = append(views, v)
 	}
 	return adminEnvelope{Kind: "access", Available: true, Data: map[string]any{"accounts": views, "roles": a.accounts.listRoles(), "capabilities": capabilityCatalog}}
 }
@@ -543,6 +546,10 @@ func (a *app) accessAction(w http.ResponseWriter, r *http.Request) {
 		Action, ID, DisplayName, Username, Password, Email, RoleID, RoleName string
 		Enabled                                                              *bool
 		Roles, Capabilities                                                  []string
+		Variables                                                            []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		} `json:"variables"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10)).Decode(&q) != nil {
 		http.Error(w, "invalid json", 400)
@@ -572,6 +579,16 @@ func (a *app) accessAction(w http.ResponseWriter, r *http.Request) {
 	case "set-role":
 		err = a.accounts.setRole(q.RoleID, q.RoleName, q.Capabilities)
 		msg = "Role saved."
+	case "set-environment":
+		vars := map[string]string{}
+		for _, item := range q.Variables {
+			name := strings.TrimSpace(item.Name)
+			if name != "" {
+				vars[name] = item.Value
+			}
+		}
+		err = a.config.replaceAccountEnvironment(q.ID, vars)
+		msg = "Account environment saved."
 	default:
 		err = errors.New("unsupported action")
 	}
@@ -581,4 +598,15 @@ func (a *app) accessAction(w http.ResponseWriter, r *http.Request) {
 	}
 	a.audit.Printf("warden_access action=%s target=%s ip=%s", q.Action, q.ID, clientIP(r))
 	jsonOut(w, map[string]any{"ok": true, "message": msg})
+}
+
+func (s *accountStore) resetAccounts() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := accountsFile{Version: configSchemaVersion, Accounts: []account{}}
+	if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
+		return err
+	}
+	s.accounts = next
+	return nil
 }

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 const configSchemaVersion = 1
@@ -357,8 +358,9 @@ func (a *app) collectWardenConfiguration() adminEnvelope {
 
 func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 	var q struct {
-		Action    string `json:"action"`
-		Variables []struct {
+		Action       string `json:"action"`
+		Confirmation string `json:"confirmation"`
+		Variables    []struct {
 			Name  string `json:"name"`
 			Value string `json:"value"`
 		} `json:"variables"`
@@ -394,7 +396,76 @@ func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 		}
 		a.audit.Printf("warden_environment_update ip=%s count=%d", clientIP(r), len(vars))
 		jsonOut(w, map[string]any{"ok": true, "message": "Environment saved. New terminal sessions will use it."})
+	case "reset-authentication":
+		if q.Confirmation != "RESET" {
+			http.Error(w, "type RESET to confirm", http.StatusBadRequest)
+			return
+		}
+		if err := a.accounts.resetAccounts(); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		a.auth.revokeAll()
+		a.audit.Printf("warden_authentication_reset ip=%s", clientIP(r))
+		jsonOut(w, map[string]any{"ok": true, "message": "Authentication reset. Reload Warden to create a new administrator.", "setupRequired": true})
 	default:
 		http.Error(w, "unsupported action", http.StatusBadRequest)
 	}
+}
+
+func (s *configStore) replaceAccountEnvironment(accountID string, vars map[string]string) error {
+	if strings.TrimSpace(accountID) == "" {
+		return errors.New("account id is required")
+	}
+	s.mu.RLock()
+	next := environmentConfigFile{Version: configSchemaVersion, Global: cloneStringMap(s.environment.Global), Accounts: map[string]map[string]string{}}
+	for id, av := range s.environment.Accounts {
+		next.Accounts[id] = cloneStringMap(av)
+	}
+	s.mu.RUnlock()
+	if len(vars) == 0 {
+		delete(next.Accounts, accountID)
+	} else {
+		next.Accounts[accountID] = cloneStringMap(vars)
+	}
+	if err := validateEnvironmentConfig(next); err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(filepath.Join(s.dir, "environment.json"), next, true); err != nil {
+		return err
+	}
+	return s.reload()
+}
+
+func detectInstallMethod(executable string) string {
+	p := filepath.Clean(executable)
+	switch {
+	case strings.Contains(p, "/snap/"):
+		return "snap"
+	case strings.Contains(p, "/linuxbrew/") || strings.Contains(p, "/homebrew/"):
+		return "homebrew"
+	case strings.HasPrefix(p, "/usr/bin/") || strings.HasPrefix(p, "/usr/local/bin/"):
+		return "system-or-standalone"
+	default:
+		return "standalone"
+	}
+}
+
+type portableConfigBundle struct {
+	Version     int                   `json:"version"`
+	ExportedAt  time.Time             `json:"exported_at"`
+	Instance    instanceConfigFile    `json:"instance"`
+	Environment environmentConfigFile `json:"environment"`
+	Accounts    accountsFile          `json:"accounts"`
+	Roles       rolesFile             `json:"roles"`
+}
+
+func (a *app) portableConfig() portableConfigBundle {
+	a.accounts.mu.RLock()
+	users := a.accounts.accounts
+	users.Accounts = append([]account(nil), users.Accounts...)
+	roles := a.accounts.roles
+	roles.Roles = append([]role(nil), roles.Roles...)
+	a.accounts.mu.RUnlock()
+	return portableConfigBundle{Version: 1, ExportedAt: time.Now().UTC(), Instance: a.config.instanceSnapshot(), Environment: a.config.environmentSnapshot(), Accounts: users, Roles: roles}
 }

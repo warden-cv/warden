@@ -114,6 +114,12 @@ func (a *authStore) get(r *http.Request) (session, bool) {
 	}
 	return s, true
 }
+func (a *authStore) revokeAll() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sessions = map[string]session{}
+	_ = a.persistSessionsLocked()
+}
 func (a *authStore) revokeAccount(accountID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
