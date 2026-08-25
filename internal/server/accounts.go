@@ -498,6 +498,48 @@ func (s *accountStore) verifyIdentityPassword(accountID, identityID, password st
 	return ok && a.ID == accountID && a.Enabled && id.Enabled && id.Type == "password" && verifyPassword(id.PasswordHash, password)
 }
 
+func (s *accountStore) setIdentityPassword(accountID, identityID, password string) error {
+	if len(password) < 10 {
+		return errors.New("password must be at least 10 characters")
+	}
+	hash, err := hashPassword(password)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.accounts
+	next.Accounts = append([]account(nil), s.accounts.Accounts...)
+	found := false
+	for i := range next.Accounts {
+		if next.Accounts[i].ID != accountID {
+			continue
+		}
+		next.Accounts[i].Identities = append([]loginIdentity(nil), next.Accounts[i].Identities...)
+		for j := range next.Accounts[i].Identities {
+			id := &next.Accounts[i].Identities[j]
+			if id.ID == identityID {
+				if id.Type != "password" {
+					return errors.New("identity is not a password login")
+				}
+				id.PasswordHash = hash
+				found = true
+			}
+		}
+	}
+	if !found {
+		return errors.New("identity not found")
+	}
+	if err := validateAccounts(next, s.roles); err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
+		return err
+	}
+	s.accounts = next
+	return nil
+}
+
 func (s *accountStore) setIdentityTOTP(accountID, identityID string, enabled bool, recoveryHashes []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -780,6 +822,12 @@ func (a *app) accessAction(w http.ResponseWriter, r *http.Request) {
 	case "add-password":
 		err = a.accounts.addPasswordIdentity(q.ID, q.Username, q.Password)
 		msg = "Password identity added."
+	case "reset-password":
+		err = a.accounts.setIdentityPassword(q.ID, q.IdentityID, q.Password)
+		if err == nil {
+			a.auth.revokeIdentity(q.IdentityID)
+			msg = "Password reset and sessions for that login revoked."
+		}
 	case "revoke-sessions":
 		a.auth.revokeAccount(q.ID)
 		msg = "Account sessions revoked."

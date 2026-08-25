@@ -85,8 +85,8 @@ func (a *app) security(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var q struct {
-		Action, Password, Code, Enrollment, SessionID string
-		Variables                                     []struct {
+		Action, Password, NewPassword, Code, Enrollment, SessionID string
+		Variables                                                  []struct {
 			Name  string `json:"name"`
 			Value string `json:"value"`
 		} `json:"variables"`
@@ -105,6 +105,22 @@ func (a *app) security(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch q.Action {
+	case "change-password":
+		if identity.Type != "password" {
+			http.Error(w, "current login is not a password identity", 400)
+			return
+		}
+		if !a.accounts.verifyIdentityPassword(sess.AccountID, sess.IdentityID, q.Password) {
+			http.Error(w, "current password is incorrect", 403)
+			return
+		}
+		if err := a.accounts.setIdentityPassword(sess.AccountID, sess.IdentityID, q.NewPassword); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		a.auth.revokeIdentityExcept(sess.IdentityID, a.auth.currentSessionID(r))
+		a.auditEvent(r, "password_changed", "")
+		jsonOut(w, map[string]any{"ok": true, "message": "Password changed. Other sessions using this login were revoked."})
 	case "set-environment":
 		vars := map[string]string{}
 		for _, item := range q.Variables {

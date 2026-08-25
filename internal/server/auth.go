@@ -233,6 +233,17 @@ func (a *authStore) revokeIdentity(identityID string) {
 	}
 	_ = a.persistSessionsLocked()
 }
+
+func (a *authStore) revokeIdentityExcept(identityID, keepSessionID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for id, s := range a.sessions {
+		if s.IdentityID == identityID && id != keepSessionID {
+			delete(a.sessions, id)
+		}
+	}
+	_ = a.persistSessionsLocked()
+}
 func (a *authStore) currentSessionID(r *http.Request) string {
 	c, err := r.Cookie("warden_session")
 	if err != nil {
