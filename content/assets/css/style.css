@@ -613,3 +613,18 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 .agent-workspace-dir>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .agent-workspace-empty{display:grid;place-items:center;height:100%;color:var(--muted);font-size:11px}
 .agent-workspace-dialog>footer{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+
+/* Keep narrow Agent tab strips compact when many sessions are open. */
+.agent-session-tabs{scrollbar-width:none;overscroll-behavior-x:contain}
+.agent-session-tabs::-webkit-scrollbar{display:none}
+.agent-sessionbar.compact .agent-session-tab{min-width:88px;max-width:132px;padding:0 8px}
+.agent-sessionbar.compact .agent-session-close{font-size:13px}
+.agent-new-wrap{flex:0 0 auto}
+
+/* Give the composer resize handle its own divider band above the textarea. */
+.agent-compose{grid-template-rows:18px minmax(0,1fr) auto;border-top:1px solid var(--line)}
+.agent-compose-resizer{height:18px;margin:0 -16px 6px;cursor:ns-resize;position:relative;touch-action:none;background:#18191a}
+.agent-compose-resizer::after{top:8px;width:44px;height:2px}
+.editor-agent-compose{grid-template-rows:16px minmax(0,1fr) auto}
+.editor-agent-compose .agent-compose-resizer{height:16px;margin:0 -10px 6px;background:#18191a}
+.editor-agent-compose .agent-compose-resizer::after{top:7px}

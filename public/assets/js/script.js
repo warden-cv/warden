@@ -33,7 +33,7 @@ $('#logout').onclick=async()=>{try{await api('/api/logout',{method:'POST'})}catc
 $$('.nav-item[data-view]').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
 $('#system-menu-toggle').onclick=()=>{const open=$('#system-menu').hidden;$('#system-menu').hidden=!open;$('#system-menu-toggle').setAttribute('aria-expanded',String(open));$('#system-menu-toggle .nav-chevron').textContent=open?'▾':'▸'};
 $$('.nav-subitem[data-admin]').forEach(b=>b.onclick=()=>openAdmin(b.dataset.admin));
-function switchView(v){$$('.nav-item[data-view]').forEach(x=>x.classList.toggle('active',x.dataset.view===v));if(v!=='admin')$$('.nav-subitem').forEach(x=>x.classList.remove('active'));$$('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+v));const m=viewMeta[v]||['System','System'];$('#section-kicker').textContent=m[0];$('#section-title').textContent=m[1];if(v==='terminal')promoteTerminal();if(v==='editor'){restoreIntegratedTerminal();loadEditorTree(editorTreePath)}if(v==='agent'){updateAgentWorkspace();loadAgentStatus()}if(v==='explorer')loadFiles(currentPath);requestAnimationFrame(()=>{drawCharts();terminalResize()})}
+function switchView(v){$$('.nav-item[data-view]').forEach(x=>x.classList.toggle('active',x.dataset.view===v));if(v!=='admin')$$('.nav-subitem').forEach(x=>x.classList.remove('active'));$$('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+v));const m=viewMeta[v]||['System','System'];$('#section-kicker').textContent=m[0];$('#section-title').textContent=m[1];if(v==='terminal')promoteTerminal();if(v==='editor'){restoreIntegratedTerminal();loadEditorTree(editorTreePath)}if(v==='agent'){updateAgentWorkspace();loadAgentStatus();if(!agentActive()?.workspace)setTimeout(openAgentWorkspacePicker,0)}if(v==='explorer')loadFiles(currentPath);requestAnimationFrame(()=>{drawCharts();terminalResize()})}
 function openAdmin(kind){currentAdmin=kind;switchView('admin');$$('.nav-subitem').forEach(x=>x.classList.toggle('active',x.dataset.admin===kind));$('#system-menu').hidden=false;$('#system-menu-toggle').setAttribute('aria-expanded','true');$('#system-menu-toggle .nav-chevron').textContent='▾';const meta=adminMeta[kind]||['System','System','Structured server administration.'];$('#section-kicker').textContent='System';$('#section-title').textContent=meta[0];$('#admin-eyebrow').textContent=meta[1];$('#admin-heading').textContent=meta[0];$('#admin-description').textContent=meta[2];loadAdmin(kind)}
 function bytes(n){if(!Number.isFinite(n))return'—';const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return`${n<10&&i?n.toFixed(1):n.toFixed(i?1:0)} ${u[i]}`}
 function uptime(n){const d=Math.floor(n/86400),h=Math.floor(n%86400/3600),m=Math.floor(n%3600/60);return[d?d+'d':'',h+'h',m+'m'].filter(Boolean).join(' ')}
@@ -413,6 +413,7 @@ setInterval(()=>{$('#clock').textContent=new Date().toLocaleTimeString([],{hour:
 // Coding agent
 let agentProviders=[],agentSessions={},agentClosedSessions=[],activeAgentSessionId='';
 function agentSessionsStorageKey(){return'warden.agentSessions.v2.'+(currentAccountId||'anonymous')}
+let agentWorkspaceBrowsePath='';const agentComposerHeightKey='warden.agentComposerHeight.v1',editorAgentComposerHeightKey='warden.editorAgentComposerHeight.v1';
 function agentSid(){return crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2)}
 function agentSessionTitle(s){if(s.title)return s.title;if(s.workspace)return s.workspace.split('/').filter(Boolean).pop()||s.workspace;return'New session'}
 function safeAgentSession(s){return{id:s.id,workspace:s.workspace||'',title:s.title||'',provider:s.provider||'opencode',openCodeSession:s.openCodeSession||'',events:s.events||[]}}
@@ -424,11 +425,67 @@ function closeAgentSession(id){const s=agentSessions[id];if(!s)return;if(s.busy&
 function restoreAgentSession(id){const i=agentClosedSessions.findIndex(x=>x.id===id);if(i<0)return;const s=agentClosedSessions.splice(i,1)[0];agentSessions[id]={...s,busy:false,abort:null};delete agentSessions[id].closedAt;activeAgentSessionId=id;saveAgentSessions();hideAgentMenus();renderAgentSession();loadAgentStatus()}
 function newAgentSameWorkspace(){const s=agentActive();newAgentSession(s?.workspace||workspaceRoot||'');hideAgentMenus();loadAgentStatus()}
 function newAgentWorkspace(){newAgentSession('',true);hideAgentMenus();chooseAgentWorkspace()}
-function chooseAgentWorkspace(){const s=agentActive();if(!s)return;const suggested=s.workspace||workspaceRoot||currentPath||homePath;const p=prompt('Agent workspace directory',suggested);if(!p)return;s.workspace=normalPath(p);s.openCodeSession='';s.title='';s.events=[];saveAgentSessions();renderAgentSession()}
 function hideAgentMenus(){$('#agent-session-menu').hidden=true;$('#editor-agent-session-menu').hidden=true}
+
+function agentWorkspaceBrowseRoot(){return normalPath(terminalRoot||homePath||'/')}
+function agentWorkspaceParent(path){const root=agentWorkspaceBrowseRoot(),p=normalPath(path||root);if(p===root)return root;const parent=pathParent(p);return isSameOrChild(parent,root)?parent:root}
+async function browseAgentWorkspace(path){
+  const root=agentWorkspaceBrowseRoot(),next=normalPath(path||homePath||root);
+  agentWorkspaceBrowsePath=isSameOrChild(next,root)?next:root;
+  $('#agent-workspace-path').textContent=agentWorkspaceBrowsePath;
+  $('#agent-workspace-up').disabled=agentWorkspaceBrowsePath===root;
+  const list=await api('/api/files?path='+encodeURIComponent(agentWorkspaceBrowsePath));
+  const box=$('#agent-workspace-dirs');box.innerHTML='';
+  const dirs=list.filter(x=>x.dir);
+  if(!dirs.length){box.innerHTML='<div class="agent-workspace-empty">No subdirectories</div>';return}
+  for(const d of dirs){
+    const b=document.createElement('button');b.type='button';b.className='agent-workspace-dir';
+    const arrow=document.createElement('span');arrow.textContent='›';
+    const name=document.createElement('span');name.textContent=d.name;
+    b.append(arrow,name);b.onclick=()=>browseAgentWorkspace(d.path);box.append(b)
+  }
+}
+async function openAgentWorkspacePicker(){
+  const s=agentActive();if(!s)return;
+  $('#agent-workspace-modal').hidden=false;
+  try{await browseAgentWorkspace(s.workspace||workspaceRoot||homePath||agentWorkspaceBrowseRoot())}
+  catch(e){toast(e.message,true)}
+}
+function closeAgentWorkspacePicker(){$('#agent-workspace-modal').hidden=true}
+function useAgentWorkspace(){
+  const s=agentActive();if(!s||!agentWorkspaceBrowsePath)return;
+  s.workspace=agentWorkspaceBrowsePath;s.openCodeSession='';if(!s.events.length)s.title='';
+  saveAgentSessions();closeAgentWorkspacePicker();renderAgentSession();loadAgentStatus();toast('Agent workspace selected')
+}
+function chooseAgentWorkspace(){openAgentWorkspacePicker()}
+function clampAgentComposerHeight(form,height){
+  const host=form.closest('.agent-panel,.editor-agent-panel');
+  const max=Math.max(140,Math.floor((host?.getBoundingClientRect().height||600)*.58));
+  return Math.max(110,Math.min(max,Number(height)||150))
+}
+function applyAgentComposerHeight(form,height,persist=false){
+  if(!form)return 0;const value=clampAgentComposerHeight(form,height);
+  form.style.height=value+'px';form.style.flex='0 0 '+value+'px';
+  if(form.id==='editor-agent-form')form.closest('.editor-agent-panel')?.style.setProperty('--editor-agent-compose-height',value+'px');
+  if(persist)localStorage.setItem(form.id==='editor-agent-form'?editorAgentComposerHeightKey:agentComposerHeightKey,String(Math.round(value)));
+  return value
+}
+function startAgentComposerResize(e,form){
+  if(e.button!==0)return;e.preventDefault();
+  const startY=e.clientY,startHeight=form.getBoundingClientRect().height;
+  document.body.classList.add('agent-compose-resizing');
+  const move=ev=>applyAgentComposerHeight(form,startHeight+(startY-ev.clientY));
+  const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);document.body.classList.remove('agent-compose-resizing');applyAgentComposerHeight(form,form.getBoundingClientRect().height,true)};
+  document.addEventListener('pointermove',move);document.addEventListener('pointerup',up)
+}
+function restoreAgentComposerHeights(){
+  applyAgentComposerHeight($('#agent-form'),Number(localStorage.getItem(agentComposerHeightKey))||150);
+  applyAgentComposerHeight($('#editor-agent-form'),Number(localStorage.getItem(editorAgentComposerHeightKey))||128)
+}
+
 function buildAgentMenu(box){box.innerHTML='';const item=(title,meta,fn)=>{const b=document.createElement('button');b.type='button';const strong=document.createElement('strong');strong.textContent=title;const span=document.createElement('span');span.textContent=meta;b.append(strong,span);b.onclick=fn;box.append(b)};item('New session','Same workspace',newAgentSameWorkspace);item('New workspace','Choose another directory',newAgentWorkspace);if(agentClosedSessions.length){const hr=document.createElement('div');hr.className='agent-session-divider';box.append(hr);for(const s of agentClosedSessions.slice(0,8))item('Restore '+agentSessionTitle(s),s.workspace||'No workspace',()=>restoreAgentSession(s.id))}}
 function toggleAgentMenu(which){const box=$(which);const open=box.hidden;hideAgentMenus();if(open){buildAgentMenu(box);box.hidden=false}}
-function renderAgentTabs(target){const box=$(target);if(!box)return;box.innerHTML='';for(const s of Object.values(agentSessions)){const b=document.createElement('button');b.type='button';b.className='agent-session-tab'+(s.id===activeAgentSessionId?' active':'');const title=document.createElement('span');title.textContent=agentSessionTitle(s);const close=document.createElement('span');close.textContent='×';close.className='agent-session-close';close.onclick=e=>{e.stopPropagation();closeAgentSession(s.id)};b.append(title,close);b.onclick=()=>{activeAgentSessionId=s.id;saveAgentSessions();renderAgentSession();loadAgentStatus()};box.append(b)}}
+function renderAgentTabs(target){const box=$(target);if(!box)return;box.innerHTML='';for(const s of Object.values(agentSessions)){const b=document.createElement('button');b.type='button';b.className='agent-session-tab'+(s.id===activeAgentSessionId?' active':'');const title=document.createElement('span');title.textContent=agentSessionTitle(s);const close=document.createElement('span');close.textContent='×';close.className='agent-session-close';close.onclick=e=>{e.stopPropagation();closeAgentSession(s.id)};b.append(title,close);b.onclick=()=>{activeAgentSessionId=s.id;saveAgentSessions();renderAgentSession();loadAgentStatus()};box.append(b);if(s.id===activeAgentSessionId)requestAnimationFrame(()=>b.scrollIntoView({block:'nearest',inline:'nearest'}))}}
 function renderAgentToolEvent(row,text){const lines=String(text).split('\n'),m=lines[0].match(/^↳ ([a-zA-Z0-9_.:-]+) · (completed|error|running|pending)$/);if(!m){row.textContent=text;return}const head=document.createElement('div');head.className='agent-tool-head';const arrow=document.createElement('span');arrow.className='agent-tool-arrow';arrow.textContent='↳ ';const tool=document.createElement('span');tool.className='agent-tool-name';tool.textContent=m[1];const dot=document.createElement('span');dot.className='agent-tool-separator';dot.textContent=' · ';const status=document.createElement('span');status.className='agent-tool-status '+m[2];status.textContent=m[2];head.append(arrow,tool,dot,status);row.append(head);if(lines.length>1){const body=document.createElement('div');body.className='agent-tool-body';body.textContent=lines.slice(1).join('\n');row.append(body)}}
 function agentEventNode(ev){const row=document.createElement('div');row.className='agent-event '+ev.kind;row.dataset.kind=ev.kind;if(ev.kind==='tool')renderAgentToolEvent(row,ev.text);else row.textContent=ev.text;return row}
 function renderAgentFeed(target){const box=$(target),s=agentActive();if(!box||!s)return;box.innerHTML='';if(!s.events.length){box.innerHTML='<div class="agent-empty"><strong>Give Warden a development task</strong><span>The agent can inspect and modify the selected workspace, run commands, Git and tests through OpenCode.</span></div>';return}for(const ev of s.events)box.append(agentEventNode(ev));box.scrollTop=box.scrollHeight}
@@ -443,6 +500,18 @@ function summarizeAgentTool(raw){const part=raw.part||raw,state=part.state||{},t
 function summarizeAgentEvent(ev){const d=ev?.data||{},raw=d.data||d,type=(d.type||raw.type||'').toString();if(ev.type==='error')return raw.message||'Agent failed';if(ev.type==='diagnostic')return raw.message||'';if(ev.type==='recovered')return raw.text||'';if(ev.type==='done'){const i=raw.inputTokens||0,o=raw.outputTokens||0;return i||o?`Done · ${i} input · ${o} output tokens`:'Done'}if(ev.type==='output')return raw.text||'';if(type.includes('tool'))return summarizeAgentTool(raw);const text=raw.part?.text||raw.text||raw.content||raw.message?.content;if(typeof text==='string')return text;if(Array.isArray(text))return text.map(x=>x?.text||'').filter(Boolean).join('\n');return''}
 async function runAgent(prompt){const s=agentActive();if(!s||s.busy||!s.workspace)return;const id=s.id;s.busy=true;s.abort=new AbortController();if(!s.title)s.title=prompt.split(/\s+/).slice(0,5).join(' ');addAgentEvent(id,'user',prompt);renderAgentSession();if(id===activeAgentSessionId){$('#agent-state').textContent='Working…';$('#editor-agent-state').textContent='Working…'}try{const r=await fetch('/api/agent/run',{method:'POST',headers:{'Content-Type':'application/json','X-Warden-CSRF':csrf},body:JSON.stringify({workspace:s.workspace,prompt,session:s.openCodeSession||'',clientSession:id,provider:s.provider||'opencode'}),signal:s.abort.signal});if(!r.ok)throw Error((await r.text()).trim()||r.statusText);const reader=r.body.getReader(),dec=new TextDecoder();let buf='';for(;;){const{value,done}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true});let nl;while((nl=buf.indexOf('\n'))>=0){const line=buf.slice(0,nl).trim();buf=buf.slice(nl+1);if(!line)continue;try{const ev=JSON.parse(line),text=summarizeAgentEvent(ev),raw=ev?.data?.data||ev?.data||{},t=String(raw.type||'');if(ev.type==='done'&&raw.sessionID)s.openCodeSession=raw.sessionID;if(text)addAgentEvent(id,ev.type==='error'||ev.type==='diagnostic'?'error':ev.type==='done'?'done':t.includes('tool')?'tool':'assistant',text)}catch{addAgentEvent(id,'assistant',line)}}}if(s.workspace===workspaceRoot){loadEditorTree(editorTreePath);loadSourceControl()}}catch(e){addAgentEvent(id,'error',e.name==='AbortError'?'Agent stopped.':e.message)}finally{if(agentSessions[id]){agentSessions[id].busy=false;agentSessions[id].abort=null;saveAgentSessions()}if(id===activeAgentSessionId){renderAgentSession();loadAgentStatus()}}}
 function changeAgentProvider(value){const s=agentActive();if(!s)return;s.provider=value;s.openCodeSession='';saveAgentSessions();populateAgentProviders();loadAgentStatus()}
+$('#agent-workspace')?.addEventListener('click',openAgentWorkspacePicker);
+$('#editor-agent-workspace')?.addEventListener('click',openAgentWorkspacePicker);
+$('#agent-workspace-up')?.addEventListener('click',()=>browseAgentWorkspace(agentWorkspaceParent(agentWorkspaceBrowsePath)));
+$('#agent-workspace-use')?.addEventListener('click',useAgentWorkspace);
+$('#agent-workspace-close')?.addEventListener('click',closeAgentWorkspacePicker);
+$('#agent-workspace-cancel')?.addEventListener('click',closeAgentWorkspacePicker);
+$$('[data-close-agent-workspace]').forEach(x=>x.addEventListener('click',closeAgentWorkspacePicker));
+$('#agent-compose-resizer')?.addEventListener('pointerdown',e=>startAgentComposerResize(e,$('#agent-form')));
+$('#editor-agent-compose-resizer')?.addEventListener('pointerdown',e=>startAgentComposerResize(e,$('#editor-agent-form')));
+$('#agent-compose-resizer')?.addEventListener('dblclick',()=>applyAgentComposerHeight($('#agent-form'),150,true));
+$('#editor-agent-compose-resizer')?.addEventListener('dblclick',()=>applyAgentComposerHeight($('#editor-agent-form'),128,true));
+restoreAgentComposerHeights();
 $('#agent-form')?.addEventListener('submit',e=>{e.preventDefault();const p=$('#agent-prompt').value.trim();if(!p)return;$('#agent-prompt').value='';runAgent(p)});
 $('#agent-prompt')?.addEventListener('keydown',e=>{if(e.key!=='Enter'||e.shiftKey||e.isComposing)return;e.preventDefault();const p=e.currentTarget.value.trim();if(!p)return;e.currentTarget.value='';runAgent(p)});
 $('#agent-stop')?.addEventListener('click',()=>agentActive()?.abort?.abort());
@@ -452,17 +521,19 @@ $('#editor-agent-provider')?.addEventListener('change',e=>changeAgentProvider(e.
 $('#agent-new')?.addEventListener('click',e=>{e.stopPropagation();toggleAgentMenu('#agent-session-menu')});
 $('#editor-agent-new')?.addEventListener('click',e=>{e.stopPropagation();toggleAgentMenu('#editor-agent-session-menu')});
 document.addEventListener('click',e=>{if(!e.target.closest('.agent-new-wrap'))hideAgentMenus()});
+for(const strip of $$('.agent-session-tabs'))strip.addEventListener('wheel',e=>{if(strip.scrollWidth<=strip.clientWidth)return;if(Math.abs(e.deltaY)>Math.abs(e.deltaX)){e.preventDefault();strip.scrollLeft+=e.deltaY}},{passive:false});
+
 
 // Integrated Editor coding-agent pane.
 const editorAgentWidthKey='warden.editorAgentWidth.v1',editorAgentOpenKey='warden.editorAgentOpen.v1';
 function clampEditorAgentWidth(w){const bench=$('.editor-workbench'),rect=bench.getBoundingClientRect(),min=280,max=Math.max(min,Math.min(620,rect.width-420));return Math.max(min,Math.min(max,w))}
 function applyEditorAgentWidth(w,persist=false){const bench=$('.editor-workbench'),value=clampEditorAgentWidth(w);bench.style.setProperty('--editor-agent-width',value+'px');if(persist)localStorage.setItem(editorAgentWidthKey,String(Math.round(value)));terminalResize()}
-function setEditorAgent(open,persist=true){const bench=$('.editor-workbench'),panel=$('#editor-agent-panel');if(!can('agent.run'))open=false;bench.classList.toggle('agent-open',open);panel.hidden=!open;$('#editor-agent-toggle')?.classList.toggle('active',open);if(persist)localStorage.setItem(editorAgentOpenKey,open?'1':'0');if(open){updateAgentWorkspace();loadAgentStatus()}requestAnimationFrame(terminalResize)}
+function setEditorAgent(open,persist=true){const bench=$('.editor-workbench'),panel=$('#editor-agent-panel');if(!can('agent.run'))open=false;bench.classList.toggle('agent-open',open);panel.hidden=!open;$('#editor-agent-toggle')?.classList.toggle('active',open);if(persist)localStorage.setItem(editorAgentOpenKey,open?'1':'0');if(open){updateAgentWorkspace();loadAgentStatus();if(!agentActive()?.workspace)setTimeout(openAgentWorkspacePicker,0)}requestAnimationFrame(terminalResize)}
 $('#editor-agent-toggle')?.addEventListener('click',()=>setEditorAgent(!$('.editor-workbench').classList.contains('agent-open')));
 $('#editor-agent-collapse')?.addEventListener('click',()=>setEditorAgent(false));
 const editorAgentResizer=$('#editor-agent-resizer');editorAgentResizer?.addEventListener('pointerdown',e=>{e.preventDefault();editorAgentResizer.setPointerCapture(e.pointerId);editorAgentResizer.classList.add('dragging');const bench=$('.editor-workbench'),rect=bench.getBoundingClientRect();const move=ev=>applyEditorAgentWidth(rect.right-ev.clientX,true);const up=ev=>{editorAgentResizer.classList.remove('dragging');editorAgentResizer.releasePointerCapture(ev.pointerId);editorAgentResizer.removeEventListener('pointermove',move);editorAgentResizer.removeEventListener('pointerup',up)};editorAgentResizer.addEventListener('pointermove',move);editorAgentResizer.addEventListener('pointerup',up)});
 const savedAgentWidth=Number(localStorage.getItem(editorAgentWidthKey));requestAnimationFrame(()=>{applyEditorAgentWidth(Number.isFinite(savedAgentWidth)&&savedAgentWidth>=280?savedAgentWidth:360);setEditorAgent(localStorage.getItem(editorAgentOpenKey)==='1',false)});
-addEventListener('resize',()=>{const current=parseFloat(getComputedStyle($('.editor-workbench')).getPropertyValue('--editor-agent-width'))||360;applyEditorAgentWidth(current)});
+addEventListener('resize',()=>{const current=parseFloat(getComputedStyle($('.editor-workbench')).getPropertyValue('--editor-agent-width'))||360;applyEditorAgentWidth(current)});addEventListener('resize',()=>{applyAgentComposerHeight($('#agent-form'),$('#agent-form')?.getBoundingClientRect().height||150);applyAgentComposerHeight($('#editor-agent-form'),$('#editor-agent-form')?.getBoundingClientRect().height||128)});
 $('#editor-agent-form')?.addEventListener('submit',e=>{e.preventDefault();const p=$('#editor-agent-prompt').value.trim();if(!p)return;$('#editor-agent-prompt').value='';runAgent(p)});
 $('#editor-agent-prompt')?.addEventListener('keydown',e=>{if(e.key!=='Enter'||e.shiftKey||e.isComposing)return;e.preventDefault();const p=e.currentTarget.value.trim();if(!p)return;e.currentTarget.value='';runAgent(p)});
 $('#editor-agent-stop')?.addEventListener('click',()=>agentActive()?.abort?.abort());

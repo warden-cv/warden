@@ -577,3 +577,54 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 *::-webkit-scrollbar-thumb{background:#46514b;border:3px solid #151817;border-radius:999px;min-height:44px}
 *::-webkit-scrollbar-thumb:hover{background:#59665f}
 *::-webkit-scrollbar-corner{background:#151817}
+
+/* Agent workspace picker and whole-composer resizing. */
+.agent-workspace,.editor-agent-workspace{appearance:none;width:100%;border-left:0;border-right:0;border-top:0;border-radius:0;text-align:left;cursor:pointer}
+.agent-workspace:hover,.editor-agent-workspace:hover{background:#1d201e;border-bottom-color:var(--line);color:var(--text)}
+.agent-workspace:focus-visible,.editor-agent-workspace:focus-visible{outline:1px solid #526057;outline-offset:-2px}
+
+.agent-compose{position:relative;height:150px;flex:0 0 150px;display:grid;grid-template-rows:7px minmax(0,1fr) auto;padding:0 16px 12px}
+.agent-compose textarea{resize:none;min-height:0;max-height:none;height:100%;margin:0}
+.agent-compose-resizer{height:7px;margin:0 -16px 5px;cursor:ns-resize;position:relative;touch-action:none}
+.agent-compose-resizer::after{content:"";position:absolute;left:50%;top:2px;width:44px;height:2px;border-radius:999px;background:#3e4742;transform:translateX(-50%)}
+.agent-compose-resizer:hover::after,.agent-compose-resizing .agent-compose-resizer::after{background:#66736c}
+.agent-compose-resizing,.agent-compose-resizing *{cursor:ns-resize!important;user-select:none!important}
+.agent-compose>div:not(.agent-compose-resizer){margin-top:8px}
+
+.editor-agent-panel{--editor-agent-compose-height:128px;grid-template-rows:40px 30px 34px minmax(0,1fr) var(--editor-agent-compose-height)}
+.editor-agent-compose{height:var(--editor-agent-compose-height);min-height:0;padding:0 10px 9px;display:grid;grid-template-rows:7px minmax(0,1fr) auto}
+.editor-agent-compose textarea{height:100%;min-height:0;max-height:none;resize:none}
+.editor-agent-compose .agent-compose-resizer{margin:0 -10px 4px}
+
+.agent-workspace-modal{position:fixed;inset:0;z-index:120;display:grid;place-items:center}
+.agent-workspace-modal[hidden]{display:none}
+.agent-workspace-backdrop{position:absolute;inset:0;background:#050706c9;backdrop-filter:blur(4px)}
+.agent-workspace-dialog{position:relative;width:min(620px,calc(100vw - 30px));padding:18px;background:#191c1a;border:1px solid #3a433e;border-radius:10px;box-shadow:0 22px 80px #000a}
+.agent-workspace-dialog>header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px}
+.agent-workspace-dialog h3{margin:4px 0 0;font-size:18px}
+.agent-workspace-dialog .eyebrow{margin:0}
+.agent-workspace-path{display:flex;align-items:center;gap:8px;padding:7px;background:#111412;border:1px solid var(--line);border-radius:6px}
+.agent-workspace-path span{font:10px var(--mono);color:#aeb8b3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-workspace-dirs{height:320px;overflow:auto;margin-top:10px;padding:5px;background:#121513;border:1px solid var(--line);border-radius:6px}
+.agent-workspace-dir{display:flex;align-items:center;gap:8px;width:100%;padding:8px 9px;border:0;background:transparent;text-align:left;color:#bcc6c0}
+.agent-workspace-dir:hover{background:#222724}
+.agent-workspace-dir>span:first-child{display:inline-grid;place-items:center;width:14px;color:#78857e;font-size:17px;transition:transform .12s,color .12s}
+.agent-workspace-dir:hover>span:first-child{transform:translateX(2px);color:var(--green)}
+.agent-workspace-dir>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-workspace-empty{display:grid;place-items:center;height:100%;color:var(--muted);font-size:11px}
+.agent-workspace-dialog>footer{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+
+/* Keep narrow Agent tab strips compact when many sessions are open. */
+.agent-session-tabs{scrollbar-width:none;overscroll-behavior-x:contain}
+.agent-session-tabs::-webkit-scrollbar{display:none}
+.agent-sessionbar.compact .agent-session-tab{min-width:88px;max-width:132px;padding:0 8px}
+.agent-sessionbar.compact .agent-session-close{font-size:13px}
+.agent-new-wrap{flex:0 0 auto}
+
+/* Give the composer resize handle its own divider band above the textarea. */
+.agent-compose{grid-template-rows:18px minmax(0,1fr) auto;border-top:1px solid var(--line)}
+.agent-compose-resizer{height:18px;margin:0 -16px 6px;cursor:ns-resize;position:relative;touch-action:none;background:#18191a}
+.agent-compose-resizer::after{top:8px;width:44px;height:2px}
+.editor-agent-compose{grid-template-rows:16px minmax(0,1fr) auto}
+.editor-agent-compose .agent-compose-resizer{height:16px;margin:0 -10px 6px;background:#18191a}
+.editor-agent-compose .agent-compose-resizer::after{top:7px}
