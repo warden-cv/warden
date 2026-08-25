@@ -409,6 +409,31 @@ func (s *accountStore) updateAccount(id, display string, enabled bool, roles []s
 func (s *accountStore) addEmailIdentity(accountID, email string) error {
 	return s.addIdentity(accountID, loginIdentity{ID: newID("id"), Type: "email", Email: strings.TrimSpace(email), Enabled: true})
 }
+func (s *accountStore) addGoogleIdentity(accountID, subject, email string) error {
+	subject = strings.TrimSpace(subject)
+	email = strings.TrimSpace(email)
+	if subject == "" {
+		return errors.New("Google subject is required")
+	}
+	return s.addIdentity(accountID, loginIdentity{ID: newID("id"), Type: "google", ProviderSubject: subject, Email: email, Enabled: true})
+}
+
+func (s *accountStore) findGoogle(subject string) (account, loginIdentity, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, a := range s.accounts.Accounts {
+		if !a.Enabled {
+			continue
+		}
+		for _, id := range a.Identities {
+			if id.Enabled && id.Type == "google" && id.ProviderSubject == subject {
+				return a, id, true
+			}
+		}
+	}
+	return account{}, loginIdentity{}, false
+}
+
 func (s *accountStore) addPasswordIdentity(accountID, username, password string) error {
 	if len(password) < 10 {
 		return errors.New("password must be at least 10 characters")

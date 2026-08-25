@@ -122,7 +122,7 @@ func (a *authStore) beginChallenge(r *http.Request, accountID, identityID string
 	return id
 }
 
-func (a *authStore) takeChallenge(r *http.Request, id string) (loginChallenge, bool) {
+func (a *authStore) getChallenge(r *http.Request, id string) (loginChallenge, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	c, ok := a.challenges[id]
@@ -130,9 +130,9 @@ func (a *authStore) takeChallenge(r *http.Request, id string) (loginChallenge, b
 		delete(a.challenges, id)
 		return loginChallenge{}, false
 	}
-	delete(a.challenges, id)
 	return c, true
 }
+func (a *authStore) consumeChallenge(id string) { a.mu.Lock(); delete(a.challenges, id); a.mu.Unlock() }
 
 func (a *authStore) logout(w http.ResponseWriter, r *http.Request) {
 	if c, e := r.Cookie("warden_session"); e == nil {

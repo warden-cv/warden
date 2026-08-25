@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -178,6 +179,28 @@ func (s *secretStore) delete(name string) error {
 		if k != name {
 			next.Values[k] = v
 		}
+	}
+	if err := writeJSONAtomic(filepath.Join(s.dir, "secrets.json"), next, true); err != nil {
+		return err
+	}
+	s.data = next
+	return nil
+}
+
+func (s *secretStore) deletePrefix(prefix string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := secretsFile{Version: configSchemaVersion, Values: map[string]encryptedSecret{}}
+	changed := false
+	for k, v := range s.data.Values {
+		if strings.HasPrefix(k, prefix) {
+			changed = true
+			continue
+		}
+		next.Values[k] = v
+	}
+	if !changed {
+		return nil
 	}
 	if err := writeJSONAtomic(filepath.Join(s.dir, "secrets.json"), next, true); err != nil {
 		return err

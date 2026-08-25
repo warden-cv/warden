@@ -483,3 +483,6 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 
 /* Account security. */
 .auth-cancel{width:100%;margin-top:8px}.security-result{margin-top:14px}.security-result textarea{width:100%;min-height:70px;margin:6px 0;padding:8px;border:1px solid var(--line2);border-radius:5px;background:#151617;color:var(--muted2);font:9px/1.4 var(--mono);resize:vertical}.security-secret{display:block;padding:9px;border:1px solid var(--line);border-radius:5px;background:#151617;color:#dfe9e1;word-break:break-all}.recovery-codes{padding:12px;border:1px solid var(--line);border-radius:6px;background:#151617;color:#dfe9e1;line-height:1.7}.status-chip{font-size:9px;color:var(--muted)}.status-chip.online{color:var(--green)}
+
+/* Google authentication. */
+.google-login{width:100%;margin-top:8px}.google-auth-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.google-auth-grid label{display:grid;gap:5px;color:var(--muted);font-size:9px}.google-auth-grid .wide{grid-column:1/-1}.google-auth-grid input,.security-result input{min-width:0;border:1px solid var(--line2);border-radius:5px;background:#151617;color:var(--text);padding:7px 8px;font:10px var(--mono);outline:0}.google-auth-grid input:focus,.security-result input:focus{border-color:#555a57}

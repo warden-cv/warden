@@ -28,7 +28,11 @@ func (a *app) loginTOTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json", 400)
 		return
 	}
-	c, ok := a.auth.takeChallenge(r, q.Challenge)
+	if a.auth.limited(clientIP(r)) {
+		http.Error(w, "too many attempts", 429)
+		return
+	}
+	c, ok := a.auth.getChallenge(r, q.Challenge)
 	if !ok {
 		http.Error(w, "invalid or expired two-factor challenge", 401)
 		return
@@ -72,7 +76,7 @@ func (a *app) security(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet {
 		_, identity, _ := a.accounts.identityByID(sess.IdentityID)
-		jsonOut(w, map[string]any{"account": publicAccount(acct), "currentIdentity": identityView{ID: identity.ID, Type: identity.Type, Username: identity.Username, Email: identity.Email, Enabled: identity.Enabled, TOTPEnabled: identity.TOTPEnabled, RecoveryCodes: len(identity.RecoveryCodeHashes)}})
+		jsonOut(w, map[string]any{"account": publicAccount(acct), "currentIdentity": identityView{ID: identity.ID, Type: identity.Type, Username: identity.Username, Email: identity.Email, Enabled: identity.Enabled, TOTPEnabled: identity.TOTPEnabled, RecoveryCodes: len(identity.RecoveryCodeHashes)}, "googleEnabled": a.googleReady()})
 		return
 	}
 	if r.Method != http.MethodPost {

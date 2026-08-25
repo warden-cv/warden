@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,11 +35,23 @@ type environmentConfigFile struct {
 	Accounts map[string]map[string]string `json:"accounts"`
 }
 
+type googleAuthConfig struct {
+	Enabled     bool   `json:"enabled"`
+	ClientID    string `json:"client_id"`
+	RedirectURL string `json:"redirect_url"`
+}
+
+type authenticationConfigFile struct {
+	Version int              `json:"version"`
+	Google  googleAuthConfig `json:"google"`
+}
+
 type configStore struct {
-	mu          sync.RWMutex
-	dir         string
-	instance    instanceConfigFile
-	environment environmentConfigFile
+	mu             sync.RWMutex
+	dir            string
+	instance       instanceConfigFile
+	environment    environmentConfigFile
+	authentication authenticationConfigFile
 }
 
 var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -115,6 +129,15 @@ func loadConfigStore(dir string, defaults instanceConfigFile) (*configStore, err
 	} else if err != nil {
 		return nil, err
 	}
+	authPath := filepath.Join(dir, "authentication.json")
+	if _, err := os.Stat(authPath); errors.Is(err, os.ErrNotExist) {
+		auth := authenticationConfigFile{Version: configSchemaVersion}
+		if err := writeJSONAtomic(authPath, auth, false); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	}
 	if err := s.reload(); err != nil {
 		return nil, err
 	}
@@ -142,11 +165,59 @@ func (s *configStore) reload() error {
 	if env.Accounts == nil {
 		env.Accounts = map[string]map[string]string{}
 	}
+	var auth authenticationConfigFile
+	if err := readJSONStrict(filepath.Join(s.dir, "authentication.json"), &auth); err != nil {
+		return fmt.Errorf("authentication.json: %w", err)
+	}
+	if err := validateAuthenticationConfig(auth); err != nil {
+		return fmt.Errorf("authentication.json: %w", err)
+	}
 	s.mu.Lock()
 	s.instance = inst
 	s.environment = env
+	s.authentication = auth
 	s.mu.Unlock()
 	return nil
+}
+
+func (s *configStore) authenticationSnapshot() authenticationConfigFile {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.authentication
+}
+
+func validateAuthenticationConfig(c authenticationConfigFile) error {
+	if c.Version != configSchemaVersion {
+		return fmt.Errorf("unsupported schema version %d", c.Version)
+	}
+	if !c.Google.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(c.Google.ClientID) == "" {
+		return errors.New("google.client_id is required when Google login is enabled")
+	}
+	u, err := url.Parse(strings.TrimSpace(c.Google.RedirectURL))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return errors.New("google.redirect_url must be an absolute URL")
+	}
+	if u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1")) {
+		return errors.New("google.redirect_url must use HTTPS except on loopback")
+	}
+	if !strings.HasSuffix(u.Path, "/api/oauth/google/callback") {
+		return errors.New("google.redirect_url must end with /api/oauth/google/callback")
+	}
+	return nil
+}
+
+func (s *configStore) replaceGoogleAuthentication(g googleAuthConfig) error {
+	next := authenticationConfigFile{Version: configSchemaVersion, Google: g}
+	if err := validateAuthenticationConfig(next); err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(filepath.Join(s.dir, "authentication.json"), next, true); err != nil {
+		return err
+	}
+	return s.reload()
 }
 
 func (s *configStore) instanceSnapshot() instanceConfigFile {
@@ -251,8 +322,12 @@ func readJSONStrict(path string, dst any) error {
 	if err := dec.Decode(dst); err != nil {
 		return err
 	}
-	if dec.More() {
-		return errors.New("unexpected trailing JSON")
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return errors.New("unexpected trailing JSON")
+		}
+		return fmt.Errorf("unexpected trailing JSON: %w", err)
 	}
 	return nil
 }
@@ -329,6 +404,7 @@ func sortedEnvironment(vars map[string]string) []map[string]string {
 func (a *app) collectWardenConfiguration() adminEnvelope {
 	inst := a.config.instanceSnapshot()
 	env := a.config.environmentSnapshot()
+	authcfg := a.config.authenticationSnapshot()
 	restart := []string{}
 	if inst.Listen != a.cfg.Listen {
 		restart = append(restart, "listen")
@@ -348,19 +424,29 @@ func (a *app) collectWardenConfiguration() adminEnvelope {
 	if inst.TrustProxy != a.cfg.TrustProxy {
 		restart = append(restart, "trust_proxy")
 	}
+	executable, _ := os.Executable()
 	return adminEnvelope{Kind: "warden", Available: true, Data: map[string]any{
+		"version":         a.cfg.Version,
+		"executable":      executable,
+		"installMethod":   detectInstallMethod(executable),
 		"configDir":       a.config.dir,
 		"instance":        inst,
 		"environment":     sortedEnvironment(env.Global),
+		"authentication":  authcfg,
+		"googleSecretSet": func() bool { _, ok := a.secrets.get("google.client_secret"); return ok }(),
 		"restartRequired": restart,
 	}}
 }
 
 func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 	var q struct {
-		Action       string `json:"action"`
-		Confirmation string `json:"confirmation"`
-		Variables    []struct {
+		Action             string `json:"action"`
+		Confirmation       string `json:"confirmation"`
+		GoogleEnabled      bool   `json:"googleEnabled"`
+		GoogleClientID     string `json:"googleClientId"`
+		GoogleClientSecret string `json:"googleClientSecret"`
+		GoogleRedirectURL  string `json:"googleRedirectUrl"`
+		Variables          []struct {
 			Name  string `json:"name"`
 			Value string `json:"value"`
 		} `json:"variables"`
@@ -385,6 +471,26 @@ func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 		}
 		a.audit.Printf("warden_config_reload ip=%s", clientIP(r))
 		jsonOut(w, map[string]any{"ok": true, "message": "Configuration reloaded and validated."})
+	case "set-google":
+		g := googleAuthConfig{Enabled: q.GoogleEnabled, ClientID: strings.TrimSpace(q.GoogleClientID), RedirectURL: strings.TrimSpace(q.GoogleRedirectURL)}
+		if g.Enabled && strings.TrimSpace(q.GoogleClientSecret) == "" {
+			if _, ok := a.secrets.get("google.client_secret"); !ok {
+				http.Error(w, "Google client secret is required", 400)
+				return
+			}
+		}
+		if err := a.config.replaceGoogleAuthentication(g); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		if strings.TrimSpace(q.GoogleClientSecret) != "" {
+			if err := a.secrets.set("google.client_secret", q.GoogleClientSecret); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+		}
+		a.audit.Printf("warden_google_auth_update ip=%s enabled=%t", clientIP(r), g.Enabled)
+		jsonOut(w, map[string]any{"ok": true, "message": "Google authentication settings saved."})
 	case "set-environment":
 		vars := map[string]string{}
 		for _, item := range q.Variables {
@@ -414,6 +520,7 @@ func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.auth.revokeAll()
+		_ = a.secrets.deletePrefix("totp:")
 		a.audit.Printf("warden_authentication_reset ip=%s", clientIP(r))
 		jsonOut(w, map[string]any{"ok": true, "message": "Authentication reset. Reload Warden to create a new administrator.", "setupRequired": true})
 	default:
@@ -460,12 +567,13 @@ func detectInstallMethod(executable string) string {
 }
 
 type portableConfigBundle struct {
-	Version     int                   `json:"version"`
-	ExportedAt  time.Time             `json:"exported_at"`
-	Instance    instanceConfigFile    `json:"instance"`
-	Environment environmentConfigFile `json:"environment"`
-	Accounts    accountsFile          `json:"accounts"`
-	Roles       rolesFile             `json:"roles"`
+	Version        int                      `json:"version"`
+	ExportedAt     time.Time                `json:"exported_at"`
+	Instance       instanceConfigFile       `json:"instance"`
+	Environment    environmentConfigFile    `json:"environment"`
+	Authentication authenticationConfigFile `json:"authentication"`
+	Accounts       accountsFile             `json:"accounts"`
+	Roles          rolesFile                `json:"roles"`
 }
 
 func (a *app) portableConfig() portableConfigBundle {
@@ -475,5 +583,5 @@ func (a *app) portableConfig() portableConfigBundle {
 	roles := a.accounts.roles
 	roles.Roles = append([]role(nil), roles.Roles...)
 	a.accounts.mu.RUnlock()
-	return portableConfigBundle{Version: 1, ExportedAt: time.Now().UTC(), Instance: a.config.instanceSnapshot(), Environment: a.config.environmentSnapshot(), Accounts: users, Roles: roles}
+	return portableConfigBundle{Version: 1, ExportedAt: time.Now().UTC(), Instance: a.config.instanceSnapshot(), Environment: a.config.environmentSnapshot(), Authentication: a.config.authenticationSnapshot(), Accounts: users, Roles: roles}
 }

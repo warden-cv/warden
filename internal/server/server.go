@@ -30,6 +30,7 @@ type app struct {
 	setupToken  string
 	totpMu      sync.Mutex
 	totpPending map[string]totpEnrollment
+	oauth       *oauthStateStore
 }
 
 func Run(cfg Config) error {
@@ -54,7 +55,7 @@ func Run(cfg Config) error {
 		return e
 	}
 	defer auditFile.Close()
-	a := &app{cfg: cfg, accounts: accounts, secrets: secrets, files: f, totpPending: map[string]totpEnrollment{}, audit: log.New(auditFile, "", log.LstdFlags|log.LUTC), config: store, setupToken: token(24)}
+	a := &app{cfg: cfg, accounts: accounts, secrets: secrets, files: f, totpPending: map[string]totpEnrollment{}, oauth: newOAuthStateStore(), audit: log.New(auditFile, "", log.LstdFlags|log.LUTC), config: store, setupToken: token(24)}
 	a.auth = newAuth(accounts, cfg.SecureCookies, cfg.ConfigDir)
 	if accounts.empty() {
 		log.Printf("Warden first-run setup is required. Remote setup token: %s", a.setupToken)
@@ -64,6 +65,8 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/setup", a.setup)
 	mux.HandleFunc("/api/login", a.login)
 	mux.HandleFunc("/api/login/totp", a.loginTOTP)
+	mux.HandleFunc("/api/oauth/google/start", a.googleStart)
+	mux.HandleFunc("/api/oauth/google/callback", a.googleCallback)
 	mux.HandleFunc("/api/security", a.protect(a.security))
 	mux.HandleFunc("/api/logout", a.protect(a.logout))
 	mux.HandleFunc("/api/session", a.session)
@@ -92,7 +95,7 @@ func (a *app) setupStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method", 405)
 		return
 	}
-	jsonOut(w, map[string]any{"required": a.accounts.empty(), "legacyPasswordRequired": a.cfg.PasswordHash != "", "tokenRequired": !isLoopbackClient(r)})
+	jsonOut(w, map[string]any{"required": a.accounts.empty(), "legacyPasswordRequired": a.cfg.PasswordHash != "", "tokenRequired": !isLoopbackClient(r), "googleEnabled": a.googleReady()})
 }
 func (a *app) setup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
