@@ -23,6 +23,12 @@ type aiProviderView struct {
 	EffectiveCredentialSource string `json:"effectiveCredentialSource"`
 }
 
+type aiAccountUsageView struct {
+	AccountID   string           `json:"accountId"`
+	DisplayName string           `json:"displayName"`
+	Usage       []aiUsageSummary `json:"usage"`
+}
+
 func aiSharedSecretName(provider string) string { return aiSharedSecretPrefix + provider }
 func aiAccountSecretName(accountID, provider string) string {
 	return aiAccountSecretPrefix + accountID + "." + provider
@@ -60,11 +66,25 @@ func (a *app) aiSettings(w http.ResponseWriter, r *http.Request) {
 			_, source, _ := a.resolveAICredential(sess.AccountID, id)
 			providers = append(providers, aiProviderView{ID: id, Label: p.Label, Enabled: p.Enabled, BaseURL: p.BaseURL, DefaultModel: p.DefaultModel, AccountCredentialSet: own, SharedCredentialSet: shared, EffectiveCredentialSource: source})
 		}
-		jsonOut(w, map[string]any{
+		canManage := a.accounts.hasCapability(sess.AccountID, "ai.manage")
+		response := map[string]any{
 			"providers": providers,
 			"usage":     a.aiUsage.summary(sess.AccountID),
-			"canManage": a.accounts.hasCapability(sess.AccountID, "ai.manage"),
-		})
+			"canManage": canManage,
+		}
+		if canManage {
+			allUsage := a.aiUsage.allSummaries()
+			accountUsage := make([]aiAccountUsageView, 0, len(allUsage))
+			for _, acct := range a.accounts.listAccounts() {
+				usage := allUsage[acct.ID]
+				if len(usage) == 0 {
+					continue
+				}
+				accountUsage = append(accountUsage, aiAccountUsageView{AccountID: acct.ID, DisplayName: acct.DisplayName, Usage: usage})
+			}
+			response["accountUsage"] = accountUsage
+		}
+		jsonOut(w, response)
 	case http.MethodPost:
 		var q struct {
 			Action       string `json:"action"`

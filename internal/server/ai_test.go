@@ -135,3 +135,27 @@ func TestAIEndpointSeparatesPersonalAndSharedCredentialAuthority(t *testing.T) {
 		t.Fatal("AI credential leaked in GET response")
 	}
 }
+
+func TestAIUsageAllSummariesRemainSeparatedByAccount(t *testing.T) {
+	dir := t.TempDir()
+	usage, err := loadAIUsageStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := usage.record("acct_one", "openai", 10, 2, 0.01); err != nil {
+		t.Fatal(err)
+	}
+	if err := usage.record("acct_two", "anthropic", 20, 4, 0.02); err != nil {
+		t.Fatal(err)
+	}
+	all := usage.allSummaries()
+	if len(all) != 2 {
+		t.Fatalf("accounts=%d want 2", len(all))
+	}
+	if got := all["acct_one"]; len(got) != 1 || got[0].Provider != "openai" || got[0].Requests != 1 {
+		t.Fatalf("acct_one=%#v", got)
+	}
+	if got := all["acct_two"]; len(got) != 1 || got[0].Provider != "anthropic" || got[0].Requests != 1 {
+		t.Fatalf("acct_two=%#v", got)
+	}
+}

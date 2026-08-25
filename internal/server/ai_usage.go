@@ -130,6 +130,21 @@ func (s *aiUsageStore) reset() error {
 	return nil
 }
 
+func (s *aiUsageStore) allSummaries() map[string][]aiUsageSummary {
+	s.mu.RLock()
+	ids := make([]string, 0, len(s.data.Accounts))
+	for id := range s.data.Accounts {
+		ids = append(ids, id)
+	}
+	s.mu.RUnlock()
+	sort.Strings(ids)
+	out := make(map[string][]aiUsageSummary, len(ids))
+	for _, id := range ids {
+		out[id] = s.summary(id)
+	}
+	return out
+}
+
 func (s *aiUsageStore) summary(accountID string) []aiUsageSummary {
 	s.mu.RLock()
 	usage := s.data.Accounts[accountID]
