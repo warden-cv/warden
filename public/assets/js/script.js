@@ -523,7 +523,6 @@ $('#editor-agent-new')?.addEventListener('click',e=>{e.stopPropagation();toggleA
 document.addEventListener('click',e=>{if(!e.target.closest('.agent-new-wrap'))hideAgentMenus()});
 for(const strip of $$('.agent-session-tabs'))strip.addEventListener('wheel',e=>{if(strip.scrollWidth<=strip.clientWidth)return;if(Math.abs(e.deltaY)>Math.abs(e.deltaX)){e.preventDefault();strip.scrollLeft+=e.deltaY}},{passive:false});
 
-
 // Integrated Editor coding-agent pane.
 const editorAgentWidthKey='warden.editorAgentWidth.v1',editorAgentOpenKey='warden.editorAgentOpen.v1';
 function clampEditorAgentWidth(w){const bench=$('.editor-workbench'),rect=bench.getBoundingClientRect(),min=280,max=Math.max(min,Math.min(620,rect.width-420));return Math.max(min,Math.min(max,w))}

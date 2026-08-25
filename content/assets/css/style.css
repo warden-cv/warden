@@ -620,11 +620,3 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 .agent-sessionbar.compact .agent-session-tab{min-width:88px;max-width:132px;padding:0 8px}
 .agent-sessionbar.compact .agent-session-close{font-size:13px}
 .agent-new-wrap{flex:0 0 auto}
-
-/* Give the composer resize handle its own divider band above the textarea. */
-.agent-compose{grid-template-rows:18px minmax(0,1fr) auto;border-top:1px solid var(--line)}
-.agent-compose-resizer{height:18px;margin:0 -16px 6px;cursor:ns-resize;position:relative;touch-action:none;background:#18191a}
-.agent-compose-resizer::after{top:8px;width:44px;height:2px}
-.editor-agent-compose{grid-template-rows:16px minmax(0,1fr) auto}
-.editor-agent-compose .agent-compose-resizer{height:16px;margin:0 -10px 6px;background:#18191a}
-.editor-agent-compose .agent-compose-resizer::after{top:7px}
