@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -95,7 +96,7 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/warden/import-secure", a.require("settings.manage", a.importSecureConfiguration))
 	mux.HandleFunc("/api/terminal", a.terminal)
 	mux.Handle("/", http.FileServer(http.Dir(cfg.StaticDir)))
-	srv := &http.Server{Addr: cfg.Listen, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second}
+	srv := &http.Server{Addr: cfg.Listen, Handler: securityHeaders(proxyTrust(cfg.TrustProxy, mux)), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second}
 	log.Printf("Warden %s listening on http://%s (root %s)", cfg.Version, cfg.Listen, f.root)
 	return srv.ListenAndServe()
 }
@@ -351,13 +352,57 @@ func jsonOut(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
 }
-func clientIP(r *http.Request) string {
+
+type proxyTrustKey struct{}
+
+func proxyTrust(enabled bool, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if enabled {
+			r = r.WithContext(context.WithValue(r.Context(), proxyTrustKey{}, true))
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func trustedProxy(r *http.Request) bool {
+	trusted, _ := r.Context().Value(proxyTrustKey{}).(bool)
+	return trusted
+}
+
+func forwardedClientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		for _, raw := range strings.Split(xff, ",") {
+			candidate := strings.TrimSpace(raw)
+			if ip := net.ParseIP(candidate); ip != nil {
+				return ip.String()
+			}
+		}
+	}
+	if raw := strings.TrimSpace(r.Header.Get("X-Real-IP")); raw != "" {
+		if ip := net.ParseIP(raw); ip != nil {
+			return ip.String()
+		}
+	}
+	return ""
+}
+
+func directClientIP(r *http.Request) string {
 	h, _, e := net.SplitHostPort(r.RemoteAddr)
 	if e == nil {
 		return h
 	}
 	return r.RemoteAddr
 }
+
+func clientIP(r *http.Request) string {
+	if trustedProxy(r) {
+		if ip := forwardedClientIP(r); ip != "" {
+			return ip
+		}
+	}
+	return directClientIP(r)
+}
+
 func sameOrigin(r *http.Request) bool {
 	o := r.Header.Get("Origin")
 	if o == "" {
@@ -371,6 +416,9 @@ func sameOrigin(r *http.Request) bool {
 }
 
 func isLoopbackClient(r *http.Request) bool {
+	if !trustedProxy(r) && (strings.TrimSpace(r.Header.Get("X-Forwarded-For")) != "" || strings.TrimSpace(r.Header.Get("X-Real-IP")) != "") {
+		return false
+	}
 	ip := net.ParseIP(clientIP(r))
 	return ip != nil && ip.IsLoopback()
 }

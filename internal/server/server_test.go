@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -321,5 +322,31 @@ func TestFileMutateRefusesOverwrite(t *testing.T) {
 		if readErr != nil || string(b) != "b" {
 			t.Fatalf("%s changed target: %q %v", op, b, readErr)
 		}
+	}
+}
+
+func TestProxyTrustControlsClientIPAndLoopbackSetup(t *testing.T) {
+	req := httptest.NewRequest("GET", "http://warden/api/setup/status", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("X-Forwarded-For", "203.0.113.10, 127.0.0.1")
+	if got := clientIP(req); got != "127.0.0.1" {
+		t.Fatalf("untrusted forwarded client ip=%q", got)
+	}
+	if isLoopbackClient(req) {
+		t.Fatal("untrusted forwarding headers should prevent loopback bootstrap classification")
+	}
+
+	trusted := req.WithContext(context.WithValue(req.Context(), proxyTrustKey{}, true))
+	if got := clientIP(trusted); got != "203.0.113.10" {
+		t.Fatalf("trusted forwarded client ip=%q", got)
+	}
+	if isLoopbackClient(trusted) {
+		t.Fatal("forwarded public client incorrectly treated as loopback")
+	}
+
+	local := httptest.NewRequest("GET", "http://warden/api/setup/status", nil)
+	local.RemoteAddr = "127.0.0.1:1234"
+	if !isLoopbackClient(local) {
+		t.Fatal("direct loopback request should remain eligible for local setup")
 	}
 }
