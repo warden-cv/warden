@@ -108,6 +108,23 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) collectAudit() adminEnvelope {
+	rows, dbErr := a.db.Query("SELECT created_at,event,account_id,identity_id,remote_ip,detail FROM audit_events ORDER BY created_at DESC LIMIT 500")
+	if dbErr == nil {
+		defer rows.Close()
+		lines := []string{}
+		for rows.Next() {
+			var created int64
+			var event, accountID, identityID, remoteIP, detail string
+			if err := rows.Scan(&created, &event, &accountID, &identityID, &remoteIP, &detail); err != nil {
+				return adminEnvelope{Kind: "audit", Available: false, Message: "SQLite audit history is unavailable."}
+			}
+			lines = append(lines, fmt.Sprintf("%s event=%s account=%s identity=%s ip=%s %s", time.UnixMilli(created).UTC().Format(time.RFC3339), event, accountID, identityID, remoteIP, detail))
+		}
+		for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
+			lines[i], lines[j] = lines[j], lines[i]
+		}
+		return adminEnvelope{Kind: "audit", Available: true, Data: map[string]any{"path": filepath.Join(a.cfg.ConfigDir, "warden.db"), "lines": lines}}
+	}
 	path := filepath.Join(a.cfg.ConfigDir, "audit.log")
 	f, err := os.Open(path)
 	if err != nil {

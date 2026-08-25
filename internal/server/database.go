@@ -194,6 +194,86 @@ var databaseMigrations = []databaseMigration{
 		);
 		CREATE INDEX operation_jobs_state_created_idx ON operation_jobs(state,created_at);`,
 	},
+	{
+		version: 6,
+		name:    "legacy state migration",
+		sql: `CREATE TABLE accounts (
+			id TEXT PRIMARY KEY,
+			display_name TEXT NOT NULL,
+			enabled INTEGER NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+		CREATE TABLE login_identities (
+			id TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL,
+			type TEXT NOT NULL,
+			username TEXT NOT NULL DEFAULT '',
+			email TEXT NOT NULL DEFAULT '',
+			provider_subject TEXT NOT NULL DEFAULT '',
+			password_hash TEXT NOT NULL DEFAULT '',
+			totp_enabled INTEGER NOT NULL DEFAULT 0,
+			recovery_code_hashes_json TEXT NOT NULL DEFAULT '[]',
+			enabled INTEGER NOT NULL,
+			FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+		);
+		CREATE UNIQUE INDEX login_identity_username_idx ON login_identities(username) WHERE username<>'';
+		CREATE UNIQUE INDEX login_identity_provider_idx ON login_identities(type,provider_subject) WHERE provider_subject<>'';
+		CREATE TABLE roles (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			built_in INTEGER NOT NULL DEFAULT 0
+		);
+		CREATE TABLE role_capabilities (
+			role_id TEXT NOT NULL,
+			capability TEXT NOT NULL,
+			PRIMARY KEY(role_id,capability),
+			FOREIGN KEY(role_id) REFERENCES roles(id) ON DELETE CASCADE
+		);
+		CREATE TABLE account_roles (
+			account_id TEXT NOT NULL,
+			role_id TEXT NOT NULL,
+			PRIMARY KEY(account_id,role_id),
+			FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+			FOREIGN KEY(role_id) REFERENCES roles(id) ON DELETE CASCADE
+		);
+		CREATE TABLE browser_sessions (
+			id TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL,
+			identity_id TEXT NOT NULL,
+			csrf TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL,
+			remote_ip TEXT NOT NULL DEFAULT '',
+			user_agent TEXT NOT NULL DEFAULT '',
+			FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+		);
+		CREATE TABLE ai_usage_totals (
+			account_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			requests INTEGER NOT NULL,
+			input_tokens INTEGER NOT NULL,
+			output_tokens INTEGER NOT NULL,
+			estimated_cost_usd REAL NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(account_id,provider)
+		);
+		CREATE TABLE audit_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_key TEXT UNIQUE,
+			event TEXT NOT NULL,
+			account_id TEXT NOT NULL DEFAULT '',
+			identity_id TEXT NOT NULL DEFAULT '',
+			remote_ip TEXT NOT NULL DEFAULT '',
+			detail TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL
+		);
+		CREATE INDEX audit_events_created_idx ON audit_events(created_at DESC);
+		CREATE TABLE legacy_imports (
+			name TEXT PRIMARY KEY,
+			imported_at INTEGER NOT NULL,
+			detail TEXT NOT NULL DEFAULT ''
+		);`,
+	},
 }
 
 func openDatabase(configDir string) (*sql.DB, error) {

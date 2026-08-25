@@ -72,8 +72,13 @@ func Run(cfg Config) error {
 	defer auditFile.Close()
 	a := &app{cfg: cfg, db: db, accounts: accounts, secrets: secrets, aiUsage: aiUsage, files: f, totpPending: map[string]totpEnrollment{}, oauth: newOAuthStateStore(), audit: log.New(auditFile, "", log.LstdFlags|log.LUTC), config: store, setupToken: token(24)}
 	a.auth = newAuth(accounts, cfg.SecureCookies, cfg.ConfigDir)
+	if err := a.migrateLegacyState(); err != nil {
+		return fmt.Errorf("legacy state migration: %w", err)
+	}
 	alertCtx, stopAlerts := context.WithCancel(context.Background())
 	defer stopAlerts()
+	defer a.syncLegacyState()
+	go a.runLegacyStateMirror(alertCtx)
 	go a.runAlertEvaluator(alertCtx)
 	go a.runWebsiteJobs(alertCtx)
 	if accounts.empty() {
@@ -240,6 +245,9 @@ func (a *app) auditEvent(r *http.Request, event, detail string) {
 		detail = " " + strings.TrimSpace(detail)
 	}
 	a.audit.Printf("event=%s account=%s identity=%s ip=%s%s", event, accountID, identityID, clientIP(r), detail)
+	if a.db != nil {
+		_, _ = a.db.Exec("INSERT INTO audit_events(event,account_id,identity_id,remote_ip,detail,created_at) VALUES(?,?,?,?,?,?)", event, accountID, identityID, clientIP(r), strings.TrimSpace(detail), time.Now().UnixMilli())
+	}
 }
 
 func (a *app) exportConfiguration(w http.ResponseWriter, r *http.Request) {
