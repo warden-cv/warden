@@ -182,6 +182,13 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 
 	var inputTokens, outputTokens uint64
 	var cost float64
+	var sessionID string
+	sawAssistantText := false
+	errCh := make(chan string, 1)
+	go func() {
+		b, _ := ioReadAllLimit(stderr, 256<<10)
+		errCh <- string(b)
+	}()
 	scan := bufio.NewScanner(stdout)
 	scan.Buffer(make([]byte, 64<<10), 4<<20)
 	for scan.Scan() {
@@ -189,20 +196,37 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		var raw map[string]any
 		if json.Unmarshal(line, &raw) == nil {
 			collectAgentUsage(raw, &inputTokens, &outputTokens, &cost)
+			if id, _ := raw["sessionID"].(string); id != "" {
+				sessionID = id
+			}
+			if agentEventText(raw) != "" {
+				sawAssistantText = true
+			}
 			writeAgentEvent(w, flusher, "opencode", raw)
 		} else {
 			writeAgentEvent(w, flusher, "output", map[string]any{"text": string(line)})
 		}
 	}
-	errCh := make(chan string, 1)
-	go func() {
-		b, _ := ioReadAllLimit(stderr, 256<<10)
-		errCh <- string(b)
-	}()
 	waitErr := cmd.Wait()
 	errText := <-errCh
 	if scan.Err() != nil && waitErr == nil {
 		waitErr = scan.Err()
+	}
+	if waitErr == nil && !sawAssistantText && sessionID != "" {
+		if recovered, usageIn, usageOut, recoveredCost, recoverErr := recoverOpenCodeSession(ctx, binary, sessionID, workspace, env); recoverErr == nil && strings.TrimSpace(recovered) != "" {
+			writeAgentEvent(w, flusher, "recovered", map[string]any{"text": recovered, "sessionID": sessionID})
+			if usageIn > inputTokens {
+				inputTokens = usageIn
+			}
+			if usageOut > outputTokens {
+				outputTokens = usageOut
+			}
+			if recoveredCost > cost {
+				cost = recoveredCost
+			}
+		} else if recoverErr != nil {
+			writeAgentEvent(w, flusher, "diagnostic", map[string]any{"message": "OpenCode produced no assistant text on stdout and session recovery failed: " + sanitizeAgentDiagnostic(recoverErr.Error(), key)})
+		}
 	}
 	_ = a.aiUsage.record(sess.AccountID, wardenAgentProvider, inputTokens, outputTokens, cost)
 	if waitErr != nil {
@@ -216,6 +240,81 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	}
 	writeAgentEvent(w, flusher, "done", map[string]any{"inputTokens": inputTokens, "outputTokens": outputTokens, "estimatedCostUsd": cost})
 	a.auditEvent(r, "agent_run_finish", "status=ok workspace="+q.Workspace)
+}
+
+func agentEventText(raw map[string]any) string {
+	if raw["type"] != "text" {
+		return ""
+	}
+	part, _ := raw["part"].(map[string]any)
+	text, _ := part["text"].(string)
+	return strings.TrimSpace(text)
+}
+
+func recoverOpenCodeSession(ctx context.Context, binary, sessionID, workspace string, env []string) (string, uint64, uint64, float64, error) {
+	cmd := exec.CommandContext(ctx, binary, "export", sessionID)
+	cmd.Dir = workspace
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return "", 0, 0, 0, errors.New(strings.TrimSpace(string(ee.Stderr)))
+		}
+		return "", 0, 0, 0, err
+	}
+	// Older OpenCode releases briefly prefixed export JSON with a status line.
+	start := strings.IndexByte(string(out), '{')
+	if start < 0 {
+		return "", 0, 0, 0, errors.New("session export did not contain JSON")
+	}
+	var exported any
+	if err := json.Unmarshal(out[start:], &exported); err != nil {
+		return "", 0, 0, 0, err
+	}
+	texts := exportAssistantTexts(exported)
+	var input, output uint64
+	var cost float64
+	collectAgentUsage(exported, &input, &output, &cost)
+	return strings.Join(texts, "\n\n"), input, output, cost, nil
+}
+
+func exportAssistantTexts(v any) []string {
+	var out []string
+	var walk func(any)
+	walk = func(value any) {
+		switch x := value.(type) {
+		case []any:
+			for _, item := range x {
+				walk(item)
+			}
+		case map[string]any:
+			role := ""
+			if info, ok := x["info"].(map[string]any); ok {
+				role, _ = info["role"].(string)
+			}
+			if role == "" {
+				role, _ = x["role"].(string)
+			}
+			if role == "assistant" {
+				if parts, ok := x["parts"].([]any); ok {
+					for _, item := range parts {
+						part, _ := item.(map[string]any)
+						if part["type"] == "text" {
+							if text, _ := part["text"].(string); strings.TrimSpace(text) != "" {
+								out = append(out, text)
+							}
+						}
+					}
+					return
+				}
+			}
+			for _, value := range x {
+				walk(value)
+			}
+		}
+	}
+	walk(v)
+	return out
 }
 
 func sanitizeAgentDiagnostic(message, secret string) string {

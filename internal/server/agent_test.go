@@ -59,3 +59,21 @@ func TestAgentDiagnosticRedactsCredential(t *testing.T) {
 		t.Fatal("diagnostic did not retain useful redaction marker")
 	}
 }
+
+func TestAgentEventTextReadsOpenCodeTextPart(t *testing.T) {
+	raw := map[string]any{"type": "text", "part": map[string]any{"type": "text", "text": "Hello from DeepSeek"}}
+	if got := agentEventText(raw); got != "Hello from DeepSeek" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestExportAssistantTextsFindsAssistantPartsOnly(t *testing.T) {
+	exported := map[string]any{"messages": []any{
+		map[string]any{"info": map[string]any{"role": "user"}, "parts": []any{map[string]any{"type": "text", "text": "user text"}}},
+		map[string]any{"info": map[string]any{"role": "assistant"}, "parts": []any{map[string]any{"type": "reasoning", "text": "private"}, map[string]any{"type": "text", "text": "assistant answer"}}},
+	}}
+	got := exportAssistantTexts(exported)
+	if len(got) != 1 || got[0] != "assistant answer" {
+		t.Fatalf("got %#v", got)
+	}
+}
