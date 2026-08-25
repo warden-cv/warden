@@ -500,3 +500,11 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 .account-env-editor{display:block;width:100%;min-height:88px;margin-top:12px;padding:8px;border:1px solid var(--line2);border-radius:5px;background:#151617;color:var(--text);font:10px/1.5 var(--mono);resize:vertical;outline:0}.account-env-editor:focus{border-color:#555a57}
 .password-confirm-backdrop{position:fixed;inset:0;z-index:900;display:grid;place-items:center;padding:20px;background:#0009}.password-confirm-card{width:min(390px,100%);padding:18px;border:1px solid var(--line2);border-radius:9px;background:#1b1c1d;box-shadow:0 20px 60px #000b}.password-confirm-card h3{margin:0 0 6px;font-size:14px}.password-confirm-card p{margin:0 0 14px;color:var(--muted2);font-size:10px;line-height:1.5}.password-confirm-card label{display:grid;gap:5px}.password-confirm-card label span{color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.08em}.password-confirm-card input{width:100%;padding:9px 10px;border:1px solid var(--line2);border-radius:6px;background:#111213;color:var(--text);outline:0}.password-confirm-card input:focus{border-color:#5d7463;box-shadow:0 0 0 2px #4ecb7114}.password-confirm-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:14px}
 @media(max-width:700px){.warden-config-card .card-title-row{flex-wrap:wrap}.warden-config-card .card-title-row>.admin-actions{width:100%;justify-content:flex-start}.danger-zone{grid-template-columns:1fr}.danger-zone button{grid-column:1;grid-row:auto;justify-self:start}}
+
+/* Dogfood layout polish. */
+.warden-config-card .admin-actions{min-height:0}
+.warden-config-card .admin-actions:empty{display:none}
+.admin-form-actions{align-self:flex-end}.admin-form-actions .primary-button,.admin-form-actions .primary-small,.admin-form-actions .secondary-button{height:34px;margin:0;display:inline-flex;align-items:center;justify-content:center}
+.ai-policy-note{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#171819;color:var(--muted);font-size:9px}.ai-policy-note strong{color:var(--muted2);font-size:9px}.ai-policy-note span{min-width:0}
+
+.security-totp-card{padding-bottom:9px}.security-totp-card .admin-actions{margin-bottom:0}

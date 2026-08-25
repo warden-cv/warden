@@ -159,3 +159,51 @@ func TestAIUsageAllSummariesRemainSeparatedByAccount(t *testing.T) {
 		t.Fatalf("acct_two=%#v", got)
 	}
 }
+
+func TestAIPersonalCredentialCapabilityControlsResolution(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{Listen: "127.0.0.1:8080", FileRoot: dir, HomeDir: dir, StaticDir: "public", ConfigDir: dir}
+	store, err := loadConfigStore(dir, instanceFromConfig(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := loadAccountStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := accounts.createInitialAdmin("Admin", "admin", "administrator-password"); err != nil {
+		t.Fatal(err)
+	}
+	user, err := accounts.createAccount("User", "user", "ordinary-user-password", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets, err := loadSecretStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: cfg, config: store, accounts: accounts, secrets: secrets}
+	if err := secrets.set(aiSharedSecretName("openai"), "company-key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := secrets.set(aiAccountSecretName(user.ID, "openai"), "personal-key"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, source, ok := a.resolveAICredential(user.ID, "openai"); !ok || got != "personal-key" || source != "account" {
+		t.Fatalf("personal credential should initially win: %q %q %v", got, source, ok)
+	}
+	caps := defaultUserCapabilities()
+	filtered := make([]string, 0, len(caps))
+	for _, cap := range caps {
+		if cap != "ai.credentials" {
+			filtered = append(filtered, cap)
+		}
+	}
+	if err := accounts.setRole("user", "User", filtered); err != nil {
+		t.Fatal(err)
+	}
+	if got, source, ok := a.resolveAICredential(user.ID, "openai"); !ok || got != "company-key" || source != "shared" {
+		t.Fatalf("shared credential should be enforced when personal credentials are disabled: %q %q %v", got, source, ok)
+	}
+}

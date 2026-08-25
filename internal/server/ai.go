@@ -35,8 +35,10 @@ func aiAccountSecretName(accountID, provider string) string {
 }
 
 func (a *app) resolveAICredential(accountID, provider string) (string, string, bool) {
-	if key, ok := a.secrets.get(aiAccountSecretName(accountID, provider)); ok && strings.TrimSpace(key) != "" {
-		return key, "account", true
+	if a.accounts == nil || a.accounts.hasCapability(accountID, "ai.credentials") {
+		if key, ok := a.secrets.get(aiAccountSecretName(accountID, provider)); ok && strings.TrimSpace(key) != "" {
+			return key, "account", true
+		}
 	}
 	if key, ok := a.secrets.get(aiSharedSecretName(provider)); ok && strings.TrimSpace(key) != "" {
 		return key, "shared", true
@@ -67,10 +69,12 @@ func (a *app) aiSettings(w http.ResponseWriter, r *http.Request) {
 			providers = append(providers, aiProviderView{ID: id, Label: p.Label, Enabled: p.Enabled, BaseURL: p.BaseURL, DefaultModel: p.DefaultModel, AccountCredentialSet: own, SharedCredentialSet: shared, EffectiveCredentialSource: source})
 		}
 		canManage := a.accounts.hasCapability(sess.AccountID, "ai.manage")
+		canManageCredentials := a.accounts.hasCapability(sess.AccountID, "ai.credentials")
 		response := map[string]any{
-			"providers": providers,
-			"usage":     a.aiUsage.summary(sess.AccountID),
-			"canManage": canManage,
+			"providers":            providers,
+			"usage":                a.aiUsage.summary(sess.AccountID),
+			"canManage":            canManage,
+			"canManageCredentials": canManageCredentials,
 		}
 		if canManage {
 			allUsage := a.aiUsage.allSummaries()
@@ -108,6 +112,10 @@ func (a *app) aiSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		switch q.Action {
 		case "set-account-credential":
+			if !a.accounts.hasCapability(sess.AccountID, "ai.credentials") {
+				http.Error(w, "personal AI credentials are disabled for this account", http.StatusForbidden)
+				return
+			}
 			if strings.TrimSpace(q.Credential) == "" {
 				http.Error(w, "credential is required", http.StatusBadRequest)
 				return
@@ -118,6 +126,10 @@ func (a *app) aiSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			a.auditEvent(r, "ai_account_credential_set", "provider="+provider)
 		case "clear-account-credential":
+			if !a.accounts.hasCapability(sess.AccountID, "ai.credentials") {
+				http.Error(w, "personal AI credentials are disabled for this account", http.StatusForbidden)
+				return
+			}
 			if err := a.secrets.delete(aiAccountSecretName(sess.AccountID, provider)); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return

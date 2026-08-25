@@ -320,7 +320,8 @@ var capabilityCatalog = []capabilityInfo{
 	{"accounts.manage", "Warden", "Manage Warden accounts and roles"},
 	{"settings.manage", "Warden", "Manage instance configuration"},
 	{"audit.read", "Warden", "View Warden audit history"},
-	{"ai.use", "AI", "Use AI providers and manage own credentials"},
+	{"ai.use", "AI", "Use AI providers"},
+	{"ai.credentials", "AI", "Manage own AI credentials"},
 	{"ai.manage", "AI", "Manage shared AI provider configuration"},
 }
 
@@ -333,7 +334,7 @@ func knownCapability(key string) bool {
 	return false
 }
 func defaultUserCapabilities() []string {
-	return []string{"monitor.read", "files.read", "files.write", "files.manage", "workspace.search", "workspace.replace", "source.read", "source.write", "terminal.open", "ai.use"}
+	return []string{"monitor.read", "files.read", "files.write", "files.manage", "workspace.search", "workspace.replace", "source.read", "source.write", "terminal.open", "ai.use", "ai.credentials"}
 }
 
 func (s *accountStore) capabilities(accountID string) []string {
