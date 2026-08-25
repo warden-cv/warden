@@ -97,6 +97,57 @@ var databaseMigrations = []databaseMigration{
 			FOREIGN KEY(account_id,session_id) REFERENCES terminal_sessions(account_id,id) ON DELETE CASCADE
 		);`,
 	},
+	{
+		version: 4,
+		name:    "alerts and event rules",
+		sql: `CREATE TABLE alert_rules (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			metric TEXT NOT NULL,
+			operator TEXT NOT NULL,
+			threshold REAL NOT NULL,
+			duration_seconds INTEGER NOT NULL DEFAULT 0,
+			severity TEXT NOT NULL DEFAULT 'warning',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_by TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE alert_instances (
+			id TEXT PRIMARY KEY,
+			rule_id TEXT NOT NULL,
+			state TEXT NOT NULL,
+			value REAL NOT NULL,
+			started_at INTEGER NOT NULL,
+			resolved_at INTEGER,
+			FOREIGN KEY(rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE
+		);
+		CREATE UNIQUE INDEX alert_one_active_instance_idx ON alert_instances(rule_id) WHERE state='firing';
+		CREATE TABLE alert_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			rule_id TEXT NOT NULL,
+			instance_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			value REAL NOT NULL,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY(rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE,
+			FOREIGN KEY(instance_id) REFERENCES alert_instances(id) ON DELETE CASCADE
+		);
+		CREATE TABLE alert_acknowledgements (
+			instance_id TEXT NOT NULL,
+			account_id TEXT NOT NULL,
+			note TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY(instance_id,account_id),
+			FOREIGN KEY(instance_id) REFERENCES alert_instances(id) ON DELETE CASCADE
+		);
+		CREATE TABLE alert_rule_evaluation (
+			rule_id TEXT PRIMARY KEY,
+			breach_since INTEGER NOT NULL,
+			last_value REAL NOT NULL,
+			FOREIGN KEY(rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE
+		);`,
+	},
 }
 
 func openDatabase(configDir string) (*sql.DB, error) {

@@ -72,6 +72,9 @@ func Run(cfg Config) error {
 	defer auditFile.Close()
 	a := &app{cfg: cfg, db: db, accounts: accounts, secrets: secrets, aiUsage: aiUsage, files: f, totpPending: map[string]totpEnrollment{}, oauth: newOAuthStateStore(), audit: log.New(auditFile, "", log.LstdFlags|log.LUTC), config: store, setupToken: token(24)}
 	a.auth = newAuth(accounts, cfg.SecureCookies, cfg.ConfigDir)
+	alertCtx, stopAlerts := context.WithCancel(context.Background())
+	defer stopAlerts()
+	go a.runAlertEvaluator(alertCtx)
 	if accounts.empty() {
 		log.Printf("Warden first-run setup is required. Remote setup token: %s", a.setupToken)
 	}
@@ -91,6 +94,7 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/logout", a.protect(a.logout))
 	mux.HandleFunc("/api/session", a.session)
 	mux.HandleFunc("/api/monitor", a.require("monitor.read", a.monitor))
+	mux.HandleFunc("/api/alerts", a.require("monitor.read", a.alertsAPI))
 	mux.HandleFunc("/api/files", a.require("files.read", a.listFiles))
 	mux.HandleFunc("/api/file", a.protect(a.file))
 	mux.HandleFunc("/api/files/mutate", a.require("files.manage", a.mutate))

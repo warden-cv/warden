@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -29,6 +30,7 @@ type monitorSnapshot struct {
 }
 
 var lastCPU struct {
+	sync.Mutex
 	total, idle uint64
 	at          time.Time
 }
@@ -68,6 +70,8 @@ func monitor(root string) monitorSnapshot {
 	return s
 }
 func cpuUsage() float64 {
+	lastCPU.Lock()
+	defer lastCPU.Unlock()
 	f, e := os.Open("/proc/stat")
 	if e != nil {
 		return 0
