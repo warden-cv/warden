@@ -516,3 +516,17 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 .agent-compose>div .agent-activity{margin-left:auto;margin-right:2px;flex:0 0 90px}
 .agent-compose>div #agent-model{margin-right:0}
 .agent-event.tool{color:#b9c0bc;background:#171a18;border-color:#2d3530}
+
+/* Agent readability and structured tool-event highlighting. */
+.agent-event{font-size:12.5px;line-height:1.58}
+.agent-compose textarea{font-size:13px;line-height:1.55}
+.agent-tool-head{font-weight:650;white-space:pre-wrap}
+.agent-tool-arrow{color:#77827c}
+.agent-tool-name{color:#9fc7ba}
+.agent-tool-separator{color:#69736e}
+.agent-tool-status.completed{color:#82c997}
+.agent-tool-status.error{color:#e19a9a}
+.agent-tool-status.running,.agent-tool-status.pending{color:#d6bf7a}
+.agent-tool-body{margin-top:5px;color:#c2c8c4;white-space:pre-wrap}
+.agent-compose>div #agent-copy-session{margin-left:auto}
+.agent-compose>div #agent-copy-session+.agent-activity{margin-left:0}

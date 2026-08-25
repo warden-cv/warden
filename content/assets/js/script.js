@@ -360,7 +360,33 @@ setInterval(()=>{$('#clock').textContent=new Date().toLocaleTimeString([],{hour:
 let agentAbort=null,agentBusy=false;
 function updateAgentWorkspace(){const box=$('#agent-workspace');if(!box)return;box.textContent=workspaceRoot?`Workspace · ${workspaceRoot}`:'Open a workspace in Editor before starting an agent task.';$('#agent-run').disabled=agentBusy||!workspaceRoot}
 async function loadAgentStatus(){if(!can('agent.run'))return;try{const s=await api('/api/agent/status');$('#agent-state').textContent=!s.opencodeInstalled?'OpenCode not installed':!s.credentialAvailable?'OpenCode Zen key required':`Ready · ${s.credentialSource} credential`;$('#agent-state-dot').classList.toggle('offline',!s.available);$('#agent-model').textContent='OpenCode Zen · DeepSeek V4 Flash'}catch(e){$('#agent-state').textContent=e.message}}
-function agentFeed(kind,text){const feed=$('#agent-feed');feed.querySelector('.agent-empty')?.remove();const row=document.createElement('div');row.className='agent-event '+kind;row.textContent=text;feed.append(row);feed.scrollTop=feed.scrollHeight}
+function renderAgentToolEvent(row,text){
+  const lines=String(text).split('\n'),m=lines[0].match(/^↳ ([a-zA-Z0-9_.:-]+) · (completed|error|running|pending)$/);
+  if(!m){row.textContent=text;return}
+  const head=document.createElement('div');head.className='agent-tool-head';
+  const arrow=document.createElement('span');arrow.className='agent-tool-arrow';arrow.textContent='↳ ';
+  const tool=document.createElement('span');tool.className='agent-tool-name';tool.textContent=m[1];
+  const dot=document.createElement('span');dot.className='agent-tool-separator';dot.textContent=' · ';
+  const status=document.createElement('span');status.className='agent-tool-status '+m[2];status.textContent=m[2];
+  head.append(arrow,tool,dot,status);row.append(head);
+  if(lines.length>1){const body=document.createElement('div');body.className='agent-tool-body';body.textContent=lines.slice(1).join('\n');row.append(body)}
+}
+function agentFeed(kind,text){
+  const clean=String(text??'').trim();
+  if(!clean)return;
+  const feed=$('#agent-feed');feed.querySelector('.agent-empty')?.remove();
+  const row=document.createElement('div');row.className='agent-event '+kind;row.dataset.kind=kind;
+  if(kind==='tool')renderAgentToolEvent(row,clean);else row.textContent=clean;
+  feed.append(row);feed.scrollTop=feed.scrollHeight
+}
+async function copyAgentSession(){
+  const rows=[...document.querySelectorAll('#agent-feed .agent-event')];
+  const labels={user:'You',assistant:'Agent',tool:'Tool',error:'Error',done:'Status'};
+  const text=rows.map(row=>`${labels[row.dataset.kind]||'Agent'}:\n${row.innerText.trim()}`).filter(x=>x.trim()).join('\n\n');
+  if(!text){toast('Nothing to copy','warn');return}
+  try{await navigator.clipboard.writeText(text);toast('Agent session copied')}
+  catch{toast('Could not copy agent session','error')}
+}
 function clippedAgentText(v,max=2400){const s=String(v??'').trim();return s.length>max?s.slice(0,max)+'\n…':s}
 function summarizeAgentTool(raw){
   const part=raw.part||raw,state=part.state||{},tool=part.tool||raw.tool||raw.name||'tool',status=state.status||'';
@@ -378,4 +404,5 @@ async function runAgent(prompt){if(agentBusy||!workspaceRoot)return;agentBusy=tr
 $('#agent-form')?.addEventListener('submit',e=>{e.preventDefault();const p=$('#agent-prompt').value.trim();if(!p)return;$('#agent-prompt').value='';runAgent(p)});
 $('#agent-prompt')?.addEventListener('keydown',e=>{if(e.key!=='Enter'||e.shiftKey||e.isComposing)return;e.preventDefault();if(agentBusy)return;const p=e.currentTarget.value.trim();if(!p)return;e.currentTarget.value='';runAgent(p)});
 $('#agent-stop')?.addEventListener('click',()=>agentAbort?.abort());
+$('#agent-copy-session')?.addEventListener('click',copyAgentSession);
 })();
