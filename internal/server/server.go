@@ -75,6 +75,7 @@ func Run(cfg Config) error {
 	alertCtx, stopAlerts := context.WithCancel(context.Background())
 	defer stopAlerts()
 	go a.runAlertEvaluator(alertCtx)
+	go a.runWebsiteJobs(alertCtx)
 	if accounts.empty() {
 		log.Printf("Warden first-run setup is required. Remote setup token: %s", a.setupToken)
 	}
@@ -95,6 +96,7 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/session", a.session)
 	mux.HandleFunc("/api/monitor", a.require("monitor.read", a.monitor))
 	mux.HandleFunc("/api/alerts", a.require("monitor.read", a.alertsAPI))
+	mux.HandleFunc("/api/websites", a.require("system.read", a.websitesAPI))
 	mux.HandleFunc("/api/files", a.require("files.read", a.listFiles))
 	mux.HandleFunc("/api/file", a.protect(a.file))
 	mux.HandleFunc("/api/files/mutate", a.require("files.manage", a.mutate))

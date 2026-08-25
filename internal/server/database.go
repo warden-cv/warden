@@ -148,6 +148,52 @@ var databaseMigrations = []databaseMigration{
 			FOREIGN KEY(rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE
 		);`,
 	},
+	{
+		version: 5,
+		name:    "website revisions and operation jobs",
+		sql: `CREATE TABLE websites (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			document_root TEXT NOT NULL DEFAULT '',
+			upstream TEXT NOT NULL DEFAULT '',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_by TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE website_domains (
+			website_id TEXT NOT NULL,
+			domain TEXT NOT NULL UNIQUE,
+			primary_domain INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY(website_id,domain),
+			FOREIGN KEY(website_id) REFERENCES websites(id) ON DELETE CASCADE
+		);
+		CREATE TABLE website_revisions (
+			id TEXT PRIMARY KEY,
+			website_id TEXT NOT NULL,
+			sequence INTEGER NOT NULL,
+			configuration_json TEXT NOT NULL,
+			created_by TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			UNIQUE(website_id,sequence),
+			FOREIGN KEY(website_id) REFERENCES websites(id) ON DELETE CASCADE
+		);
+		CREATE TABLE operation_jobs (
+			id TEXT PRIMARY KEY,
+			kind TEXT NOT NULL,
+			target_type TEXT NOT NULL,
+			target_id TEXT NOT NULL,
+			state TEXT NOT NULL,
+			requested_by TEXT NOT NULL,
+			request_json TEXT NOT NULL DEFAULT '{}',
+			result TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			started_at INTEGER,
+			finished_at INTEGER
+		);
+		CREATE INDEX operation_jobs_state_created_idx ON operation_jobs(state,created_at);`,
+	},
 }
 
 func openDatabase(configDir string) (*sql.DB, error) {
