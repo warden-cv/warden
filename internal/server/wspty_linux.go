@@ -24,7 +24,11 @@ import (
 
 const wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-func servePTY(w http.ResponseWriter, r *http.Request, cwd string, extraEnv map[string]string) error {
+type ptyHooks struct {
+	Output func([]byte)
+}
+
+func servePTY(w http.ResponseWriter, r *http.Request, cwd string, extraEnv map[string]string, hooks ptyHooks) error {
 	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		return errors.New("websocket upgrade required")
 	}
@@ -73,6 +77,9 @@ func servePTY(w http.ResponseWriter, r *http.Request, cwd string, extraEnv map[s
 		for {
 			n, e := master.Read(buf)
 			if n > 0 {
+				if hooks.Output != nil {
+					hooks.Output(buf[:n])
+				}
 				if writeWS(conn, 1, buf[:n]) != nil {
 					break
 				}

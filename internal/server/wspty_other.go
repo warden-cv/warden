@@ -7,6 +7,10 @@ import (
 	"net/http"
 )
 
-func servePTY(w http.ResponseWriter, r *http.Request, cwd string, extraEnv map[string]string) error {
+type ptyHooks struct {
+	Output func([]byte)
+}
+
+func servePTY(w http.ResponseWriter, r *http.Request, cwd string, extraEnv map[string]string, hooks ptyHooks) error {
 	return errors.New("PTY terminal is supported on Linux only")
 }

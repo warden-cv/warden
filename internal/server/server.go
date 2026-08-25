@@ -108,6 +108,7 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/warden/export-secure", a.require("settings.manage", a.exportSecureConfiguration))
 	mux.HandleFunc("/api/warden/import-secure", a.require("settings.manage", a.importSecureConfiguration))
 	mux.HandleFunc("/api/terminal", a.terminal)
+	mux.HandleFunc("/api/terminal/sessions", a.require("terminal.open", a.terminalSessionsAPI))
 	if cfg.StaticFS != nil {
 		mux.Handle("/", http.FileServer(http.FS(cfg.StaticFS)))
 	} else {
@@ -315,10 +316,12 @@ func (a *app) terminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cwd := a.files.shellStart(a.cfg.HomeDir)
+	sessionCWD := "/"
 	if q := r.URL.Query().Get("cwd"); q != "" {
 		if resolved, e := a.files.resolve(q, false); e == nil {
 			if info, statErr := os.Stat(resolved); statErr == nil && info.IsDir() {
 				cwd = resolved
+				sessionCWD = q
 			} else {
 				http.Error(w, "terminal cwd must be a directory", 400)
 				return
@@ -328,10 +331,21 @@ func (a *app) terminal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
+	if !validAgentSessionID(sessionID) {
+		http.Error(w, "invalid terminal session", 400)
+		return
+	}
+	if err := a.connectTerminalSession(s.AccountID, sessionID, sessionCWD); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	a.auditEvent(r, "terminal_open", fmt.Sprintf("cwd=%q", cwd))
-	if e := servePTY(w, r, cwd, a.config.environmentFor(s.AccountID)); e != nil {
+	hooks := ptyHooks{Output: func(p []byte) { a.appendTerminalScrollback(s.AccountID, sessionID, p) }}
+	if e := servePTY(w, r, cwd, a.config.environmentFor(s.AccountID), hooks); e != nil {
 		a.auditEvent(r, "terminal_error", fmt.Sprintf("err=%q", e))
 	}
+	a.disconnectTerminalSession(s.AccountID, sessionID)
 }
 func (a *app) protect(next http.HandlerFunc) http.HandlerFunc { return a.require("", next) }
 func (a *app) require(capability string, next http.HandlerFunc) http.HandlerFunc {

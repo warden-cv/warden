@@ -73,6 +73,30 @@ var databaseMigrations = []databaseMigration{
 		);
 		CREATE INDEX agent_runs_account_conversation_idx ON agent_runs(account_id,conversation_id,started_at DESC);`,
 	},
+	{
+		version: 3,
+		name:    "durable terminal sessions",
+		sql: `CREATE TABLE terminal_sessions (
+			account_id TEXT NOT NULL,
+			id TEXT NOT NULL,
+			title TEXT NOT NULL DEFAULT 'Terminal',
+			cwd TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'disconnected',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			closed_at INTEGER,
+			PRIMARY KEY(account_id,id)
+		);
+		CREATE INDEX terminal_sessions_account_updated_idx ON terminal_sessions(account_id,closed_at,updated_at DESC);
+		CREATE TABLE terminal_scrollback (
+			account_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			output BLOB NOT NULL DEFAULT X'',
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(account_id,session_id),
+			FOREIGN KEY(account_id,session_id) REFERENCES terminal_sessions(account_id,id) ON DELETE CASCADE
+		);`,
+	},
 }
 
 func openDatabase(configDir string) (*sql.DB, error) {

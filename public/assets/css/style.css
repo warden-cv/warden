@@ -419,6 +419,7 @@ textarea.editor-surface:not(:disabled){cursor:text}
 #view-terminal #terminal-hide{display:none}
 .editor-terminal-panel #terminal-placement{display:inline-block}
 @media(max-width:900px){.editor-main{--editor-terminal-height:220px}.terminal-cwd{max-width:180px}}
+.terminal-shell{grid-template-rows:31px 42px minmax(0,1fr) 28px}.terminal-tabs-bar{display:flex;min-width:0;border-bottom:1px solid var(--line);background:#18191a}.terminal-tabs{display:flex;flex:1;min-width:0;overflow-x:auto}.terminal-tab{display:flex;align-items:center;gap:7px;max-width:180px;padding:0 7px 0 10px;border:0;border-right:1px solid var(--line);background:#1c1d1e;color:var(--muted2);font:10px var(--mono)}.terminal-tab.active{background:#111213;color:#fff;border-top:1px solid var(--green)}.terminal-tab-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.terminal-tab-close{color:#777;font-size:13px}.terminal-new{width:31px;border:0;border-left:1px solid var(--line);background:#202122;color:var(--muted2);font-size:16px}.terminal-new:hover,.terminal-tab:hover{background:#292a2b;color:#fff}
 .tree-row .tree-name{flex:1}.tree-terminal{display:none;flex:0 0 auto;width:28px;height:22px;border:0;border-radius:4px;background:transparent;color:#85898c;font:9px var(--mono)}.tree-row:hover .tree-terminal,.tree-terminal:focus{display:block}.tree-terminal:hover{background:#303132;color:#fff}.terminal-probe{position:absolute;visibility:hidden;pointer-events:none;font:12px/1.55 var(--mono);white-space:pre}
 
 /* Editor occurrence highlighting and Ctrl+D multi-selection overlay. */
