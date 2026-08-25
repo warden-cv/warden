@@ -28,6 +28,51 @@ var databaseMigrations = []databaseMigration{
 			updated_at INTEGER NOT NULL
 		);`,
 	},
+	{
+		version: 2,
+		name:    "durable agent conversations",
+		sql: `CREATE TABLE conversations (
+			account_id TEXT NOT NULL,
+			id TEXT NOT NULL,
+			title TEXT NOT NULL DEFAULT '',
+			workspace TEXT NOT NULL DEFAULT '',
+			provider TEXT NOT NULL DEFAULT 'opencode',
+			model TEXT NOT NULL DEFAULT '',
+			opencode_session_id TEXT NOT NULL DEFAULT '',
+			state TEXT NOT NULL DEFAULT 'idle',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			archived_at INTEGER,
+			PRIMARY KEY(account_id,id)
+		);
+		CREATE INDEX conversations_account_updated_idx ON conversations(account_id,archived_at,updated_at DESC);
+		CREATE TABLE conversation_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			account_id TEXT NOT NULL,
+			conversation_id TEXT NOT NULL,
+			sequence INTEGER NOT NULL,
+			kind TEXT NOT NULL,
+			text TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			UNIQUE(account_id,conversation_id,sequence),
+			FOREIGN KEY(account_id,conversation_id) REFERENCES conversations(account_id,id) ON DELETE CASCADE
+		);
+		CREATE TABLE agent_runs (
+			id TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL,
+			conversation_id TEXT NOT NULL,
+			state TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			started_at INTEGER NOT NULL,
+			finished_at INTEGER,
+			error TEXT NOT NULL DEFAULT '',
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			estimated_cost_usd REAL NOT NULL DEFAULT 0,
+			FOREIGN KEY(account_id,conversation_id) REFERENCES conversations(account_id,id) ON DELETE CASCADE
+		);
+		CREATE INDEX agent_runs_account_conversation_idx ON agent_runs(account_id,conversation_id,started_at DESC);`,
+	},
 }
 
 func openDatabase(configDir string) (*sql.DB, error) {

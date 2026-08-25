@@ -252,6 +252,13 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		writeAgentEvent(w, flusher, "error", map[string]any{"message": err.Error()})
 		return
 	}
+	runID := token(18)
+	if err := a.startDurableAgentRun(runID, sess.AccountID, clientSession, q.Prompt, q.Workspace, providerID, model); err != nil {
+		cancel()
+		_ = cmd.Wait()
+		writeAgentEvent(w, flusher, "error", map[string]any{"message": "persist agent run: " + err.Error()})
+		return
+	}
 
 	var inputTokens, outputTokens uint64
 	var cost float64
@@ -309,10 +316,12 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		if msg == "" {
 			msg = waitErr.Error()
 		}
+		a.finishDurableAgentRun(runID, sess.AccountID, clientSession, "failed", sessionID, msg, inputTokens, outputTokens, cost)
 		writeAgentEvent(w, flusher, "error", map[string]any{"message": msg})
 		a.auditEvent(r, "agent_run_finish", "status=error workspace="+q.Workspace)
 		return
 	}
+	a.finishDurableAgentRun(runID, sess.AccountID, clientSession, "completed", sessionID, "", inputTokens, outputTokens, cost)
 	writeAgentEvent(w, flusher, "done", map[string]any{"inputTokens": inputTokens, "outputTokens": outputTokens, "estimatedCostUsd": cost, "sessionID": sessionID})
 	a.auditEvent(r, "agent_run_finish", "status=ok workspace="+q.Workspace)
 }
