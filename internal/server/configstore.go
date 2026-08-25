@@ -175,47 +175,63 @@ func loadConfigStore(dir string, defaults instanceConfigFile) (*configStore, err
 	return s, nil
 }
 
-func (s *configStore) reload() error {
-	var inst instanceConfigFile
-	if err := readJSONStrict(filepath.Join(s.dir, "config.json"), &inst); err != nil {
-		return fmt.Errorf("config.json: %w", err)
+type configCandidate struct {
+	instance       instanceConfigFile
+	environment    environmentConfigFile
+	authentication authenticationConfigFile
+	ai             aiConfigFile
+}
+
+func (s *configStore) readCandidate() (configCandidate, error) {
+	var c configCandidate
+	if err := readJSONStrict(filepath.Join(s.dir, "config.json"), &c.instance); err != nil {
+		return c, fmt.Errorf("config.json: %w", err)
 	}
-	if err := validateInstanceConfig(inst); err != nil {
-		return fmt.Errorf("config.json: %w", err)
+	if err := validateInstanceConfig(c.instance); err != nil {
+		return c, fmt.Errorf("config.json: %w", err)
 	}
-	var env environmentConfigFile
-	if err := readJSONStrict(filepath.Join(s.dir, "environment.json"), &env); err != nil {
-		return fmt.Errorf("environment.json: %w", err)
+	if err := readJSONStrict(filepath.Join(s.dir, "environment.json"), &c.environment); err != nil {
+		return c, fmt.Errorf("environment.json: %w", err)
 	}
-	if err := validateEnvironmentConfig(env); err != nil {
-		return fmt.Errorf("environment.json: %w", err)
+	if err := validateEnvironmentConfig(c.environment); err != nil {
+		return c, fmt.Errorf("environment.json: %w", err)
 	}
-	if env.Global == nil {
-		env.Global = map[string]string{}
+	if c.environment.Global == nil {
+		c.environment.Global = map[string]string{}
 	}
-	if env.Accounts == nil {
-		env.Accounts = map[string]map[string]string{}
+	if c.environment.Accounts == nil {
+		c.environment.Accounts = map[string]map[string]string{}
 	}
-	var auth authenticationConfigFile
-	if err := readJSONStrict(filepath.Join(s.dir, "authentication.json"), &auth); err != nil {
-		return fmt.Errorf("authentication.json: %w", err)
+	if err := readJSONStrict(filepath.Join(s.dir, "authentication.json"), &c.authentication); err != nil {
+		return c, fmt.Errorf("authentication.json: %w", err)
 	}
-	if err := validateAuthenticationConfig(auth); err != nil {
-		return fmt.Errorf("authentication.json: %w", err)
+	if err := validateAuthenticationConfig(c.authentication); err != nil {
+		return c, fmt.Errorf("authentication.json: %w", err)
 	}
-	var ai aiConfigFile
-	if err := readJSONStrict(filepath.Join(s.dir, "ai.json"), &ai); err != nil {
-		return fmt.Errorf("ai.json: %w", err)
+	if err := readJSONStrict(filepath.Join(s.dir, "ai.json"), &c.ai); err != nil {
+		return c, fmt.Errorf("ai.json: %w", err)
 	}
-	if err := validateAIConfig(ai); err != nil {
-		return fmt.Errorf("ai.json: %w", err)
+	if err := validateAIConfig(c.ai); err != nil {
+		return c, fmt.Errorf("ai.json: %w", err)
 	}
+	return c, nil
+}
+
+func (s *configStore) applyCandidate(c configCandidate) {
 	s.mu.Lock()
-	s.instance = inst
-	s.environment = env
-	s.authentication = auth
-	s.ai = ai
+	s.instance = c.instance
+	s.environment = c.environment
+	s.authentication = c.authentication
+	s.ai = c.ai
 	s.mu.Unlock()
+}
+
+func (s *configStore) reload() error {
+	c, err := s.readCandidate()
+	if err != nil {
+		return err
+	}
+	s.applyCandidate(c)
 	return nil
 }
 
@@ -550,15 +566,7 @@ func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 	}
 	switch q.Action {
 	case "reload":
-		if err := a.config.reload(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := a.accounts.reload(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := a.secrets.reload(); err != nil {
+		if err := a.reloadAllConfiguration(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -603,6 +611,17 @@ func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 		}
 		a.auditEvent(r, "warden_environment_update", fmt.Sprintf("count=%d", len(vars)))
 		jsonOut(w, map[string]any{"ok": true, "message": "Environment saved. New terminal sessions will use it."})
+	case "reset-instance":
+		if q.Confirmation != "RESET WARDEN" {
+			http.Error(w, "type RESET WARDEN to confirm", http.StatusBadRequest)
+			return
+		}
+		a.auditEvent(r, "warden_instance_reset", "")
+		if err := a.resetInstanceState(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOut(w, map[string]any{"ok": true, "message": "Warden state reset. Workspace files were not touched.", "setupRequired": true})
 	case "reset-authentication":
 		if q.Confirmation != "RESET" {
 			http.Error(w, "type RESET to confirm", http.StatusBadRequest)

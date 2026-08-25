@@ -119,6 +119,17 @@ func (s *aiUsageStore) record(accountID, provider string, inputTokens, outputTok
 	return nil
 }
 
+func (s *aiUsageStore) reset() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := aiUsageFile{Version: configSchemaVersion, Accounts: map[string]aiAccountUsage{}}
+	if err := writeJSONAtomic(filepath.Join(s.dir, "ai-usage.json"), next, false); err != nil {
+		return err
+	}
+	s.data = next
+	return nil
+}
+
 func (s *aiUsageStore) summary(accountID string) []aiUsageSummary {
 	s.mu.RLock()
 	usage := s.data.Accounts[accountID]

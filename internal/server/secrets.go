@@ -66,28 +66,40 @@ func loadSecretStore(dir string) (*secretStore, error) {
 	return s, nil
 }
 
-func (s *secretStore) reload() error {
+func (s *secretStore) readCandidate() (secretsFile, error) {
 	var next secretsFile
 	if err := readJSONStrict(filepath.Join(s.dir, "secrets.json"), &next); err != nil {
-		return fmt.Errorf("secrets.json: %w", err)
+		return next, fmt.Errorf("secrets.json: %w", err)
 	}
 	if next.Version != configSchemaVersion {
-		return fmt.Errorf("secrets.json: unsupported schema version %d", next.Version)
+		return next, fmt.Errorf("secrets.json: unsupported schema version %d", next.Version)
 	}
 	if next.Values == nil {
 		next.Values = map[string]encryptedSecret{}
 	}
 	for name, v := range next.Values {
 		if name == "" {
-			return errors.New("secrets.json: empty secret name")
+			return next, errors.New("secrets.json: empty secret name")
 		}
 		if _, err := s.decrypt(v); err != nil {
-			return fmt.Errorf("secrets.json: secret %q cannot be decrypted: %w", name, err)
+			return next, fmt.Errorf("secrets.json: secret %q cannot be decrypted: %w", name, err)
 		}
 	}
+	return next, nil
+}
+
+func (s *secretStore) applyCandidate(next secretsFile) {
 	s.mu.Lock()
 	s.data = next
 	s.mu.Unlock()
+}
+
+func (s *secretStore) reload() error {
+	next, err := s.readCandidate()
+	if err != nil {
+		return err
+	}
+	s.applyCandidate(next)
 	return nil
 }
 
@@ -202,6 +214,17 @@ func (s *secretStore) deletePrefix(prefix string) error {
 	if !changed {
 		return nil
 	}
+	if err := writeJSONAtomic(filepath.Join(s.dir, "secrets.json"), next, true); err != nil {
+		return err
+	}
+	s.data = next
+	return nil
+}
+
+func (s *secretStore) reset() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := secretsFile{Version: configSchemaVersion, Values: map[string]encryptedSecret{}}
 	if err := writeJSONAtomic(filepath.Join(s.dir, "secrets.json"), next, true); err != nil {
 		return err
 	}

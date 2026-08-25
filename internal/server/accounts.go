@@ -74,10 +74,7 @@ func loadAccountStore(dir string) (*accountStore, error) {
 	}
 	rolesPath := filepath.Join(dir, "roles.json")
 	if _, err := os.Stat(rolesPath); errors.Is(err, os.ErrNotExist) {
-		defaults := rolesFile{Version: configSchemaVersion, Roles: []role{
-			{ID: "administrator", Name: "Administrator", Capabilities: []string{"*"}, BuiltIn: true},
-			{ID: "user", Name: "User", Capabilities: defaultUserCapabilities(), BuiltIn: true},
-		}}
+		defaults := defaultRoles()
 		if err := writeJSONAtomic(rolesPath, defaults, false); err != nil {
 			return nil, err
 		}
@@ -90,22 +87,34 @@ func loadAccountStore(dir string) (*accountStore, error) {
 	return s, nil
 }
 
-func (s *accountStore) reload() error {
+func (s *accountStore) readCandidate() (accountsFile, rolesFile, error) {
 	var users accountsFile
 	if err := readJSONStrict(filepath.Join(s.dir, "users.json"), &users); err != nil {
-		return fmt.Errorf("users.json: %w", err)
+		return users, rolesFile{}, fmt.Errorf("users.json: %w", err)
 	}
 	var roles rolesFile
 	if err := readJSONStrict(filepath.Join(s.dir, "roles.json"), &roles); err != nil {
-		return fmt.Errorf("roles.json: %w", err)
+		return users, roles, fmt.Errorf("roles.json: %w", err)
 	}
 	if err := validateAccounts(users, roles); err != nil {
-		return err
+		return users, roles, err
 	}
+	return users, roles, nil
+}
+
+func (s *accountStore) applyCandidate(users accountsFile, roles rolesFile) {
 	s.mu.Lock()
 	s.accounts = users
 	s.roles = roles
 	s.mu.Unlock()
+}
+
+func (s *accountStore) reload() error {
+	users, roles, err := s.readCandidate()
+	if err != nil {
+		return err
+	}
+	s.applyCandidate(users, roles)
 	return nil
 }
 
