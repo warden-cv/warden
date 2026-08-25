@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -52,12 +51,7 @@ func monitor(root string) monitorSnapshot {
 	}
 	s.CPU = cpuUsage()
 	readMem(&s)
-	var st syscall.Statfs_t
-	if syscall.Statfs(root, &st) == nil {
-		s.Disk.Total = st.Blocks * uint64(st.Bsize)
-		free := st.Bavail * uint64(st.Bsize)
-		s.Disk.Used = s.Disk.Total - free
-	}
+	s.Disk = diskUsage(root)
 	if ds, e := os.ReadDir("/proc"); e == nil {
 		for _, d := range ds {
 			if d.IsDir() {
