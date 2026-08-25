@@ -158,6 +158,17 @@ func (s *secretStore) get(name string) (string, bool) {
 	return plain, err == nil
 }
 
+func (s *secretStore) persist(next secretsFile) error {
+	path := filepath.Join(s.dir, "secrets.json")
+	// Do not retain a decryptable local history of credentials. Portable
+	// encrypted backups are the recovery mechanism for secret material.
+	if err := writeJSONAtomic(path, next, false); err != nil {
+		return err
+	}
+	_ = os.Remove(path + ".bak")
+	return nil
+}
+
 func (s *secretStore) set(name, value string) error {
 	if name == "" {
 		return errors.New("secret name is required")
@@ -173,7 +184,7 @@ func (s *secretStore) set(name, value string) error {
 		next.Values[k] = v
 	}
 	next.Values[name] = enc
-	if err := writeJSONAtomic(filepath.Join(s.dir, "secrets.json"), next, true); err != nil {
+	if err := s.persist(next); err != nil {
 		return err
 	}
 	s.data = next
@@ -192,7 +203,7 @@ func (s *secretStore) delete(name string) error {
 			next.Values[k] = v
 		}
 	}
-	if err := writeJSONAtomic(filepath.Join(s.dir, "secrets.json"), next, true); err != nil {
+	if err := s.persist(next); err != nil {
 		return err
 	}
 	s.data = next
@@ -214,7 +225,7 @@ func (s *secretStore) deletePrefix(prefix string) error {
 	if !changed {
 		return nil
 	}
-	if err := writeJSONAtomic(filepath.Join(s.dir, "secrets.json"), next, true); err != nil {
+	if err := s.persist(next); err != nil {
 		return err
 	}
 	s.data = next
@@ -256,7 +267,7 @@ func (s *secretStore) reset() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := secretsFile{Version: configSchemaVersion, Values: map[string]encryptedSecret{}}
-	if err := writeJSONAtomic(filepath.Join(s.dir, "secrets.json"), next, true); err != nil {
+	if err := s.persist(next); err != nil {
 		return err
 	}
 	s.data = next

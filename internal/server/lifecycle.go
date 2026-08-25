@@ -200,6 +200,9 @@ func (a *app) resetInstanceState() error {
 	if err := a.reloadAllConfiguration(); err != nil {
 		return err
 	}
+	for _, name := range []string{"config.json", "environment.json", "authentication.json", "ai.json", "users.json", "roles.json", "secrets.json"} {
+		_ = os.Remove(filepath.Join(a.cfg.ConfigDir, name+".bak"))
+	}
 	a.auth.revokeAll()
 	return nil
 }
