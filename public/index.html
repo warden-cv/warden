@@ -141,10 +141,11 @@
 		        <aside id="editor-agent-panel" class="editor-agent-panel" hidden>
 		          <div class="editor-agent-head"><div><strong>Warden Agent</strong><span id="editor-agent-state">Ready</span></div><button id="editor-agent-collapse" title="Collapse coding agent">×</button></div>
 		          <div id="editor-agent-workspace" class="editor-agent-workspace">Open a workspace before starting an agent task.</div>
+		          <div class="agent-sessionbar compact"><div id="editor-agent-session-tabs" class="agent-session-tabs"></div><div class="agent-new-wrap"><button id="editor-agent-new" class="agent-new-button" type="button">＋⌄</button><div id="editor-agent-session-menu" class="agent-session-menu" hidden></div></div></div>
 		          <div id="editor-agent-feed" class="agent-feed editor-agent-feed"><div class="agent-empty"><strong>Give Warden a development task</strong><span>The same coding agent, beside your editor.</span></div></div>
 		          <form id="editor-agent-form" class="agent-compose editor-agent-compose">
 		            <textarea id="editor-agent-prompt" placeholder="Implement, investigate, fix, test…" spellcheck="true"></textarea>
-		            <div><span>OpenCode Zen · DeepSeek V4 Flash</span><button id="editor-agent-copy-session" type="button" class="secondary-button compact">Copy session</button><span id="editor-agent-activity" class="agent-activity" hidden><i></i></span><button id="editor-agent-stop" type="button" class="secondary-button compact" hidden>Stop</button><button id="editor-agent-run" type="submit" class="primary-small compact">Run</button></div>
+		            <div><select id="editor-agent-provider" class="agent-provider-select" aria-label="Agent provider"></select><button id="editor-agent-copy-session" type="button" class="secondary-button compact">Copy session</button><span id="editor-agent-activity" class="agent-activity" hidden><i></i></span><button id="editor-agent-stop" type="button" class="secondary-button compact" hidden>Stop</button><button id="editor-agent-run" type="submit" class="primary-small compact">Run</button></div>
 		          </form>
 		        </aside>
 		      </div>
@@ -154,11 +155,12 @@
 		      <div class="agent-layout">
 		        <section class="panel agent-panel">
 		          <div class="agent-head"><div><p class="eyebrow">Coding agent</p><h3>Warden Agent</h3><p>DeepSeek V4 Flash through OpenCode · runs inside the open Editor workspace.</p></div><div class="agent-state"><span id="agent-state-dot" class="status-dot"></span><span id="agent-state">Checking OpenCode…</span></div></div>
-		          <div id="agent-workspace" class="agent-workspace">Open a workspace in Editor before starting an agent task.</div>
+		          <div id="agent-workspace" class="agent-workspace">Choose or open a workspace before starting an agent task.</div>
+		          <div class="agent-sessionbar"><div id="agent-session-tabs" class="agent-session-tabs"></div><div class="agent-new-wrap"><button id="agent-new" class="agent-new-button" type="button">＋⌄</button><div id="agent-session-menu" class="agent-session-menu" hidden></div></div></div>
 		          <div id="agent-feed" class="agent-feed"><div class="agent-empty"><strong>Give Warden a development task</strong><span>The agent can inspect and modify the workspace, run commands, Git and tests through OpenCode.</span></div></div>
 		          <form id="agent-form" class="agent-compose">
 		            <textarea id="agent-prompt" placeholder="Implement, investigate, fix, test…" spellcheck="true"></textarea>
-		            <div><span id="agent-model">OpenCode Zen · DeepSeek V4 Flash</span><button id="agent-copy-session" type="button" class="secondary-button">Copy session</button><span id="agent-activity" class="agent-activity" hidden><i></i></span><button id="agent-stop" type="button" class="secondary-button" hidden>Stop</button><button id="agent-run" type="submit" class="primary-small">Run agent</button></div>
+		            <div><select id="agent-provider" class="agent-provider-select" aria-label="Agent provider"></select><span id="agent-model"></span><button id="agent-copy-session" type="button" class="secondary-button">Copy session</button><span id="agent-activity" class="agent-activity" hidden><i></i></span><button id="agent-stop" type="button" class="secondary-button" hidden>Stop</button><button id="agent-run" type="submit" class="primary-small">Run agent</button></div>
 		          </form>
 		        </section>
 		      </div>

@@ -115,11 +115,12 @@ func instanceFromConfig(cfg Config) instanceConfigFile {
 
 func defaultAIConfig() aiConfigFile {
 	return aiConfigFile{Version: configSchemaVersion, Providers: map[string]aiProviderConfig{
-		"openai":     {Label: "OpenAI", BaseURL: "https://api.openai.com/v1"},
-		"anthropic":  {Label: "Anthropic", BaseURL: "https://api.anthropic.com"},
-		"gemini":     {Label: "Google Gemini", BaseURL: "https://generativelanguage.googleapis.com"},
-		"openrouter": {Label: "OpenRouter", BaseURL: "https://openrouter.ai/api/v1"},
-		"opencode":   {Label: "OpenCode Zen", BaseURL: "https://opencode.ai/zen/v1"},
+		"openai":     {Label: "OpenAI", BaseURL: "https://api.openai.com/v1", DefaultModel: "gpt-5.2"},
+		"anthropic":  {Label: "Anthropic", BaseURL: "https://api.anthropic.com", DefaultModel: "claude-sonnet-4-20250514"},
+		"gemini":     {Label: "Google Gemini", BaseURL: "https://generativelanguage.googleapis.com", DefaultModel: "gemini-2.5-pro"},
+		"openrouter": {Label: "OpenRouter", BaseURL: "https://openrouter.ai/api/v1", DefaultModel: "anthropic/claude-sonnet-4.5"},
+		"opencode":   {Label: "OpenCode Zen", BaseURL: "https://opencode.ai/zen/v1", DefaultModel: "deepseek-v4-flash"},
+		"deepseek":   {Label: "DeepSeek", BaseURL: "https://api.deepseek.com", DefaultModel: "deepseek-chat"},
 		"ollama":     {Label: "Ollama", BaseURL: "http://127.0.0.1:11434"},
 	}}
 }

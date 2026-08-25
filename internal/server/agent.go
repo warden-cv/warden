@@ -13,15 +13,28 @@ import (
 	"strings"
 )
 
-const (
-	wardenAgentProvider = "opencode"
-	wardenAgentModel    = "opencode/deepseek-v4-flash"
-)
+type agentProviderRuntime struct {
+	OpenCodeID    string
+	FallbackModel string
+	NeedsKey      bool
+}
+
+var agentProviderRuntimes = map[string]agentProviderRuntime{
+	"opencode":   {OpenCodeID: "opencode", FallbackModel: "deepseek-v4-flash", NeedsKey: true},
+	"openrouter": {OpenCodeID: "openrouter", FallbackModel: "anthropic/claude-sonnet-4.5", NeedsKey: true},
+	"openai":     {OpenCodeID: "openai", FallbackModel: "gpt-5.2", NeedsKey: true},
+	"anthropic":  {OpenCodeID: "anthropic", FallbackModel: "claude-sonnet-4-20250514", NeedsKey: true},
+	"gemini":     {OpenCodeID: "google", FallbackModel: "gemini-2.5-pro", NeedsKey: true},
+	"deepseek":   {OpenCodeID: "deepseek", FallbackModel: "deepseek-chat", NeedsKey: true},
+	"ollama":     {OpenCodeID: "ollama", NeedsKey: false},
+}
 
 type agentRunRequest struct {
-	Workspace string `json:"workspace"`
-	Prompt    string `json:"prompt"`
-	Session   string `json:"session,omitempty"`
+	Workspace     string `json:"workspace"`
+	Prompt        string `json:"prompt"`
+	Session       string `json:"session,omitempty"`
+	ClientSession string `json:"clientSession,omitempty"`
+	Provider      string `json:"provider,omitempty"`
 }
 
 func (a *app) agentStatus(w http.ResponseWriter, r *http.Request) {
@@ -34,15 +47,56 @@ func (a *app) agentStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	_, source, credential := a.resolveAICredential(sess.AccountID, wardenAgentProvider)
-	_, err := exec.LookPath("opencode")
+	providerID := strings.TrimSpace(r.URL.Query().Get("provider"))
+	if providerID == "" {
+		providerID = "opencode"
+	}
+	runtime, provider, err := a.agentProvider(providerID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	source := "local"
+	credential := !runtime.NeedsKey
+	if runtime.NeedsKey {
+		_, source, credential = a.resolveAICredential(sess.AccountID, providerID)
+	}
+	model := strings.TrimSpace(provider.DefaultModel)
+	if model == "" {
+		model = runtime.FallbackModel
+	}
+	_, lookupErr := exec.LookPath("opencode")
+	cfg := a.config.aiSnapshot()
+	providerViews := make([]map[string]any, 0, len(agentProviderRuntimes))
+	for _, id := range sortedAIProviderIDs(cfg) {
+		rt, supported := agentProviderRuntimes[id]
+		if !supported {
+			continue
+		}
+		p := cfg.Providers[id]
+		modelName := strings.TrimSpace(p.DefaultModel)
+		if modelName == "" {
+			modelName = rt.FallbackModel
+		}
+		src := "local"
+		hasCredential := !rt.NeedsKey
+		if rt.NeedsKey {
+			_, src, hasCredential = a.resolveAICredential(sess.AccountID, id)
+		}
+		providerViews = append(providerViews, map[string]any{
+			"id": id, "label": p.Label, "model": modelName,
+			"credentialAvailable": hasCredential, "credentialSource": src,
+		})
+	}
 	jsonOut(w, map[string]any{
-		"available":           err == nil && credential,
-		"opencodeInstalled":   err == nil,
+		"available":           lookupErr == nil && credential && model != "",
+		"opencodeInstalled":   lookupErr == nil,
 		"credentialAvailable": credential,
 		"credentialSource":    source,
-		"provider":            wardenAgentProvider,
-		"model":               wardenAgentModel,
+		"provider":            providerID,
+		"providerLabel":       provider.Label,
+		"model":               runtime.OpenCodeID + "/" + model,
+		"providers":           providerViews,
 	})
 }
 
@@ -80,26 +134,57 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "workspace must be a directory", http.StatusBadRequest)
 		return
 	}
-	key, source, ok := a.resolveAICredential(sess.AccountID, wardenAgentProvider)
-	if !ok {
-		http.Error(w, "OpenCode Zen credential is not configured", http.StatusBadRequest)
+	providerID := strings.TrimSpace(q.Provider)
+	if providerID == "" {
+		providerID = "opencode"
+	}
+	runtime, provider, err := a.agentProvider(providerID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	model := strings.TrimSpace(provider.DefaultModel)
+	if model == "" {
+		model = runtime.FallbackModel
+	}
+	if model == "" {
+		http.Error(w, provider.Label+" has no model configured", http.StatusBadRequest)
+		return
+	}
+	key, source := "", "local"
+	if runtime.NeedsKey {
+		var configured bool
+		key, source, configured = a.resolveAICredential(sess.AccountID, providerID)
+		if !configured {
+			http.Error(w, provider.Label+" credential is not configured", http.StatusBadRequest)
+			return
+		}
+	}
+	modelRef := runtime.OpenCodeID + "/" + model
 	binary, err := exec.LookPath("opencode")
 	if err != nil {
 		http.Error(w, "OpenCode is not installed or not in Warden's PATH", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Keep OpenCode's own global auth/config/session state out of shared Warden users.
-	runDir, err := os.MkdirTemp("", "warden-opencode-"+sess.AccountID+"-")
+	clientSession := strings.TrimSpace(q.ClientSession)
+	if clientSession == "" {
+		clientSession = "default"
+	}
+	if !validAgentSessionID(clientSession) {
+		http.Error(w, "invalid client session", http.StatusBadRequest)
+		return
+	}
+	// Keep OpenCode config temporary, but persist each Warden account/session's
+	// OpenCode data so follow-up prompts and restored sessions can continue.
+	runDir, err := os.MkdirTemp("", "warden-opencode-config-"+sess.AccountID+"-")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer os.RemoveAll(runDir)
 	configDir := filepath.Join(runDir, "config")
-	dataDir := filepath.Join(runDir, "data")
+	dataDir := filepath.Join(a.cfg.ConfigDir, "agent-sessions", sess.AccountID, clientSession, "data")
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -108,26 +193,11 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	cfg := []byte(`{
-  "$schema":"https://opencode.ai/config.json",
-  "model":"opencode/deepseek-v4-flash",
-  "permission":"allow",
-  "provider":{
-    "opencode":{
-      "npm":"@ai-sdk/openai-compatible",
-      "name":"OpenCode Zen",
-      "options":{
-        "baseURL":"https://opencode.ai/zen/v1",
-        "apiKey":"{env:OPENCODE_API_KEY}"
-      },
-      "models":{
-        "deepseek-v4-flash":{
-          "name":"DeepSeek V4 Flash"
-        }
-      }
-    }
-  }
-}`)
+	cfg, err := a.agentOpenCodeConfig(providerID, runtime, provider, model)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	if err := os.WriteFile(filepath.Join(configDir, "opencode.json"), cfg, 0600); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -135,7 +205,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	args := []string{"--print-logs", "--log-level", "INFO", "run", "--format", "json", "--auto", "--dir", workspace, "--model", wardenAgentModel}
+	args := []string{"--print-logs", "--log-level", "INFO", "run", "--format", "json", "--auto", "--dir", workspace, "--model", modelRef}
 	if strings.TrimSpace(q.Session) != "" {
 		args = append(args, "--session", strings.TrimSpace(q.Session))
 	}
@@ -144,13 +214,15 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	cmd.Dir = workspace
 	env := append([]string{}, os.Environ()...)
 	env = append(env,
-		"OPENCODE_API_KEY="+key,
 		"OPENCODE_CONFIG="+filepath.Join(configDir, "opencode.json"),
 		"OPENCODE_CONFIG_DIR="+configDir,
 		"XDG_CONFIG_HOME="+configDir,
 		"XDG_DATA_HOME="+dataDir,
 		"OPENCODE_DISABLE_AUTOUPDATE=1",
 	)
+	if runtime.NeedsKey {
+		env = setEnvPair(env, "WARDEN_AGENT_API_KEY", key)
+	}
 	// Apply Warden's persistent instance/account environment after the inherited OS environment.
 	for name, value := range a.config.environmentFor(sess.AccountID) {
 		env = setEnvPair(env, name, value)
@@ -175,7 +247,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unavailable", 500)
 		return
 	}
-	a.auditEvent(r, "agent_run_start", "provider="+wardenAgentProvider+" credential="+source+" workspace="+q.Workspace)
+	a.auditEvent(r, "agent_run_start", "provider="+providerID+" credential="+source+" workspace="+q.Workspace)
 	if err := cmd.Start(); err != nil {
 		writeAgentEvent(w, flusher, "error", map[string]any{"message": err.Error()})
 		return
@@ -213,9 +285,11 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	if scan.Err() != nil && waitErr == nil {
 		waitErr = scan.Err()
 	}
-	if waitErr == nil && !sawAssistantText && sessionID != "" {
-		if recovered, usageIn, usageOut, recoveredCost, recoverErr := recoverOpenCodeSession(ctx, binary, sessionID, workspace, env); recoverErr == nil && strings.TrimSpace(recovered) != "" {
-			writeAgentEvent(w, flusher, "recovered", map[string]any{"text": recovered, "sessionID": sessionID})
+	if waitErr == nil && sessionID != "" {
+		if recovered, usageIn, usageOut, recoveredCost, recoverErr := recoverOpenCodeSession(ctx, binary, sessionID, workspace, env); recoverErr == nil {
+			if !sawAssistantText && strings.TrimSpace(recovered) != "" {
+				writeAgentEvent(w, flusher, "recovered", map[string]any{"text": recovered, "sessionID": sessionID})
+			}
 			if usageIn > inputTokens {
 				inputTokens = usageIn
 			}
@@ -225,11 +299,11 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 			if recoveredCost > cost {
 				cost = recoveredCost
 			}
-		} else if recoverErr != nil {
+		} else if !sawAssistantText {
 			writeAgentEvent(w, flusher, "diagnostic", map[string]any{"message": "OpenCode produced no assistant text on stdout and session recovery failed: " + sanitizeAgentDiagnostic(recoverErr.Error(), key)})
 		}
 	}
-	_ = a.aiUsage.record(sess.AccountID, wardenAgentProvider, inputTokens, outputTokens, cost)
+	_ = a.aiUsage.record(sess.AccountID, providerID, inputTokens, outputTokens, cost)
 	if waitErr != nil {
 		msg := sanitizeAgentDiagnostic(strings.TrimSpace(errText), key)
 		if msg == "" {
@@ -239,8 +313,57 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		a.auditEvent(r, "agent_run_finish", "status=error workspace="+q.Workspace)
 		return
 	}
-	writeAgentEvent(w, flusher, "done", map[string]any{"inputTokens": inputTokens, "outputTokens": outputTokens, "estimatedCostUsd": cost})
+	writeAgentEvent(w, flusher, "done", map[string]any{"inputTokens": inputTokens, "outputTokens": outputTokens, "estimatedCostUsd": cost, "sessionID": sessionID})
 	a.auditEvent(r, "agent_run_finish", "status=ok workspace="+q.Workspace)
+}
+
+func (a *app) agentProvider(id string) (agentProviderRuntime, aiProviderConfig, error) {
+	runtime, ok := agentProviderRuntimes[id]
+	if !ok {
+		return agentProviderRuntime{}, aiProviderConfig{}, errors.New("provider is not supported by Warden Agent")
+	}
+	cfg := a.config.aiSnapshot()
+	provider, ok := cfg.Providers[id]
+	if !ok {
+		return agentProviderRuntime{}, aiProviderConfig{}, errors.New("unknown AI provider")
+	}
+	return runtime, provider, nil
+}
+
+func (a *app) agentOpenCodeConfig(id string, runtime agentProviderRuntime, provider aiProviderConfig, model string) ([]byte, error) {
+	modelRef := runtime.OpenCodeID + "/" + model
+	cfg := map[string]any{
+		"$schema":    "https://opencode.ai/config.json",
+		"model":      modelRef,
+		"permission": "allow",
+	}
+	options := map[string]any{}
+	if runtime.NeedsKey {
+		options["apiKey"] = "{env:WARDEN_AGENT_API_KEY}"
+	}
+	if strings.TrimSpace(provider.BaseURL) != "" {
+		options["baseURL"] = strings.TrimSpace(provider.BaseURL)
+	}
+	entry := map[string]any{"options": options}
+	if id == "opencode" {
+		entry["npm"] = "@ai-sdk/openai-compatible"
+		entry["name"] = "OpenCode Zen"
+		entry["models"] = map[string]any{model: map[string]any{"name": model}}
+	}
+	cfg["provider"] = map[string]any{runtime.OpenCodeID: entry}
+	return json.Marshal(cfg)
+}
+
+func validAgentSessionID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		if !(r == '-' || r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+			return false
+		}
+	}
+	return true
 }
 
 func agentEventText(raw map[string]any) string {
@@ -373,6 +496,14 @@ func collectAgentUsage(v any, input, output *uint64, cost *float64) {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return
+	}
+	if tokens, ok := m["tokens"].(map[string]any); ok {
+		if n, ok := numberUint(tokens["input"]); ok && n > *input {
+			*input = n
+		}
+		if n, ok := numberUint(tokens["output"]); ok && n > *output {
+			*output = n
+		}
 	}
 	for k, val := range m {
 		lk := strings.ToLower(k)

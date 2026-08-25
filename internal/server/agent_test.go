@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 )
 
@@ -80,11 +79,48 @@ func TestExportAssistantTextsFindsAssistantPartsOnly(t *testing.T) {
 }
 
 func TestOpenCodeConfigAllowsCodingTools(t *testing.T) {
-	source, err := os.ReadFile("agent.go")
+	a, _, _, _ := permissionTestApp(t)
+	runtime, provider, err := a.agentProvider("opencode")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(source, []byte(`"permission":"allow"`)) {
+	cfg, err := a.agentOpenCodeConfig("opencode", runtime, provider, "deepseek-v4-flash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(cfg, []byte(`"permission":"allow"`)) {
 		t.Fatal("isolated OpenCode config does not explicitly allow coding tools")
+	}
+}
+
+func TestAgentUsageReadsOpenCodeTokensObject(t *testing.T) {
+	raw := map[string]any{
+		"type":   "step-finish",
+		"tokens": map[string]any{"input": float64(32527), "output": float64(3575), "reasoning": float64(42)},
+		"cost":   float64(0.42),
+	}
+	var input, output uint64
+	var cost float64
+	collectAgentUsage(raw, &input, &output, &cost)
+	if input != 32527 || output != 3575 || cost != 0.42 {
+		t.Fatalf("usage=%d/%d cost=%v", input, output, cost)
+	}
+}
+
+func TestAgentOpenAIConfigUsesWardenCredentialEnv(t *testing.T) {
+	a, _, _, _ := permissionTestApp(t)
+	runtime, provider, err := a.agentProvider("openai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := a.agentOpenCodeConfig("openai", runtime, provider, "gpt-5.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(cfg, []byte(`"model":"openai/gpt-5.2"`)) {
+		t.Fatalf("unexpected config: %s", cfg)
+	}
+	if !bytes.Contains(cfg, []byte(`"{env:WARDEN_AGENT_API_KEY}"`)) {
+		t.Fatalf("provider key is not isolated through Warden env: %s", cfg)
 	}
 }
