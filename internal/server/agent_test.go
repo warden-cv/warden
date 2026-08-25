@@ -17,7 +17,7 @@ func TestAgentRunRejectsWorkspaceOutsideConfiguredRoot(t *testing.T) {
 	if err := a.accounts.setRole("user", "User", []string{"agent.run", "ai.use", "ai.credentials"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.secrets.set(aiAccountSecretName(user.ID, "openrouter"), "secret"); err != nil {
+	if err := a.secrets.set(aiAccountSecretName(user.ID, "opencode"), "secret"); err != nil {
 		t.Fatal(err)
 	}
 	body := []byte(`{"workspace":"/../../tmp","prompt":"test"}`)
@@ -36,7 +36,7 @@ func TestAgentStatusDoesNotExposeCredential(t *testing.T) {
 	if err := a.accounts.setRole("user", "User", []string{"agent.run", "ai.use", "ai.credentials"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.secrets.set(aiAccountSecretName(user.ID, "openrouter"), "super-secret-agent-key"); err != nil {
+	if err := a.secrets.set(aiAccountSecretName(user.ID, "opencode"), "super-secret-agent-key"); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "http://warden/api/agent/status", nil)
@@ -47,4 +47,15 @@ func TestAgentStatusDoesNotExposeCredential(t *testing.T) {
 		t.Fatal("agent status leaked credential")
 	}
 	_ = sess
+}
+
+func TestAgentDiagnosticRedactsCredential(t *testing.T) {
+	const key = "sk-or-v1-super-secret"
+	got := sanitizeAgentDiagnostic("provider failed with "+key, key)
+	if bytes.Contains([]byte(got), []byte(key)) {
+		t.Fatal("diagnostic leaked credential")
+	}
+	if !bytes.Contains([]byte(got), []byte("[redacted]")) {
+		t.Fatal("diagnostic did not retain useful redaction marker")
+	}
 }

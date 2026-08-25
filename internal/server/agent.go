@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	wardenAgentProvider = "openrouter"
-	wardenAgentModel    = "openrouter/deepseek/deepseek-v4-flash"
+	wardenAgentProvider = "opencode"
+	wardenAgentModel    = "opencode/deepseek-v4-flash"
 )
 
 type agentRunRequest struct {
@@ -82,7 +82,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	}
 	key, source, ok := a.resolveAICredential(sess.AccountID, wardenAgentProvider)
 	if !ok {
-		http.Error(w, "OpenRouter credential is not configured", http.StatusBadRequest)
+		http.Error(w, "OpenCode Zen credential is not configured", http.StatusBadRequest)
 		return
 	}
 	binary, err := exec.LookPath("opencode")
@@ -108,7 +108,25 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	cfg := []byte(`{"autoupdate":false}`)
+	cfg := []byte(`{
+  "$schema":"https://opencode.ai/config.json",
+  "model":"opencode/deepseek-v4-flash",
+  "provider":{
+    "opencode":{
+      "npm":"@ai-sdk/openai-compatible",
+      "name":"OpenCode Zen",
+      "options":{
+        "baseURL":"https://opencode.ai/zen/v1",
+        "apiKey":"{env:OPENCODE_API_KEY}"
+      },
+      "models":{
+        "deepseek-v4-flash":{
+          "name":"DeepSeek V4 Flash"
+        }
+      }
+    }
+  }
+}`)
 	if err := os.WriteFile(filepath.Join(configDir, "opencode.json"), cfg, 0600); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -116,7 +134,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	args := []string{"run", "--format", "json", "--auto", "--dir", workspace, "--model", wardenAgentModel}
+	args := []string{"--print-logs", "--log-level", "INFO", "run", "--format", "json", "--auto", "--dir", workspace, "--model", wardenAgentModel}
 	if strings.TrimSpace(q.Session) != "" {
 		args = append(args, "--session", strings.TrimSpace(q.Session))
 	}
@@ -125,7 +143,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	cmd.Dir = workspace
 	env := append([]string{}, os.Environ()...)
 	env = append(env,
-		"OPENROUTER_API_KEY="+key,
+		"OPENCODE_API_KEY="+key,
 		"OPENCODE_CONFIG="+filepath.Join(configDir, "opencode.json"),
 		"OPENCODE_CONFIG_DIR="+configDir,
 		"XDG_CONFIG_HOME="+configDir,
@@ -176,18 +194,19 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 			writeAgentEvent(w, flusher, "output", map[string]any{"text": string(line)})
 		}
 	}
-	errText, _ := new(strings.Builder), error(nil)
-	b, _ := ioReadAllLimit(stderr, 256<<10)
-	if len(b) > 0 {
-		errText.Write(b)
-	}
+	errCh := make(chan string, 1)
+	go func() {
+		b, _ := ioReadAllLimit(stderr, 256<<10)
+		errCh <- string(b)
+	}()
 	waitErr := cmd.Wait()
+	errText := <-errCh
 	if scan.Err() != nil && waitErr == nil {
 		waitErr = scan.Err()
 	}
 	_ = a.aiUsage.record(sess.AccountID, wardenAgentProvider, inputTokens, outputTokens, cost)
 	if waitErr != nil {
-		msg := strings.TrimSpace(errText.String())
+		msg := sanitizeAgentDiagnostic(strings.TrimSpace(errText), key)
 		if msg == "" {
 			msg = waitErr.Error()
 		}
@@ -197,6 +216,16 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	}
 	writeAgentEvent(w, flusher, "done", map[string]any{"inputTokens": inputTokens, "outputTokens": outputTokens, "estimatedCostUsd": cost})
 	a.auditEvent(r, "agent_run_finish", "status=ok workspace="+q.Workspace)
+}
+
+func sanitizeAgentDiagnostic(message, secret string) string {
+	if secret != "" {
+		message = strings.ReplaceAll(message, secret, "[redacted]")
+	}
+	if len(message) > 12000 {
+		message = message[len(message)-12000:]
+	}
+	return message
 }
 
 func writeAgentEvent(w http.ResponseWriter, f http.Flusher, kind string, data any) {

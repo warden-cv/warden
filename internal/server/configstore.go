@@ -119,6 +119,7 @@ func defaultAIConfig() aiConfigFile {
 		"anthropic":  {Label: "Anthropic", BaseURL: "https://api.anthropic.com"},
 		"gemini":     {Label: "Google Gemini", BaseURL: "https://generativelanguage.googleapis.com"},
 		"openrouter": {Label: "OpenRouter", BaseURL: "https://openrouter.ai/api/v1"},
+		"opencode":   {Label: "OpenCode Zen", BaseURL: "https://opencode.ai/zen/v1"},
 		"ollama":     {Label: "Ollama", BaseURL: "http://127.0.0.1:11434"},
 	}}
 }
