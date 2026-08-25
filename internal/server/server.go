@@ -91,6 +91,8 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/admin/", a.protect(a.admin))
 	mux.HandleFunc("/api/warden/export", a.require("settings.manage", a.exportConfiguration))
 	mux.HandleFunc("/api/warden/import", a.require("settings.manage", a.importConfiguration))
+	mux.HandleFunc("/api/warden/export-secure", a.require("settings.manage", a.exportSecureConfiguration))
+	mux.HandleFunc("/api/warden/import-secure", a.require("settings.manage", a.importSecureConfiguration))
 	mux.HandleFunc("/api/terminal", a.terminal)
 	mux.Handle("/", http.FileServer(http.Dir(cfg.StaticDir)))
 	srv := &http.Server{Addr: cfg.Listen, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second}

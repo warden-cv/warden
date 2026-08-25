@@ -174,8 +174,8 @@ func (a *app) importConfiguration(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "configuration was written but could not be reloaded: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	a.auth.revokeAll()
 	a.auditEvent(r, "warden_configuration_import", fmt.Sprintf("exported_at=%s", bundle.ExportedAt.UTC().Format(time.RFC3339)))
+	a.auth.revokeAll()
 	jsonOut(w, map[string]any{"ok": true, "message": "Configuration imported. Sign in using an imported account.", "reauthenticate": true})
 }
 

@@ -221,6 +221,37 @@ func (s *secretStore) deletePrefix(prefix string) error {
 	return nil
 }
 
+func (s *secretStore) exportPlain() map[string]string {
+	s.mu.RLock()
+	values := make(map[string]encryptedSecret, len(s.data.Values))
+	for k, v := range s.data.Values {
+		values[k] = v
+	}
+	s.mu.RUnlock()
+	out := map[string]string{}
+	for k, v := range values {
+		if plain, err := s.decrypt(v); err == nil {
+			out[k] = plain
+		}
+	}
+	return out
+}
+
+func (s *secretStore) encryptPlain(values map[string]string) (secretsFile, error) {
+	next := secretsFile{Version: configSchemaVersion, Values: map[string]encryptedSecret{}}
+	for name, plain := range values {
+		if name == "" {
+			return next, errors.New("backup contains an empty secret name")
+		}
+		enc, err := s.encrypt(plain)
+		if err != nil {
+			return next, err
+		}
+		next.Values[name] = enc
+	}
+	return next, nil
+}
+
 func (s *secretStore) reset() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
