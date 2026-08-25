@@ -75,6 +75,8 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/oauth/google/callback", a.googleCallback)
 	mux.HandleFunc("/api/security", a.protect(a.security))
 	mux.HandleFunc("/api/ai", a.protect(a.aiSettings))
+	mux.HandleFunc("/api/agent/status", a.require("agent.run", a.agentStatus))
+	mux.HandleFunc("/api/agent/run", a.require("agent.run", a.agentRun))
 	mux.HandleFunc("/api/logout", a.protect(a.logout))
 	mux.HandleFunc("/api/session", a.session)
 	mux.HandleFunc("/api/monitor", a.require("monitor.read", a.monitor))

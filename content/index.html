@@ -41,6 +41,7 @@
       <button class="nav-item" data-view="explorer"><span class="nav-icon">⌁</span><span>Explorer</span></button>
       <button class="nav-item" data-view="editor"><span class="nav-icon">⌘</span><span>Editor</span></button>
       <button class="nav-item" data-view="terminal"><span class="nav-icon">›_</span><span>Terminal</span></button>
+      <button class="nav-item" data-view="agent"><span class="nav-icon">✦</span><span>Agent</span></button>
       <div class="nav-group">
         <button class="nav-item nav-group-toggle" id="system-menu-toggle" aria-expanded="false"><span class="nav-icon nav-chevron">▸</span><span>System</span></button>
         <div class="nav-submenu" id="system-menu" hidden>
@@ -124,6 +125,20 @@
           </div></div>
           <div class="editor-statusbar"><span><button id="editor-terminal-toggle" class="editor-status-action" title="Toggle terminal (Ctrl+`)">›_ Terminal</button></span><span id="editor-language">Plain Text</span><span id="editor-position">Ln 1, Col 1</span></div>
         </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-agent">
+      <div class="agent-layout">
+        <section class="panel agent-panel">
+          <div class="agent-head"><div><p class="eyebrow">Coding agent</p><h3>Warden Agent</h3><p>DeepSeek V4 Flash through OpenCode · runs inside the open Editor workspace.</p></div><div class="agent-state"><span id="agent-state-dot" class="status-dot"></span><span id="agent-state">Checking OpenCode…</span></div></div>
+          <div id="agent-workspace" class="agent-workspace">Open a workspace in Editor before starting an agent task.</div>
+          <div id="agent-feed" class="agent-feed"><div class="agent-empty"><strong>Give Warden a development task</strong><span>The agent can inspect and modify the workspace, run commands, Git and tests through OpenCode.</span></div></div>
+          <form id="agent-form" class="agent-compose">
+            <textarea id="agent-prompt" placeholder="Implement, investigate, fix, test…" spellcheck="true"></textarea>
+            <div><span id="agent-model">OpenRouter · DeepSeek V4 Flash</span><button id="agent-stop" type="button" class="secondary-button" hidden>Stop</button><button id="agent-run" type="submit" class="primary-small">Run agent</button></div>
+          </form>
+        </section>
       </div>
     </section>
 

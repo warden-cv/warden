@@ -32,7 +32,7 @@
 		    </form>
 		  </section>
 		</div>
-		
+
 		<div id="twofactor-view" class="auth-shell" hidden>
 		  <section class="login-card">
 		    <div class="brand brand-login"><span class="brand-mark">W</span><span>Warden</span></div>
@@ -53,6 +53,7 @@
 		      <button class="nav-item" data-view="explorer"><span class="nav-icon">⌁</span><span>Explorer</span></button>
 		      <button class="nav-item" data-view="editor"><span class="nav-icon">⌘</span><span>Editor</span></button>
 		      <button class="nav-item" data-view="terminal"><span class="nav-icon">›_</span><span>Terminal</span></button>
+		      <button class="nav-item" data-view="agent"><span class="nav-icon">✦</span><span>Agent</span></button>
 		      <div class="nav-group">
 		        <button class="nav-item nav-group-toggle" id="system-menu-toggle" aria-expanded="false"><span class="nav-icon nav-chevron">▸</span><span>System</span></button>
 		        <div class="nav-submenu" id="system-menu" hidden>
@@ -65,13 +66,13 @@
 		      <button id="logout" class="nav-item muted"><span class="nav-icon">↪</span><span>Sign out</span></button>
 		    </div>
 		  </aside>
-		
+
 		  <main class="workspace">
 		    <header class="topbar">
 		      <div><p class="eyebrow" id="section-kicker">Live system</p><h2 id="section-title">Overview</h2></div>
 		      <div class="topbar-actions"><span id="clock" class="clock"></span><span class="version-chip" id="version-chip">v0.1.0</span></div>
 		    </header>
-		
+
 		    <section class="view active" id="view-monitor">
 		      <div class="monitor-layout">
 		        <article class="metric-card primary-metric">
@@ -96,7 +97,7 @@
 		        </article>
 		      </div>
 		    </section>
-		
+
 		    <section class="view" id="view-explorer">
 		      <div class="explorer-shell panel">
 		        <div class="files-toolbar"><div class="crumb-area"><div class="crumbs" id="breadcrumbs"></div><button id="explorer-home" class="path-jump" title="Home directory">⌂ Home</button></div><div class="toolbar-actions"><div id="selection-actions" class="selection-actions"><span class="selection-count"><span id="selected-count">0</span> selected</span><button data-bulk="download">Download</button><button data-bulk="compress">Compress</button><button data-bulk="extract">Extract</button><button data-bulk="copy">Copy</button><button data-bulk="move">Move</button><button data-bulk="delete" class="danger-text">Delete</button><button id="clear-selection" title="Clear selection">×</button></div><input type="file" id="upload-input" hidden><button id="explorer-open-workspace" class="secondary-button" title="Open the current folder in Editor as the workspace">Open as Workspace</button><button id="upload-button" class="secondary-button">↑ Upload</button><button id="new-folder" class="secondary-button">＋ Folder</button><button id="new-file" class="primary-small">＋ File</button></div></div>
@@ -104,7 +105,7 @@
 		        <div id="file-list" class="file-list"></div>
 		      </div>
 		    </section>
-		
+
 		    <section class="view" id="view-editor">
 		      <div class="editor-workbench panel">
 		        <aside class="editor-explorer">
@@ -138,7 +139,21 @@
 		        </div>
 		      </div>
 		    </section>
-		
+
+		    <section class="view" id="view-agent">
+		      <div class="agent-layout">
+		        <section class="panel agent-panel">
+		          <div class="agent-head"><div><p class="eyebrow">Coding agent</p><h3>Warden Agent</h3><p>DeepSeek V4 Flash through OpenCode · runs inside the open Editor workspace.</p></div><div class="agent-state"><span id="agent-state-dot" class="status-dot"></span><span id="agent-state">Checking OpenCode…</span></div></div>
+		          <div id="agent-workspace" class="agent-workspace">Open a workspace in Editor before starting an agent task.</div>
+		          <div id="agent-feed" class="agent-feed"><div class="agent-empty"><strong>Give Warden a development task</strong><span>The agent can inspect and modify the workspace, run commands, Git and tests through OpenCode.</span></div></div>
+		          <form id="agent-form" class="agent-compose">
+		            <textarea id="agent-prompt" placeholder="Implement, investigate, fix, test…" spellcheck="true"></textarea>
+		            <div><span id="agent-model">OpenRouter · DeepSeek V4 Flash</span><button id="agent-stop" type="button" class="secondary-button" hidden>Stop</button><button id="agent-run" type="submit" class="primary-small">Run agent</button></div>
+		          </form>
+		        </section>
+		      </div>
+		    </section>
+
 		    <section class="view" id="view-admin">
 		      <div class="admin-page panel">
 		        <div class="admin-page-head"><div><p class="eyebrow" id="admin-eyebrow">System</p><h3 id="admin-heading">System</h3><p id="admin-description">Structured server administration.</p></div><button id="admin-refresh" class="secondary-button compact">↻ Refresh</button></div>
