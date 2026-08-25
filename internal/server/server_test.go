@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -348,5 +349,32 @@ func TestProxyTrustControlsClientIPAndLoopbackSetup(t *testing.T) {
 	local.RemoteAddr = "127.0.0.1:1234"
 	if !isLoopbackClient(local) {
 		t.Fatal("direct loopback request should remain eligible for local setup")
+	}
+}
+
+func TestTrustedProxyRequiresLoopbackPeer(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://warden.example/", nil)
+	req.RemoteAddr = "203.0.113.20:4321"
+	req = req.WithContext(context.WithValue(req.Context(), proxyTrustKey{}, true))
+	if trustedProxy(req) {
+		t.Fatal("remote direct peer must not become a trusted proxy")
+	}
+	req.RemoteAddr = "127.0.0.1:4321"
+	if !trustedProxy(req) {
+		t.Fatal("loopback peer should be trusted when proxy trust is enabled")
+	}
+}
+
+func TestRequestSchemeFromTrustedLoopbackProxy(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://warden.example/", nil)
+	req.RemoteAddr = "127.0.0.1:4321"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req = req.WithContext(context.WithValue(req.Context(), proxyTrustKey{}, true))
+	if got := requestScheme(req); got != "https" {
+		t.Fatalf("requestScheme = %q, want https", got)
+	}
+	req.RemoteAddr = "203.0.113.20:4321"
+	if got := requestScheme(req); got != "http" {
+		t.Fatalf("untrusted requestScheme = %q, want http", got)
 	}
 }

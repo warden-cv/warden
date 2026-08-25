@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 type Config struct {
 	Listen, FileRoot, HomeDir, StaticDir, PasswordHash, Version, ConfigDir string
 	SecureCookies, TrustProxy                                              bool
+	StaticFS                                                               fs.FS
 }
 type app struct {
 	cfg         Config
@@ -97,7 +99,11 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/warden/export-secure", a.require("settings.manage", a.exportSecureConfiguration))
 	mux.HandleFunc("/api/warden/import-secure", a.require("settings.manage", a.importSecureConfiguration))
 	mux.HandleFunc("/api/terminal", a.terminal)
-	mux.Handle("/", http.FileServer(http.Dir(cfg.StaticDir)))
+	if cfg.StaticFS != nil {
+		mux.Handle("/", http.FileServer(http.FS(cfg.StaticFS)))
+	} else {
+		mux.Handle("/", http.FileServer(http.Dir(cfg.StaticDir)))
+	}
 	srv := &http.Server{Addr: cfg.Listen, Handler: securityHeaders(proxyTrust(cfg.TrustProxy, mux)), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second}
 	log.Printf("Warden %s listening on http://%s (root %s)", cfg.Version, cfg.Listen, f.root)
 	return srv.ListenAndServe()
@@ -368,7 +374,23 @@ func proxyTrust(enabled bool, next http.Handler) http.Handler {
 
 func trustedProxy(r *http.Request) bool {
 	trusted, _ := r.Context().Value(proxyTrustKey{}).(bool)
-	return trusted
+	if !trusted {
+		return false
+	}
+	ip := net.ParseIP(directClientIP(r))
+	return ip != nil && ip.IsLoopback()
+}
+
+func requestScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return "https"
+	}
+	if trustedProxy(r) {
+		if proto := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0])); proto == "https" || proto == "http" {
+			return proto
+		}
+	}
+	return "http"
 }
 
 func forwardedClientIP(r *http.Request) string {

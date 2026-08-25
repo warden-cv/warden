@@ -101,7 +101,7 @@ func (a *authStore) createSession(w http.ResponseWriter, r *http.Request, accoun
 	if err != nil {
 		return session{}, err
 	}
-	http.SetCookie(w, &http.Cookie{Name: "warden_session", Value: sid, Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: 43200})
+	http.SetCookie(w, &http.Cookie{Name: "warden_session", Value: sid, Path: "/", HttpOnly: true, Secure: a.secure || requestScheme(r) == "https", SameSite: http.SameSiteStrictMode, MaxAge: 43200})
 	return s, nil
 }
 
@@ -146,7 +146,7 @@ func (a *authStore) logout(w http.ResponseWriter, r *http.Request) {
 		_ = a.persistSessionsLocked()
 		a.mu.Unlock()
 	}
-	http.SetCookie(w, &http.Cookie{Name: "warden_session", Path: "/", MaxAge: -1, HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: "warden_session", Path: "/", MaxAge: -1, HttpOnly: true, Secure: a.secure || requestScheme(r) == "https", SameSite: http.SameSiteStrictMode})
 }
 func (a *authStore) get(r *http.Request) (session, bool) {
 	c, e := r.Cookie("warden_session")

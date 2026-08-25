@@ -720,3 +720,22 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
   padding:0 10px;
   line-height:35px;
 }
+
+/* Conservative, non-destructive Markdown highlighting for agent responses. */
+.agent-event.assistant{white-space:normal}
+.agent-event.assistant .agent-md-line{min-height:1.58em}
+.agent-event.assistant .agent-md-gap{height:.72em}
+.agent-event.assistant .agent-md-heading{font:inherit;font-weight:750;color:#9fc7ba;line-height:1.58;margin:.35em 0 .1em}
+.agent-event.assistant strong,.agent-event.assistant em{color:#e7b889}
+.agent-event.assistant strong{font-weight:700}
+.agent-event.assistant em{font-style:normal}
+.agent-event.assistant :not(pre)>code{padding:0;border:0;border-radius:0;background:transparent;color:#a9d9b9;font:inherit}
+.agent-event.assistant pre{overflow:auto;margin:.65em 0;padding:10px 12px;border:1px solid #303833;border-radius:6px;background:#0c0f0e;white-space:pre}
+.agent-event.assistant pre code{padding:0;border:0;background:transparent;color:#cbd5cf;font:12.5px/1.45 var(--mono)}
+.agent-event.assistant pre code[data-language]::before{content:attr(data-language);display:block;margin-bottom:7px;color:#65716b;font-size:9px;text-transform:uppercase;letter-spacing:.08em}
+.agent-event.assistant ul,.agent-event.assistant ol{margin:.35em 0 .55em;padding-left:1.7em}
+.agent-event.assistant li{margin:.14em 0;padding-left:.15em}
+.agent-event.assistant li::marker{color:#759783}
+.agent-event.assistant blockquote{margin:.55em 0;padding:.1em 0 .1em .85em;border-left:2px solid #4c6656;color:#aebbb4}
+.agent-event.assistant a{color:#8fd0a6;text-decoration:none;border-bottom:1px solid #486653}
+.agent-event.assistant a:hover{color:#b6e3c5;border-bottom-color:#7fc89b}

@@ -259,8 +259,8 @@ func (s *accountStore) listRoles() []role {
 func (s *accountStore) createInitialAdmin(display, username, password string) (account, error) {
 	display = strings.TrimSpace(display)
 	username = strings.TrimSpace(username)
-	if display == "" || username == "" || len(password) < 10 {
-		return account{}, errors.New("display name, username and a password of at least 10 characters are required")
+	if display == "" || username == "" || len(password) < 7 {
+		return account{}, errors.New("display name, username and a password of at least 7 characters are required")
 	}
 	hash, err := hashPassword(password)
 	if err != nil {
@@ -383,8 +383,8 @@ func (s *accountStore) hasCapability(accountID, key string) bool {
 func (s *accountStore) createAccount(display, username, password string, roles []string) (account, error) {
 	display = strings.TrimSpace(display)
 	username = strings.TrimSpace(username)
-	if display == "" || username == "" || len(password) < 10 {
-		return account{}, errors.New("display name, username and a password of at least 10 characters are required")
+	if display == "" || username == "" || len(password) < 7 {
+		return account{}, errors.New("display name, username and a password of at least 7 characters are required")
 	}
 	hash, err := hashPassword(password)
 	if err != nil {
@@ -467,8 +467,8 @@ func (s *accountStore) findGoogle(subject string) (account, loginIdentity, bool)
 }
 
 func (s *accountStore) addPasswordIdentity(accountID, username, password string) error {
-	if len(password) < 10 {
-		return errors.New("password must be at least 10 characters")
+	if len(password) < 7 {
+		return errors.New("password must be at least 7 characters")
 	}
 	h, e := hashPassword(password)
 	if e != nil {
@@ -535,8 +535,8 @@ func (s *accountStore) verifyAccountPassword(accountID, password string) bool {
 }
 
 func (s *accountStore) setIdentityPassword(accountID, identityID, password string) error {
-	if len(password) < 10 {
-		return errors.New("password must be at least 10 characters")
+	if len(password) < 7 {
+		return errors.New("password must be at least 7 characters")
 	}
 	hash, err := hashPassword(password)
 	if err != nil {

@@ -40,7 +40,7 @@ export WARDEN_PASSWORD_HASH='pbkdf2-sha256$...'
 
 Open `http://127.0.0.1:8080`. Explorer and Terminal start in the server user's home directory, while the default Explorer/Editor filesystem boundary remains `/`, so the root breadcrumb can navigate to the whole machine. Use `--root /some/subtree` (or `WARDEN_FILE_ROOT`) when you intentionally want a narrower **file-management** view. This does not sandbox the PTY shell; terminal privilege must be controlled separately when Warden gains user/role levels.
 
-Warden binds to loopback by default. Loopback development automatically uses a non-Secure session cookie so plain `http://127.0.0.1` works correctly. Non-loopback listeners default to Secure cookies; behind an HTTPS reverse proxy set `WARDEN_SECURE_COOKIES=true` explicitly.
+Warden binds to loopback by default. Loopback development automatically uses a non-Secure session cookie so plain `http://127.0.0.1` works correctly. Non-loopback listeners default to Secure cookies; behind an HTTPS reverse proxy enable `WARDEN_TRUST_PROXY=true`; Warden accepts forwarded scheme/client headers only from a loopback proxy and marks HTTPS sessions Secure.
 
 ## Security boundary in this slice
 
@@ -57,8 +57,13 @@ Warden is intentionally a privileged application. This first slice establishes r
 - privileged actions are written to `warden-audit.log` with mode `0600`;
 - static responses receive restrictive CSP/frame/referrer/content-type headers.
 
-This is not yet a completed security audit. Before an Internet-facing release, Warden still needs the planned adversarial security corpus, explicit reverse-proxy trust model, session revocation UX, optional 2FA, terminal resize messages, stronger audit structure/rotation, and platform/deployment hardening.
+This is not yet a completed security audit. Before an Internet-facing release, Warden still needs the planned adversarial security corpus, session revocation UX, optional 2FA, terminal resize messages, stronger audit structure/rotation, and platform/deployment hardening.
 
 ## Product direction
 
 Warden v1 focuses on authenticated monitoring, a full filesystem explorer, workspace-oriented code/text editing with bounded Git source control, and an interactive PTY terminal. The System submenu also provides structured administration for certificates, cron, Docker, fail2ban, firewall, services, SSH and users. These pages intentionally present typed state rather than raw command output and now expose the corresponding privileged actions through authenticated/CSRF-protected APIs with audit events. This remains a development build: do not expose it to the public Internet until the planned auth/role/security campaign is complete. Website management remains a later module.
+
+
+## Install
+
+Release binaries embed the Nift-built frontend. On Linux or macOS, install per-user with `curl -fsSL https://warden-deck.github.io/install.sh | sh`, or system-wide with `curl -fsSL https://warden-deck.github.io/install.sh | sudo sh -s -- --system`. `go install github.com/warden-app/warden/cmd/warden@latest` is also supported.

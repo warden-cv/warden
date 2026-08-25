@@ -1,0 +1,72 @@
+name: Release binaries
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+          - os: windows-latest
+            goos: windows
+            goarch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test
+        run: go test ./...
+      - name: Build Unix
+        if: matrix.goos != 'windows'
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          VERSION="${GITHUB_REF_NAME#v}"
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "dist/warden" ./cmd/warden
+          tar -C dist -czf "warden-${GOOS}-${GOARCH}.tar.gz" warden
+      - name: Build Windows
+        if: matrix.goos == 'windows'
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          VERSION="${GITHUB_REF_NAME#v}"
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "dist/warden.exe" ./cmd/warden
+          powershell -NoProfile -Command "Compress-Archive -Path dist/warden.exe -DestinationPath warden-${env:GOOS}-${env:GOARCH}.zip"
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            warden-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+            warden-${{ matrix.goos }}-${{ matrix.goarch }}.zip
+          fail_on_unmatched_files: false
