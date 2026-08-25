@@ -469,3 +469,7 @@ textarea.editor-surface::selection{background:transparent!important;-webkit-text
 /* Native primary selection: browser owns drag/selection paint; Warden only paints supplementary matches. */
 textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-fill-color:transparent!important}
 .editor-occurrences .occurrence-primary{background:transparent!important;box-shadow:none!important;border-radius:0!important}
+
+
+/* Warden instance configuration */
+.warden-config-card{margin-top:12px;padding:14px;border:1px solid var(--line);border-radius:8px;background:#1b1c1d}.warden-config-card .card-title-row{align-items:flex-start}.warden-config-card h3{margin:0 0 4px;font-size:13px}.warden-config-card p{margin:0;color:var(--muted);font-size:10px;line-height:1.5}.warden-config-card>code{display:block;margin-top:8px;color:var(--muted2);font:10px var(--mono)}.warden-env-list{display:grid;gap:6px;margin:12px 0}.warden-env-row{display:grid;grid-template-columns:minmax(120px,.55fr) minmax(160px,1fr) auto;gap:6px}.warden-env-row input{min-width:0;border:1px solid var(--line2);border-radius:5px;background:#151617;color:var(--text);padding:7px 8px;font:10px var(--mono);outline:0}.warden-env-row input:focus{border-color:#555a57}@media(max-width:760px){.warden-env-row{grid-template-columns:1fr}.warden-env-row .admin-action{justify-self:start}}

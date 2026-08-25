@@ -39,6 +39,10 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "method", http.StatusMethodNotAllowed)
 			return
 		}
+		if kind == "warden" {
+			a.wardenConfigAction(w, r)
+			return
+		}
 		a.adminAction(w, r, kind)
 		return
 	}
@@ -64,6 +68,8 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 		env = collectSSH()
 	case "users":
 		env = collectUsers(r.URL.Query().Get("scope"))
+	case "warden":
+		env = a.collectWardenConfiguration()
 	default:
 		http.NotFound(w, r)
 		return

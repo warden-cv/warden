@@ -14,17 +14,22 @@ import (
 )
 
 type Config struct {
-	Listen, FileRoot, HomeDir, StaticDir, PasswordHash, Version string
-	SecureCookies, TrustProxy                                   bool
+	Listen, FileRoot, HomeDir, StaticDir, PasswordHash, Version, ConfigDir string
+	SecureCookies, TrustProxy                                              bool
 }
 type app struct {
-	cfg   Config
-	auth  *authStore
-	files *fileAPI
-	audit *log.Logger
+	cfg    Config
+	auth   *authStore
+	files  *fileAPI
+	audit  *log.Logger
+	config *configStore
 }
 
 func Run(cfg Config) error {
+	store, e := loadConfigStore(cfg.ConfigDir, instanceFromConfig(cfg))
+	if e != nil {
+		return fmt.Errorf("configuration: %w", e)
+	}
 	f, e := newFiles(cfg.FileRoot)
 	if e != nil {
 		return fmt.Errorf("file root: %w", e)
@@ -34,7 +39,7 @@ func Run(cfg Config) error {
 		return e
 	}
 	defer auditFile.Close()
-	a := &app{cfg: cfg, auth: newAuth(cfg.PasswordHash, cfg.SecureCookies), files: f, audit: log.New(auditFile, "", log.LstdFlags|log.LUTC)}
+	a := &app{cfg: cfg, auth: newAuth(cfg.PasswordHash, cfg.SecureCookies), files: f, audit: log.New(auditFile, "", log.LstdFlags|log.LUTC), config: store}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/login", a.login)
 	mux.HandleFunc("/api/logout", a.protect(a.logout))
@@ -172,7 +177,7 @@ func (a *app) terminal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.audit.Printf("terminal_open ip=%s cwd=%q", clientIP(r), cwd)
-	if e := servePTY(w, r, cwd); e != nil {
+	if e := servePTY(w, r, cwd, a.config.environmentFor("")); e != nil {
 		a.audit.Printf("terminal_error ip=%s err=%q", clientIP(r), e)
 	}
 }

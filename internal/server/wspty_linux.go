@@ -24,7 +24,7 @@ import (
 
 const wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-func servePTY(w http.ResponseWriter, r *http.Request, cwd string) error {
+func servePTY(w http.ResponseWriter, r *http.Request, cwd string, extraEnv map[string]string) error {
 	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		return errors.New("websocket upgrade required")
 	}
@@ -60,7 +60,7 @@ func servePTY(w http.ResponseWriter, r *http.Request, cwd string) error {
 	if existing := os.Getenv("PROMPT_COMMAND"); existing != "" {
 		promptCommand += ";" + existing
 	}
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "PROMPT_COMMAND="+promptCommand)
+	cmd.Env = mergedEnvironment(os.Environ(), extraEnv, map[string]string{"TERM": "xterm-256color", "PROMPT_COMMAND": promptCommand})
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	if e = cmd.Start(); e != nil {
 		return e
@@ -109,6 +109,33 @@ end:
 	_ = cmd.Wait()
 	<-done
 	return nil
+}
+
+func mergedEnvironment(base []string, layers ...map[string]string) []string {
+	values := map[string]string{}
+	order := []string{}
+	for _, item := range base {
+		if i := strings.IndexByte(item, '='); i > 0 {
+			k := item[:i]
+			if _, ok := values[k]; !ok {
+				order = append(order, k)
+			}
+			values[k] = item[i+1:]
+		}
+	}
+	for _, layer := range layers {
+		for k, v := range layer {
+			if _, ok := values[k]; !ok {
+				order = append(order, k)
+			}
+			values[k] = v
+		}
+	}
+	out := make([]string, 0, len(values))
+	for _, k := range order {
+		out = append(out, k+"="+values[k])
+	}
+	return out
 }
 
 type winsize struct {
