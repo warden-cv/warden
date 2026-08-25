@@ -173,6 +173,11 @@ func loadConfigStore(dir string, defaults instanceConfigFile) (*configStore, err
 	if err := s.reload(); err != nil {
 		return nil, err
 	}
+	// Existing installations keep their editable ai.json, but newly introduced
+	// built-in providers must still become available without a reset/reinstall.
+	if err := s.ensureDefaultAIProviders(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -243,6 +248,29 @@ func sortedAIProviderIDs(c aiConfigFile) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+func (s *configStore) ensureDefaultAIProviders() error {
+	current := s.aiSnapshot()
+	defaults := defaultAIConfig()
+	changed := false
+	for id, provider := range defaults.Providers {
+		if _, exists := current.Providers[id]; exists {
+			continue
+		}
+		current.Providers[id] = provider
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	if err := validateAIConfig(current); err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(filepath.Join(s.dir, "ai.json"), current, true); err != nil {
+		return err
+	}
+	return s.reload()
 }
 
 func (s *configStore) aiSnapshot() aiConfigFile {

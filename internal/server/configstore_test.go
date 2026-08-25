@@ -62,3 +62,30 @@ func TestMergedEnvironmentOverrides(t *testing.T) {
 		t.Fatalf("merged=%v", got)
 	}
 }
+
+func TestLoadConfigStoreAddsNewDefaultAIProvidersToExistingConfig(t *testing.T) {
+	dir := t.TempDir()
+	defaults := instanceConfigFile{Version: configSchemaVersion, Listen: "127.0.0.1:8080", FileRoot: dir, HomeDir: dir, StaticDir: "public"}
+	if _, err := loadConfigStore(dir, defaults); err != nil {
+		t.Fatal(err)
+	}
+
+	legacy := defaultAIConfig()
+	delete(legacy.Providers, "opencode")
+	legacy.Providers["custom"] = aiProviderConfig{Label: "Custom", BaseURL: "https://example.com/v1"}
+	if err := writeJSONAtomic(filepath.Join(dir, "ai.json"), legacy, true); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := loadConfigStore(dir, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := store.aiSnapshot()
+	if _, ok := cfg.Providers["opencode"]; !ok {
+		t.Fatal("OpenCode Zen provider was not added to existing AI config")
+	}
+	if _, ok := cfg.Providers["custom"]; !ok {
+		t.Fatal("existing custom provider was lost during default-provider migration")
+	}
+}
