@@ -6,7 +6,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -38,10 +37,7 @@ func main() {
 	root := fs.String("root", env("WARDEN_FILE_ROOT", "/"), "filesystem root used when creating a new config (terminal is not sandboxed by this)")
 	static := fs.String("static", env("WARDEN_STATIC_DIR", "public"), "Nift-built frontend directory used when creating a new config")
 	fs.Parse(os.Args[1:])
-	pass := os.Getenv("WARDEN_PASSWORD_HASH")
-	if pass == "" {
-		fatal(errors.New("WARDEN_PASSWORD_HASH is required; run `warden hash-password <password>`"))
-	}
+	pass := os.Getenv("WARDEN_PASSWORD_HASH") // optional legacy verifier used to authorize browser migration
 	secureDefault := !isLoopbackListen(*listen)
 	defaults := server.Config{Listen: *listen, FileRoot: *root, HomeDir: home(), StaticDir: *static, PasswordHash: pass, Version: version, ConfigDir: *configDir, SecureCookies: envBool("WARDEN_SECURE_COOKIES", secureDefault), TrustProxy: envBool("WARDEN_TRUST_PROXY", false)}
 	cfg, err := server.LoadConfig(*configDir, defaults)

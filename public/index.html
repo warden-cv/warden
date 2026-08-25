@@ -10,12 +10,23 @@
 		<script defer src="assets/js/script.js"></script>
 	</head>
 	<body>
+		<div id="setup-view" class="auth-shell" hidden>
+		  <section class="login-card setup-card">
+		    <div class="brand brand-login"><span class="brand-mark">W</span><span>Warden</span></div>
+		    <p class="eyebrow">First-run setup</p><h1>Create administrator</h1>
+		    <p class="setup-copy">Create the first Warden account. Additional administrators can be assigned later.</p>
+		    <form id="setup-form" autocomplete="on">
+		      <div class="setup-fields"><input id="setup-display" placeholder="Display name" autocomplete="name" required><input id="setup-username" placeholder="Username" autocomplete="username" required><input id="setup-password" type="password" placeholder="New password (10+ characters)" autocomplete="new-password" minlength="10" required><input id="setup-legacy-password" type="password" placeholder="Existing Warden password" autocomplete="current-password" hidden><input id="setup-token" placeholder="Remote setup token" autocomplete="off" hidden></div>
+		      <button class="primary-button" type="submit">Create administrator</button><p id="setup-error" class="form-error" role="alert"></p>
+		    </form>
+		  </section>
+		</div>
 		<div id="login-view" class="auth-shell">
 		  <section class="login-card">
 		    <div class="brand brand-login"><span class="brand-mark">W</span><span>Warden</span></div>
 		    <h1>Unlock Warden</h1>
 		    <form id="login-form" autocomplete="on">
-		      <div class="password-row"><input id="password" name="password" type="password" placeholder="Password" autocomplete="current-password" required autofocus><button class="icon-button" type="button" id="toggle-password" aria-label="Show password">◉</button></div>
+		      <div class="login-fields"><input id="username" name="username" type="text" placeholder="Username" autocomplete="username" required><div class="password-row"><input id="password" name="password" type="password" placeholder="Password" autocomplete="current-password" required><button class="icon-button" type="button" id="toggle-password" aria-label="Show password">◉</button></div></div>
 		      <button class="primary-button" type="submit">Unlock</button>
 		      <p id="login-error" class="form-error" role="alert"></p>
 		    </form>

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -18,11 +19,13 @@ type Config struct {
 	SecureCookies, TrustProxy                                              bool
 }
 type app struct {
-	cfg    Config
-	auth   *authStore
-	files  *fileAPI
-	audit  *log.Logger
-	config *configStore
+	cfg        Config
+	auth       *authStore
+	accounts   *accountStore
+	files      *fileAPI
+	audit      *log.Logger
+	config     *configStore
+	setupToken string
 }
 
 func Run(cfg Config) error {
@@ -34,13 +37,23 @@ func Run(cfg Config) error {
 	if e != nil {
 		return fmt.Errorf("file root: %w", e)
 	}
+	accounts, e := loadAccountStore(cfg.ConfigDir)
+	if e != nil {
+		return fmt.Errorf("accounts: %w", e)
+	}
 	auditFile, e := os.OpenFile("warden-audit.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if e != nil {
 		return e
 	}
 	defer auditFile.Close()
-	a := &app{cfg: cfg, auth: newAuth(cfg.PasswordHash, cfg.SecureCookies), files: f, audit: log.New(auditFile, "", log.LstdFlags|log.LUTC), config: store}
+	a := &app{cfg: cfg, accounts: accounts, files: f, audit: log.New(auditFile, "", log.LstdFlags|log.LUTC), config: store, setupToken: token(24)}
+	a.auth = newAuth(accounts, cfg.SecureCookies, cfg.ConfigDir)
+	if accounts.empty() {
+		log.Printf("Warden first-run setup is required. Remote setup token: %s", a.setupToken)
+	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/setup/status", a.setupStatus)
+	mux.HandleFunc("/api/setup", a.setup)
 	mux.HandleFunc("/api/login", a.login)
 	mux.HandleFunc("/api/logout", a.protect(a.logout))
 	mux.HandleFunc("/api/session", a.session)
@@ -63,26 +76,77 @@ func Run(cfg Config) error {
 	log.Printf("Warden %s listening on http://%s (root %s)", cfg.Version, cfg.Listen, f.root)
 	return srv.ListenAndServe()
 }
+func (a *app) setupStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method", 405)
+		return
+	}
+	jsonOut(w, map[string]any{"required": a.accounts.empty(), "legacyPasswordRequired": a.cfg.PasswordHash != "", "tokenRequired": !isLoopbackClient(r)})
+}
+func (a *app) setup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method", 405)
+		return
+	}
+	if !a.accounts.empty() {
+		http.Error(w, "setup already complete", 409)
+		return
+	}
+	var q struct{ DisplayName, Username, Password, LegacyPassword, SetupToken string }
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&q) != nil {
+		http.Error(w, "invalid json", 400)
+		return
+	}
+	if !isLoopbackClient(r) && subtle.ConstantTimeCompare([]byte(q.SetupToken), []byte(a.setupToken)) != 1 {
+		http.Error(w, "invalid setup token", 403)
+		return
+	}
+	if a.cfg.PasswordHash != "" && !verifyPassword(a.cfg.PasswordHash, q.LegacyPassword) {
+		http.Error(w, "existing Warden password is required", 403)
+		return
+	}
+	acct, err := a.accounts.createInitialAdmin(q.DisplayName, q.Username, q.Password)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	sess, err := a.auth.login(w, r, q.Username, q.Password)
+	if err != nil {
+		http.Error(w, "account created; sign in", 500)
+		return
+	}
+	a.audit.Printf("setup_complete account=%s identity=%s ip=%s", acct.ID, sess.IdentityID, clientIP(r))
+	jsonOut(w, a.sessionPayload(sess))
+}
 func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "method", 405)
 		return
 	}
+	if a.accounts.empty() {
+		http.Error(w, "setup required", 409)
+		return
+	}
 	var q struct {
+		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&q) != nil {
 		http.Error(w, "invalid json", 400)
 		return
 	}
-	csrf, e := a.auth.login(w, r, q.Password)
+	sess, e := a.auth.login(w, r, q.Username, q.Password)
 	if e != nil {
-		a.audit.Printf("auth_failed ip=%s", clientIP(r))
-		http.Error(w, "invalid credentials", 401)
+		a.audit.Printf("auth_failed username=%q ip=%s", q.Username, clientIP(r))
+		if e.Error() == "too many attempts" {
+			http.Error(w, e.Error(), 429)
+		} else {
+			http.Error(w, "invalid credentials", 401)
+		}
 		return
 	}
-	a.audit.Printf("auth_login ip=%s", clientIP(r))
-	jsonOut(w, a.sessionPayload(csrf))
+	a.audit.Printf("auth_login account=%s identity=%s ip=%s", sess.AccountID, sess.IdentityID, clientIP(r))
+	jsonOut(w, a.sessionPayload(sess))
 }
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 	a.auth.logout(w, r)
@@ -95,11 +159,12 @@ func (a *app) session(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", 401)
 		return
 	}
-	jsonOut(w, a.sessionPayload(s.CSRF))
+	jsonOut(w, a.sessionPayload(s))
 }
-func (a *app) sessionPayload(csrf string) map[string]any {
+func (a *app) sessionPayload(s session) map[string]any {
+	acct, _ := a.accounts.accountByID(s.AccountID)
 	return map[string]any{
-		"ok": true, "csrf": csrf, "version": a.cfg.Version,
+		"ok": true, "csrf": s.CSRF, "version": a.cfg.Version, "account": map[string]any{"id": acct.ID, "displayName": acct.DisplayName, "roles": acct.Roles},
 		"fileStart":     a.files.startPath(a.cfg.HomeDir),
 		"fileRoot":      a.files.virtualRootLabel(),
 		"terminalStart": a.files.shellStart(a.cfg.HomeDir),
@@ -177,7 +242,7 @@ func (a *app) terminal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.audit.Printf("terminal_open ip=%s cwd=%q", clientIP(r), cwd)
-	if e := servePTY(w, r, cwd, a.config.environmentFor("")); e != nil {
+	if e := servePTY(w, r, cwd, a.config.environmentFor(s.AccountID)); e != nil {
 		a.audit.Printf("terminal_error ip=%s err=%q", clientIP(r), e)
 	}
 }
@@ -225,6 +290,11 @@ func sameOrigin(r *http.Request) bool {
 		return false
 	}
 	return strings.EqualFold(u.Host, r.Host)
+}
+
+func isLoopbackClient(r *http.Request) bool {
+	ip := net.ParseIP(clientIP(r))
+	return ip != nil && ip.IsLoopback()
 }
 
 var _ = filepath.Separator
