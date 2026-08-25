@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 )
 
@@ -75,5 +76,15 @@ func TestExportAssistantTextsFindsAssistantPartsOnly(t *testing.T) {
 	got := exportAssistantTexts(exported)
 	if len(got) != 1 || got[0] != "assistant answer" {
 		t.Fatalf("got %#v", got)
+	}
+}
+
+func TestOpenCodeConfigAllowsCodingTools(t *testing.T) {
+	source, err := os.ReadFile("agent.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(source, []byte(`"permission":"allow"`)) {
+		t.Fatal("isolated OpenCode config does not explicitly allow coding tools")
 	}
 }

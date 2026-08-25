@@ -111,6 +111,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	cfg := []byte(`{
   "$schema":"https://opencode.ai/config.json",
   "model":"opencode/deepseek-v4-flash",
+  "permission":"allow",
   "provider":{
     "opencode":{
       "npm":"@ai-sdk/openai-compatible",
