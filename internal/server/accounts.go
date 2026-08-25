@@ -144,6 +144,7 @@ func validateAccounts(users accountsFile, roles rolesFile) error {
 	identityIDs := map[string]bool{}
 	usernames := map[string]bool{}
 	googleSubjects := map[string]bool{}
+	passwordBackedAdmins := 0
 	for _, a := range users.Accounts {
 		if a.ID == "" || accountIDs[a.ID] {
 			return fmt.Errorf("duplicate/empty account id %q", a.ID)
@@ -157,6 +158,14 @@ func validateAccounts(users accountsFile, roles rolesFile) error {
 				return fmt.Errorf("account %s references unknown role %s", a.ID, rid)
 			}
 		}
+		isAdmin := false
+		for _, rid := range a.Roles {
+			if rid == "administrator" {
+				isAdmin = true
+				break
+			}
+		}
+		hasEnabledPassword := false
 		for _, id := range a.Identities {
 			if id.ID == "" || identityIDs[id.ID] {
 				return fmt.Errorf("duplicate/empty identity id %q", id.ID)
@@ -165,6 +174,9 @@ func validateAccounts(users accountsFile, roles rolesFile) error {
 			switch id.Type {
 			case "password":
 				u := strings.ToLower(strings.TrimSpace(id.Username))
+				if a.Enabled && id.Enabled {
+					hasEnabledPassword = true
+				}
 				if u == "" || id.PasswordHash == "" {
 					return fmt.Errorf("password identity %s is incomplete", id.ID)
 				}
@@ -188,6 +200,12 @@ func validateAccounts(users accountsFile, roles rolesFile) error {
 				return fmt.Errorf("identity %s has unsupported type %q", id.ID, id.Type)
 			}
 		}
+		if a.Enabled && isAdmin && hasEnabledPassword {
+			passwordBackedAdmins++
+		}
+	}
+	if len(users.Accounts) > 0 && passwordBackedAdmins == 0 {
+		return errors.New("Warden must retain at least one enabled administrator with a password login")
 	}
 	return nil
 }

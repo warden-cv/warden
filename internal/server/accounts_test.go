@@ -96,15 +96,55 @@ func TestCapabilitiesAndLastAdministratorInvariant(t *testing.T) {
 }
 
 func TestAccountIdentityAndDeletionInvariants(t *testing.T) {
-    dir := t.TempDir()
-    store, err := loadAccountStore(dir); if err != nil { t.Fatal(err) }
-    admin, err := store.createInitialAdmin("Admin", "admin", "1234567890password"); if err != nil { t.Fatal(err) }
-    if _, err := store.deleteAccount(admin.ID); err == nil { t.Fatal("deleted final administrator") }
-    user, err := store.createAccount("User", "user", "1234567890password", []string{"user"}); if err != nil { t.Fatal(err) }
-    if err := store.addPasswordIdentity(user.ID, "user2", "1234567890password"); err != nil { t.Fatal(err) }
-    acct, ok := store.accountByID(user.ID); if !ok || len(acct.Identities) != 2 { t.Fatal("second login identity missing") }
-    if _, err := store.removeIdentity(user.ID, acct.Identities[0].ID); err != nil { t.Fatal(err) }
-    acct, _ = store.accountByID(user.ID)
-    if _, err := store.removeIdentity(user.ID, acct.Identities[0].ID); err == nil { t.Fatal("removed final login identity") }
-    if _, err := store.deleteAccount(user.ID); err != nil { t.Fatal(err) }
+	dir := t.TempDir()
+	store, err := loadAccountStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := store.createInitialAdmin("Admin", "admin", "1234567890password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.deleteAccount(admin.ID); err == nil {
+		t.Fatal("deleted final administrator")
+	}
+	user, err := store.createAccount("User", "user", "1234567890password", []string{"user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.addPasswordIdentity(user.ID, "user2", "1234567890password"); err != nil {
+		t.Fatal(err)
+	}
+	acct, ok := store.accountByID(user.ID)
+	if !ok || len(acct.Identities) != 2 {
+		t.Fatal("second login identity missing")
+	}
+	if _, err := store.removeIdentity(user.ID, acct.Identities[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	acct, _ = store.accountByID(user.ID)
+	if _, err := store.removeIdentity(user.ID, acct.Identities[0].ID); err == nil {
+		t.Fatal("removed final login identity")
+	}
+	if _, err := store.deleteAccount(user.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAccountsRequirePasswordBackedAdministratorRecoveryPath(t *testing.T) {
+	roles := rolesFile{Version: 1, Roles: []role{
+		{ID: "administrator", Name: "Administrator", Capabilities: []string{"*"}},
+		{ID: "user", Name: "User", Capabilities: []string{"files.read"}},
+	}}
+	users := accountsFile{Version: 1, Accounts: []account{
+		{ID: "admin", DisplayName: "Admin", Enabled: true, Roles: []string{"administrator"}, Identities: []loginIdentity{{ID: "google-admin", Type: "google", ProviderSubject: "subject", Enabled: true}}},
+		{ID: "user", DisplayName: "User", Enabled: true, Roles: []string{"user"}, Identities: []loginIdentity{{ID: "password-user", Type: "password", Username: "user", PasswordHash: "hash", Enabled: true}}},
+	}}
+	if err := validateAccounts(users, roles); err == nil {
+		t.Fatal("accepted instance without password-backed administrator")
+	}
+	users.Accounts[0].Identities = append(users.Accounts[0].Identities, loginIdentity{ID: "password-admin", Type: "password", Username: "admin", PasswordHash: "hash", Enabled: true})
+	if err := validateAccounts(users, roles); err != nil {
+		t.Fatalf("password-backed administrator rejected: %v", err)
+	}
 }
