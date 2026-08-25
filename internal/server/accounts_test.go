@@ -60,3 +60,37 @@ func TestAccountStoreRejectsDuplicateUsername(t *testing.T) {
 		t.Fatal("duplicate username accepted")
 	}
 }
+
+func TestCapabilitiesAndLastAdministratorInvariant(t *testing.T) {
+	dir := t.TempDir()
+	store, err := loadAccountStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := store.createInitialAdmin("Admin", "admin", "administrator-pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := store.createAccount("Developer", "dev", "developer-password", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.hasCapability(admin.ID, "accounts.manage") {
+		t.Fatal("administrator lacks wildcard capability")
+	}
+	if !store.hasCapability(user.ID, "terminal.open") {
+		t.Fatal("default user should have terminal access")
+	}
+	if store.hasCapability(user.ID, "system.manage") {
+		t.Fatal("default user unexpectedly has system management")
+	}
+	if err := store.updateAccount(admin.ID, "Admin", false, []string{"administrator"}); err == nil {
+		t.Fatal("disabled final administrator")
+	}
+	if err := store.updateAccount(user.ID, "Developer", true, []string{"user", "administrator"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.updateAccount(admin.ID, "Admin", false, []string{"administrator"}); err != nil {
+		t.Fatalf("could not disable admin after second admin assigned: %v", err)
+	}
+}

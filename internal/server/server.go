@@ -57,18 +57,18 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/login", a.login)
 	mux.HandleFunc("/api/logout", a.protect(a.logout))
 	mux.HandleFunc("/api/session", a.session)
-	mux.HandleFunc("/api/monitor", a.protect(a.monitor))
-	mux.HandleFunc("/api/files", a.protect(a.listFiles))
+	mux.HandleFunc("/api/monitor", a.require("monitor.read", a.monitor))
+	mux.HandleFunc("/api/files", a.require("files.read", a.listFiles))
 	mux.HandleFunc("/api/file", a.protect(a.file))
-	mux.HandleFunc("/api/files/mutate", a.protect(a.mutate))
-	mux.HandleFunc("/api/files/archive", a.protect(a.archiveDownload))
-	mux.HandleFunc("/api/files/compress", a.protect(a.compress))
-	mux.HandleFunc("/api/files/extract", a.protect(a.extract))
-	mux.HandleFunc("/api/workspace/search", a.protect(a.workspaceSearch))
-	mux.HandleFunc("/api/workspace/replace", a.protect(a.workspaceReplace))
-	mux.HandleFunc("/api/workspace/replace/undo", a.protect(a.workspaceUndoReplace))
-	mux.HandleFunc("/api/source-control/status", a.protect(a.sourceControlStatus))
-	mux.HandleFunc("/api/source-control/mutate", a.protect(a.sourceControlMutate))
+	mux.HandleFunc("/api/files/mutate", a.require("files.manage", a.mutate))
+	mux.HandleFunc("/api/files/archive", a.require("files.read", a.archiveDownload))
+	mux.HandleFunc("/api/files/compress", a.require("files.manage", a.compress))
+	mux.HandleFunc("/api/files/extract", a.require("files.manage", a.extract))
+	mux.HandleFunc("/api/workspace/search", a.require("workspace.search", a.workspaceSearch))
+	mux.HandleFunc("/api/workspace/replace", a.require("workspace.replace", a.workspaceReplace))
+	mux.HandleFunc("/api/workspace/replace/undo", a.require("workspace.replace", a.workspaceUndoReplace))
+	mux.HandleFunc("/api/source-control/status", a.require("source.read", a.sourceControlStatus))
+	mux.HandleFunc("/api/source-control/mutate", a.require("source.write", a.sourceControlMutate))
 	mux.HandleFunc("/api/admin/", a.protect(a.admin))
 	mux.HandleFunc("/api/terminal", a.terminal)
 	mux.Handle("/", http.FileServer(http.Dir(cfg.StaticDir)))
@@ -164,7 +164,7 @@ func (a *app) session(w http.ResponseWriter, r *http.Request) {
 func (a *app) sessionPayload(s session) map[string]any {
 	acct, _ := a.accounts.accountByID(s.AccountID)
 	return map[string]any{
-		"ok": true, "csrf": s.CSRF, "version": a.cfg.Version, "account": map[string]any{"id": acct.ID, "displayName": acct.DisplayName, "roles": acct.Roles},
+		"ok": true, "csrf": s.CSRF, "version": a.cfg.Version, "account": map[string]any{"id": acct.ID, "displayName": acct.DisplayName, "roles": acct.Roles, "capabilities": a.accounts.capabilities(acct.ID)},
 		"fileStart":     a.files.startPath(a.cfg.HomeDir),
 		"fileRoot":      a.files.virtualRootLabel(),
 		"terminalStart": a.files.shellStart(a.cfg.HomeDir),
@@ -176,8 +176,16 @@ func (a *app) listFiles(w http.ResponseWriter, r *http.Request) { a.files.list(w
 func (a *app) file(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
+		if !a.sessionHasCapability(r, "files.read") {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		a.files.read(w, r)
 	case "PUT":
+		if !a.sessionHasCapability(r, "files.write") {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		a.audit.Printf("file_write ip=%s path=%q", clientIP(r), r.URL.Query().Get("path"))
 		a.files.write(w, r)
 	default:
@@ -219,6 +227,10 @@ func (a *app) terminal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", 401)
 		return
 	}
+	if !a.accounts.hasCapability(s.AccountID, "terminal.open") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if r.URL.Query().Get("csrf") != s.CSRF {
 		http.Error(w, "csrf", 403)
 		return
@@ -246,19 +258,28 @@ func (a *app) terminal(w http.ResponseWriter, r *http.Request) {
 		a.audit.Printf("terminal_error ip=%s err=%q", clientIP(r), e)
 	}
 }
-func (a *app) protect(next http.HandlerFunc) http.HandlerFunc {
+func (a *app) protect(next http.HandlerFunc) http.HandlerFunc { return a.require("", next) }
+func (a *app) require(capability string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s, ok := a.auth.get(r)
 		if !ok {
-			http.Error(w, "unauthorized", 401)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if r.Method != "GET" && r.Method != "HEAD" && r.Header.Get("X-Warden-CSRF") != s.CSRF {
-			http.Error(w, "csrf", 403)
+		if capability != "" && !a.accounts.hasCapability(s.AccountID, capability) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Warden-CSRF") != s.CSRF {
+			http.Error(w, "csrf", http.StatusForbidden)
 			return
 		}
 		next(w, r)
 	}
+}
+func (a *app) sessionHasCapability(r *http.Request, capability string) bool {
+	s, ok := a.auth.get(r)
+	return ok && a.accounts.hasCapability(s.AccountID, capability)
 }
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

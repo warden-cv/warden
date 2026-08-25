@@ -34,6 +34,25 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 	rel := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/"), "/")
 	parts := strings.Split(rel, "/")
 	kind := parts[0]
+	sess, ok := a.auth.get(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	needed := "system.read"
+	if r.Method != http.MethodGet {
+		needed = "system.manage"
+	}
+	if kind == "warden" {
+		needed = "settings.manage"
+	}
+	if kind == "access" {
+		needed = "accounts.manage"
+	}
+	if !a.accounts.hasCapability(sess.AccountID, needed) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "action" {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method", http.StatusMethodNotAllowed)
@@ -41,6 +60,10 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 		}
 		if kind == "warden" {
 			a.wardenConfigAction(w, r)
+			return
+		}
+		if kind == "access" {
+			a.accessAction(w, r)
 			return
 		}
 		a.adminAction(w, r, kind)
@@ -70,6 +93,8 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 		env = collectUsers(r.URL.Query().Get("scope"))
 	case "warden":
 		env = a.collectWardenConfiguration()
+	case "access":
+		env = a.collectAccessConfiguration()
 	default:
 		http.NotFound(w, r)
 		return
