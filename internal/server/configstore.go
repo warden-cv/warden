@@ -46,12 +46,25 @@ type authenticationConfigFile struct {
 	Google  googleAuthConfig `json:"google"`
 }
 
+type aiProviderConfig struct {
+	Label        string `json:"label"`
+	Enabled      bool   `json:"enabled"`
+	BaseURL      string `json:"base_url,omitempty"`
+	DefaultModel string `json:"default_model,omitempty"`
+}
+
+type aiConfigFile struct {
+	Version   int                         `json:"version"`
+	Providers map[string]aiProviderConfig `json:"providers"`
+}
+
 type configStore struct {
 	mu             sync.RWMutex
 	dir            string
 	instance       instanceConfigFile
 	environment    environmentConfigFile
 	authentication authenticationConfigFile
+	ai             aiConfigFile
 }
 
 var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -100,6 +113,16 @@ func instanceFromConfig(cfg Config) instanceConfigFile {
 	}
 }
 
+func defaultAIConfig() aiConfigFile {
+	return aiConfigFile{Version: configSchemaVersion, Providers: map[string]aiProviderConfig{
+		"openai":     {Label: "OpenAI", BaseURL: "https://api.openai.com/v1"},
+		"anthropic":  {Label: "Anthropic", BaseURL: "https://api.anthropic.com"},
+		"gemini":     {Label: "Google Gemini", BaseURL: "https://generativelanguage.googleapis.com"},
+		"openrouter": {Label: "OpenRouter", BaseURL: "https://openrouter.ai/api/v1"},
+		"ollama":     {Label: "Ollama", BaseURL: "http://127.0.0.1:11434"},
+	}}
+}
+
 func loadConfigStore(dir string, defaults instanceConfigFile) (*configStore, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create config directory: %w", err)
@@ -133,6 +156,14 @@ func loadConfigStore(dir string, defaults instanceConfigFile) (*configStore, err
 	if _, err := os.Stat(authPath); errors.Is(err, os.ErrNotExist) {
 		auth := authenticationConfigFile{Version: configSchemaVersion}
 		if err := writeJSONAtomic(authPath, auth, false); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	}
+	aiPath := filepath.Join(dir, "ai.json")
+	if _, err := os.Stat(aiPath); errors.Is(err, os.ErrNotExist) {
+		if err := writeJSONAtomic(aiPath, defaultAIConfig(), false); err != nil {
 			return nil, err
 		}
 	} else if err != nil {
@@ -172,12 +203,74 @@ func (s *configStore) reload() error {
 	if err := validateAuthenticationConfig(auth); err != nil {
 		return fmt.Errorf("authentication.json: %w", err)
 	}
+	var ai aiConfigFile
+	if err := readJSONStrict(filepath.Join(s.dir, "ai.json"), &ai); err != nil {
+		return fmt.Errorf("ai.json: %w", err)
+	}
+	if err := validateAIConfig(ai); err != nil {
+		return fmt.Errorf("ai.json: %w", err)
+	}
 	s.mu.Lock()
 	s.instance = inst
 	s.environment = env
 	s.authentication = auth
+	s.ai = ai
 	s.mu.Unlock()
 	return nil
+}
+
+func sortedAIProviderIDs(c aiConfigFile) []string {
+	ids := make([]string, 0, len(c.Providers))
+	for id := range c.Providers {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func (s *configStore) aiSnapshot() aiConfigFile {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := aiConfigFile{Version: s.ai.Version, Providers: map[string]aiProviderConfig{}}
+	for id, p := range s.ai.Providers {
+		out.Providers[id] = p
+	}
+	return out
+}
+func validateAIConfig(c aiConfigFile) error {
+	if c.Version != configSchemaVersion {
+		return fmt.Errorf("unsupported schema version %d", c.Version)
+	}
+	if c.Providers == nil {
+		return errors.New("providers is required")
+	}
+	idRE := regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+	for id, p := range c.Providers {
+		if !idRE.MatchString(id) {
+			return fmt.Errorf("invalid AI provider id %q", id)
+		}
+		if strings.TrimSpace(p.Label) == "" {
+			return fmt.Errorf("AI provider %s has no label", id)
+		}
+		if strings.TrimSpace(p.BaseURL) != "" {
+			u, err := url.Parse(p.BaseURL)
+			if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1"))) {
+				return fmt.Errorf("AI provider %s has an invalid or insecure base_url", id)
+			}
+		}
+	}
+	return nil
+}
+func (s *configStore) setAIProvider(id string, p aiProviderConfig) error {
+	next := s.aiSnapshot()
+	next.Providers[id] = p
+	if err := validateAIConfig(next); err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(filepath.Join(s.dir, "ai.json"), next, true); err != nil {
+		return err
+	}
+	return s.reload()
 }
 
 func (s *configStore) authenticationSnapshot() authenticationConfigFile {
@@ -572,6 +665,7 @@ type portableConfigBundle struct {
 	Instance       instanceConfigFile       `json:"instance"`
 	Environment    environmentConfigFile    `json:"environment"`
 	Authentication authenticationConfigFile `json:"authentication"`
+	AI             aiConfigFile             `json:"ai"`
 	Accounts       accountsFile             `json:"accounts"`
 	Roles          rolesFile                `json:"roles"`
 }
@@ -583,5 +677,5 @@ func (a *app) portableConfig() portableConfigBundle {
 	roles := a.accounts.roles
 	roles.Roles = append([]role(nil), roles.Roles...)
 	a.accounts.mu.RUnlock()
-	return portableConfigBundle{Version: 1, ExportedAt: time.Now().UTC(), Instance: a.config.instanceSnapshot(), Environment: a.config.environmentSnapshot(), Authentication: a.config.authenticationSnapshot(), Accounts: users, Roles: roles}
+	return portableConfigBundle{Version: 1, ExportedAt: time.Now().UTC(), Instance: a.config.instanceSnapshot(), Environment: a.config.environmentSnapshot(), Authentication: a.config.authenticationSnapshot(), AI: a.config.aiSnapshot(), Accounts: users, Roles: roles}
 }

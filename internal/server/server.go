@@ -27,6 +27,7 @@ type app struct {
 	audit       *log.Logger
 	config      *configStore
 	secrets     *secretStore
+	aiUsage     *aiUsageStore
 	setupToken  string
 	totpMu      sync.Mutex
 	totpPending map[string]totpEnrollment
@@ -50,12 +51,16 @@ func Run(cfg Config) error {
 	if e != nil {
 		return fmt.Errorf("secrets: %w", e)
 	}
+	aiUsage, e := loadAIUsageStore(cfg.ConfigDir)
+	if e != nil {
+		return fmt.Errorf("ai usage: %w", e)
+	}
 	auditFile, e := os.OpenFile(filepath.Join(cfg.ConfigDir, "audit.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if e != nil {
 		return e
 	}
 	defer auditFile.Close()
-	a := &app{cfg: cfg, accounts: accounts, secrets: secrets, files: f, totpPending: map[string]totpEnrollment{}, oauth: newOAuthStateStore(), audit: log.New(auditFile, "", log.LstdFlags|log.LUTC), config: store, setupToken: token(24)}
+	a := &app{cfg: cfg, accounts: accounts, secrets: secrets, aiUsage: aiUsage, files: f, totpPending: map[string]totpEnrollment{}, oauth: newOAuthStateStore(), audit: log.New(auditFile, "", log.LstdFlags|log.LUTC), config: store, setupToken: token(24)}
 	a.auth = newAuth(accounts, cfg.SecureCookies, cfg.ConfigDir)
 	if accounts.empty() {
 		log.Printf("Warden first-run setup is required. Remote setup token: %s", a.setupToken)
@@ -68,6 +73,7 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/oauth/google/start", a.googleStart)
 	mux.HandleFunc("/api/oauth/google/callback", a.googleCallback)
 	mux.HandleFunc("/api/security", a.protect(a.security))
+	mux.HandleFunc("/api/ai", a.protect(a.aiSettings))
 	mux.HandleFunc("/api/logout", a.protect(a.logout))
 	mux.HandleFunc("/api/session", a.session)
 	mux.HandleFunc("/api/monitor", a.require("monitor.read", a.monitor))

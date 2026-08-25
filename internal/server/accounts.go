@@ -293,6 +293,8 @@ var capabilityCatalog = []capabilityInfo{
 	{"accounts.manage", "Warden", "Manage Warden accounts and roles"},
 	{"settings.manage", "Warden", "Manage instance configuration"},
 	{"audit.read", "Warden", "View Warden audit history"},
+	{"ai.use", "AI", "Use AI providers and manage own credentials"},
+	{"ai.manage", "AI", "Manage shared AI provider configuration"},
 }
 
 func knownCapability(key string) bool {
@@ -304,7 +306,7 @@ func knownCapability(key string) bool {
 	return false
 }
 func defaultUserCapabilities() []string {
-	return []string{"monitor.read", "files.read", "files.write", "files.manage", "workspace.search", "workspace.replace", "source.read", "source.write", "terminal.open"}
+	return []string{"monitor.read", "files.read", "files.write", "files.manage", "workspace.search", "workspace.replace", "source.read", "source.write", "terminal.open", "ai.use"}
 }
 
 func (s *accountStore) capabilities(accountID string) []string {
@@ -791,6 +793,7 @@ func (a *app) accessAction(w http.ResponseWriter, r *http.Request) {
 			for _, identity := range identities {
 				_ = a.secrets.delete(totpSecretKey(identity.ID))
 			}
+			_ = a.secrets.deletePrefix(aiAccountSecretPrefix + q.ID + ".")
 			msg = "Account deleted."
 		}
 	case "set-role":
