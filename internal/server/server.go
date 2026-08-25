@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,13 +20,16 @@ type Config struct {
 	SecureCookies, TrustProxy                                              bool
 }
 type app struct {
-	cfg        Config
-	auth       *authStore
-	accounts   *accountStore
-	files      *fileAPI
-	audit      *log.Logger
-	config     *configStore
-	setupToken string
+	cfg         Config
+	auth        *authStore
+	accounts    *accountStore
+	files       *fileAPI
+	audit       *log.Logger
+	config      *configStore
+	secrets     *secretStore
+	setupToken  string
+	totpMu      sync.Mutex
+	totpPending map[string]totpEnrollment
 }
 
 func Run(cfg Config) error {
@@ -41,12 +45,16 @@ func Run(cfg Config) error {
 	if e != nil {
 		return fmt.Errorf("accounts: %w", e)
 	}
+	secrets, e := loadSecretStore(cfg.ConfigDir)
+	if e != nil {
+		return fmt.Errorf("secrets: %w", e)
+	}
 	auditFile, e := os.OpenFile("warden-audit.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if e != nil {
 		return e
 	}
 	defer auditFile.Close()
-	a := &app{cfg: cfg, accounts: accounts, files: f, audit: log.New(auditFile, "", log.LstdFlags|log.LUTC), config: store, setupToken: token(24)}
+	a := &app{cfg: cfg, accounts: accounts, secrets: secrets, files: f, totpPending: map[string]totpEnrollment{}, audit: log.New(auditFile, "", log.LstdFlags|log.LUTC), config: store, setupToken: token(24)}
 	a.auth = newAuth(accounts, cfg.SecureCookies, cfg.ConfigDir)
 	if accounts.empty() {
 		log.Printf("Warden first-run setup is required. Remote setup token: %s", a.setupToken)
@@ -55,6 +63,8 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/api/setup/status", a.setupStatus)
 	mux.HandleFunc("/api/setup", a.setup)
 	mux.HandleFunc("/api/login", a.login)
+	mux.HandleFunc("/api/login/totp", a.loginTOTP)
+	mux.HandleFunc("/api/security", a.protect(a.security))
 	mux.HandleFunc("/api/logout", a.protect(a.logout))
 	mux.HandleFunc("/api/session", a.session)
 	mux.HandleFunc("/api/monitor", a.require("monitor.read", a.monitor))
@@ -136,7 +146,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json", 400)
 		return
 	}
-	sess, e := a.auth.login(w, r, q.Username, q.Password)
+	acct, identity, e := a.auth.authenticatePassword(r, q.Username, q.Password)
 	if e != nil {
 		a.audit.Printf("auth_failed username=%q ip=%s", q.Username, clientIP(r))
 		if e.Error() == "too many attempts" {
@@ -144,6 +154,18 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		} else {
 			http.Error(w, "invalid credentials", 401)
 		}
+		return
+	}
+	if identity.TOTPEnabled {
+		challenge := a.auth.beginChallenge(r, acct.ID, identity.ID)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{"twoFactorRequired": true, "challenge": challenge})
+		return
+	}
+	sess, e := a.auth.createSession(w, r, acct.ID, identity.ID)
+	if e != nil {
+		http.Error(w, "session unavailable", 500)
 		return
 	}
 	a.audit.Printf("auth_login account=%s identity=%s ip=%s", sess.AccountID, sess.IdentityID, clientIP(r))

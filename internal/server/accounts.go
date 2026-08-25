@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -17,13 +18,15 @@ import (
 )
 
 type loginIdentity struct {
-	ID              string `json:"id"`
-	Type            string `json:"type"`
-	Username        string `json:"username,omitempty"`
-	Email           string `json:"email,omitempty"`
-	ProviderSubject string `json:"provider_subject,omitempty"`
-	PasswordHash    string `json:"password_hash,omitempty"`
-	Enabled         bool   `json:"enabled"`
+	ID                 string   `json:"id"`
+	Type               string   `json:"type"`
+	Username           string   `json:"username,omitempty"`
+	Email              string   `json:"email,omitempty"`
+	ProviderSubject    string   `json:"provider_subject,omitempty"`
+	PasswordHash       string   `json:"password_hash,omitempty"`
+	TOTPEnabled        bool     `json:"totp_enabled,omitempty"`
+	RecoveryCodeHashes []string `json:"recovery_code_hashes,omitempty"`
+	Enabled            bool     `json:"enabled"`
 }
 
 type account struct {
@@ -440,6 +443,90 @@ func (s *accountStore) addIdentity(accountID string, id loginIdentity) error {
 	s.accounts = next
 	return nil
 }
+func (s *accountStore) identityByID(identityID string) (account, loginIdentity, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, a := range s.accounts.Accounts {
+		for _, id := range a.Identities {
+			if id.ID == identityID {
+				return a, id, true
+			}
+		}
+	}
+	return account{}, loginIdentity{}, false
+}
+
+func (s *accountStore) verifyIdentityPassword(accountID, identityID, password string) bool {
+	a, id, ok := s.identityByID(identityID)
+	return ok && a.ID == accountID && a.Enabled && id.Enabled && id.Type == "password" && verifyPassword(id.PasswordHash, password)
+}
+
+func (s *accountStore) setIdentityTOTP(accountID, identityID string, enabled bool, recoveryHashes []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.accounts
+	next.Accounts = append([]account(nil), s.accounts.Accounts...)
+	found := false
+	for i := range next.Accounts {
+		if next.Accounts[i].ID != accountID {
+			continue
+		}
+		next.Accounts[i].Identities = append([]loginIdentity(nil), next.Accounts[i].Identities...)
+		for j := range next.Accounts[i].Identities {
+			id := &next.Accounts[i].Identities[j]
+			if id.ID == identityID {
+				if id.Type != "password" {
+					return errors.New("TOTP is currently supported for password identities")
+				}
+				id.TOTPEnabled = enabled
+				id.RecoveryCodeHashes = append([]string(nil), recoveryHashes...)
+				found = true
+			}
+		}
+	}
+	if !found {
+		return errors.New("identity not found")
+	}
+	if err := validateAccounts(next, s.roles); err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
+		return err
+	}
+	s.accounts = next
+	return nil
+}
+
+func (s *accountStore) consumeRecoveryCode(accountID, identityID, hash string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.accounts
+	next.Accounts = append([]account(nil), s.accounts.Accounts...)
+	for i := range next.Accounts {
+		if next.Accounts[i].ID != accountID {
+			continue
+		}
+		next.Accounts[i].Identities = append([]loginIdentity(nil), next.Accounts[i].Identities...)
+		for j := range next.Accounts[i].Identities {
+			id := &next.Accounts[i].Identities[j]
+			if id.ID != identityID {
+				continue
+			}
+			for k, saved := range id.RecoveryCodeHashes {
+				if hmac.Equal([]byte(saved), []byte(hash)) {
+					id.RecoveryCodeHashes = append(append([]string(nil), id.RecoveryCodeHashes[:k]...), id.RecoveryCodeHashes[k+1:]...)
+					if writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true) != nil {
+						return false
+					}
+					s.accounts = next
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (s *accountStore) setRole(id, name string, caps []string) error {
 	id = strings.TrimSpace(id)
 	name = strings.TrimSpace(name)
@@ -511,22 +598,28 @@ func dedupeStrings(in []string) []string {
 }
 
 type identityView struct {
-	ID, Type, Username, Email string
-	Enabled                   bool
+	ID            string `json:"id"`
+	Type          string `json:"type"`
+	Username      string `json:"username,omitempty"`
+	Email         string `json:"email,omitempty"`
+	Enabled       bool   `json:"enabled"`
+	TOTPEnabled   bool   `json:"totpEnabled,omitempty"`
+	RecoveryCodes int    `json:"recoveryCodes,omitempty"`
 }
 type accountView struct {
-	ID, DisplayName string
-	Enabled         bool
-	Roles           []string
-	Identities      []identityView
-	CreatedAt       time.Time
-	Environment     []map[string]string
+	ID          string              `json:"id"`
+	DisplayName string              `json:"displayName"`
+	Enabled     bool                `json:"enabled"`
+	Roles       []string            `json:"roles"`
+	Identities  []identityView      `json:"identities"`
+	CreatedAt   time.Time           `json:"createdAt"`
+	Environment []map[string]string `json:"environment,omitempty"`
 }
 
 func publicAccount(a account) accountView {
 	v := accountView{ID: a.ID, DisplayName: a.DisplayName, Enabled: a.Enabled, Roles: append([]string(nil), a.Roles...), CreatedAt: a.CreatedAt}
 	for _, id := range a.Identities {
-		v.Identities = append(v.Identities, identityView{ID: id.ID, Type: id.Type, Username: id.Username, Email: id.Email, Enabled: id.Enabled})
+		v.Identities = append(v.Identities, identityView{ID: id.ID, Type: id.Type, Username: id.Username, Email: id.Email, Enabled: id.Enabled, TOTPEnabled: id.TOTPEnabled, RecoveryCodes: len(id.RecoveryCodeHashes)})
 	}
 	return v
 }

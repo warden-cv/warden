@@ -26,17 +26,25 @@ type sessionsFile struct {
 	Version  int                `json:"version"`
 	Sessions map[string]session `json:"sessions"`
 }
+type loginChallenge struct {
+	AccountID  string
+	IdentityID string
+	IP         string
+	Expires    time.Time
+}
+
 type authStore struct {
 	mu           sync.Mutex
 	sessions     map[string]session
 	failures     map[string][]time.Time
+	challenges   map[string]loginChallenge
 	accounts     *accountStore
 	sessionsPath string
 	secure       bool
 }
 
 func newAuth(accounts *accountStore, secure bool, configDir string) *authStore {
-	a := &authStore{sessions: map[string]session{}, failures: map[string][]time.Time{}, accounts: accounts, sessionsPath: filepath.Join(configDir, "sessions.json"), secure: secure}
+	a := &authStore{sessions: map[string]session{}, failures: map[string][]time.Time{}, challenges: map[string]loginChallenge{}, accounts: accounts, sessionsPath: filepath.Join(configDir, "sessions.json"), secure: secure}
 	_ = a.loadSessions()
 	return a
 }
@@ -64,26 +72,68 @@ func (a *authStore) fail(ip string) {
 	defer a.mu.Unlock()
 	a.failures[ip] = append(a.failures[ip], time.Now())
 }
-func (a *authStore) login(w http.ResponseWriter, r *http.Request, username, password string) (session, error) {
+func (a *authStore) authenticatePassword(r *http.Request, username, password string) (account, loginIdentity, error) {
 	ip := clientIP(r)
 	if a.limited(ip) {
-		return session{}, errors.New("too many attempts")
+		return account{}, loginIdentity{}, errors.New("too many attempts")
 	}
 	acct, identity, ok := a.accounts.findPassword(username)
 	if !ok || !verifyPassword(identity.PasswordHash, password) {
 		a.fail(ip)
-		return session{}, errors.New("invalid credentials")
+		return account{}, loginIdentity{}, errors.New("invalid credentials")
 	}
+	return acct, identity, nil
+}
+
+func (a *authStore) createSession(w http.ResponseWriter, r *http.Request, accountID, identityID string) (session, error) {
 	sid, csrf := token(32), token(24)
-	s := session{AccountID: acct.ID, IdentityID: identity.ID, CSRF: csrf, Expires: time.Now().Add(12 * time.Hour)}
+	s := session{AccountID: accountID, IdentityID: identityID, CSRF: csrf, Expires: time.Now().Add(12 * time.Hour)}
 	a.mu.Lock()
 	a.sessions[sid] = s
-	delete(a.failures, ip)
-	_ = a.persistSessionsLocked()
+	delete(a.failures, clientIP(r))
+	err := a.persistSessionsLocked()
 	a.mu.Unlock()
+	if err != nil {
+		return session{}, err
+	}
 	http.SetCookie(w, &http.Cookie{Name: "warden_session", Value: sid, Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: 43200})
 	return s, nil
 }
+
+func (a *authStore) login(w http.ResponseWriter, r *http.Request, username, password string) (session, error) {
+	acct, identity, err := a.authenticatePassword(r, username, password)
+	if err != nil {
+		return session{}, err
+	}
+	return a.createSession(w, r, acct.ID, identity.ID)
+}
+
+func (a *authStore) beginChallenge(r *http.Request, accountID, identityID string) string {
+	id := token(32)
+	a.mu.Lock()
+	now := time.Now()
+	for key, c := range a.challenges {
+		if c.Expires.Before(now) {
+			delete(a.challenges, key)
+		}
+	}
+	a.challenges[id] = loginChallenge{AccountID: accountID, IdentityID: identityID, IP: clientIP(r), Expires: now.Add(5 * time.Minute)}
+	a.mu.Unlock()
+	return id
+}
+
+func (a *authStore) takeChallenge(r *http.Request, id string) (loginChallenge, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	c, ok := a.challenges[id]
+	if !ok || time.Now().After(c.Expires) || c.IP != clientIP(r) {
+		delete(a.challenges, id)
+		return loginChallenge{}, false
+	}
+	delete(a.challenges, id)
+	return c, true
+}
+
 func (a *authStore) logout(w http.ResponseWriter, r *http.Request) {
 	if c, e := r.Cookie("warden_session"); e == nil {
 		a.mu.Lock()
@@ -152,7 +202,7 @@ func (a *authStore) loadSessions() error {
 	return nil
 }
 func (a *authStore) persistSessionsLocked() error {
-	return writeJSONAtomic(a.sessionsPath, sessionsFile{Version: configSchemaVersion, Sessions: a.sessions}, true)
+	return writeJSONAtomic(a.sessionsPath, sessionsFile{Version: configSchemaVersion, Sessions: a.sessions}, false)
 }
 func verifyPassword(encoded, password string) bool {
 	parts := strings.Split(encoded, "$")

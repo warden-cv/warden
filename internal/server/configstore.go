@@ -375,6 +375,14 @@ func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if err := a.accounts.reload(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := a.secrets.reload(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		a.audit.Printf("warden_config_reload ip=%s", clientIP(r))
 		jsonOut(w, map[string]any{"ok": true, "message": "Configuration reloaded and validated."})
 	case "set-environment":

@@ -21,6 +21,18 @@
   </section>
 </div>
 
+<div id="twofactor-view" class="auth-shell" hidden>
+  <section class="login-card">
+    <div class="brand brand-login"><span class="brand-mark">W</span><span>Warden</span></div>
+    <p class="eyebrow">Two-factor authentication</p><h1>Verify sign in</h1>
+    <form id="twofactor-form" autocomplete="one-time-code">
+      <input id="twofactor-code" type="text" inputmode="numeric" placeholder="6-digit code or recovery code" autocomplete="one-time-code" required>
+      <button class="primary-button" type="submit">Verify</button>
+      <button class="secondary-button auth-cancel" id="twofactor-cancel" type="button">Cancel</button>
+      <p id="twofactor-error" class="form-error" role="alert"></p>
+    </form>
+  </section>
+</div>
 <div id="app-view" class="app-shell" hidden>
   <aside class="sidebar">
     <div class="brand"><span class="brand-mark">W</span><span>Warden</span></div>
@@ -32,7 +44,7 @@
       <div class="nav-group">
         <button class="nav-item nav-group-toggle" id="system-menu-toggle" aria-expanded="false"><span class="nav-icon">◆</span><span>System</span><span class="nav-chevron">▸</span></button>
         <div class="nav-submenu" id="system-menu" hidden>
-          <button class="nav-subitem" data-admin="warden">Warden</button><button class="nav-subitem" data-admin="access">Access</button><button class="nav-subitem" data-admin="certs">Certificates</button><button class="nav-subitem" data-admin="cron">Cron jobs</button><button class="nav-subitem" data-admin="docker">Docker</button><button class="nav-subitem" data-admin="fail2ban">Fail2ban</button><button class="nav-subitem" data-admin="firewall">Firewall</button><button class="nav-subitem" data-admin="services">Services</button><button class="nav-subitem" data-admin="ssh">SSH</button><button class="nav-subitem" data-admin="users">Users</button>
+          <button class="nav-subitem" data-admin="security">Security</button><button class="nav-subitem" data-admin="warden">Warden</button><button class="nav-subitem" data-admin="access">Access</button><button class="nav-subitem" data-admin="certs">Certificates</button><button class="nav-subitem" data-admin="cron">Cron jobs</button><button class="nav-subitem" data-admin="docker">Docker</button><button class="nav-subitem" data-admin="fail2ban">Fail2ban</button><button class="nav-subitem" data-admin="firewall">Firewall</button><button class="nav-subitem" data-admin="services">Services</button><button class="nav-subitem" data-admin="ssh">SSH</button><button class="nav-subitem" data-admin="users">Users</button>
         </div>
       </div>
     </nav>
