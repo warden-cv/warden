@@ -135,8 +135,18 @@
 		          <div id="editor-terminal-panel" class="editor-terminal-panel" hidden><div id="editor-terminal-resizer" class="editor-terminal-resizer" title="Drag to resize terminal"></div><div id="editor-terminal-mount" class="terminal-mount">
 		            <article id="shared-terminal" class="panel terminal-shell"><div class="terminal-head"><div><span class="terminal-dot red"></span><span class="terminal-dot amber"></span><span class="terminal-dot green"></span><strong>warden@<span id="terminal-host">server</span></strong><span id="terminal-cwd" class="terminal-cwd">~</span></div><div><span id="terminal-state" class="terminal-state">Disconnected</span><button id="terminal-reconnect" class="secondary-button compact">Reconnect</button><button id="terminal-placement" class="secondary-button compact" title="Open full Terminal view">Expand</button><button id="terminal-hide" class="secondary-button compact" title="Hide integrated terminal">×</button></div></div><div class="terminal-body" id="terminal-output" tabindex="0"><pre id="terminal-screen"></pre><textarea id="terminal-input" aria-label="Terminal input" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea></div><div class="terminal-foot"><span>Interactive PTY · authenticated WebSocket</span><span>Ctrl+` toggles · session stays alive</span></div></article>
 		          </div></div>
-		          <div class="editor-statusbar"><span><button id="editor-terminal-toggle" class="editor-status-action" title="Toggle terminal (Ctrl+`)">›_ Terminal</button></span><span id="editor-language">Plain Text</span><span id="editor-position">Ln 1, Col 1</span></div>
+		          <div class="editor-statusbar"><span><button id="editor-terminal-toggle" class="editor-status-action" title="Toggle terminal (Ctrl+`)">›_ Terminal</button><button id="editor-agent-toggle" class="editor-status-action" title="Toggle coding agent">✦ Agent</button></span><span id="editor-language">Plain Text</span><span id="editor-position">Ln 1, Col 1</span></div>
 		        </div>
+		        <div id="editor-agent-resizer" class="editor-agent-resizer" title="Drag to resize coding agent"></div>
+		        <aside id="editor-agent-panel" class="editor-agent-panel" hidden>
+		          <div class="editor-agent-head"><div><strong>Warden Agent</strong><span id="editor-agent-state">Ready</span></div><button id="editor-agent-collapse" title="Collapse coding agent">×</button></div>
+		          <div id="editor-agent-workspace" class="editor-agent-workspace">Open a workspace before starting an agent task.</div>
+		          <div id="editor-agent-feed" class="agent-feed editor-agent-feed"><div class="agent-empty"><strong>Give Warden a development task</strong><span>The same coding agent, beside your editor.</span></div></div>
+		          <form id="editor-agent-form" class="agent-compose editor-agent-compose">
+		            <textarea id="editor-agent-prompt" placeholder="Implement, investigate, fix, test…" spellcheck="true"></textarea>
+		            <div><span>OpenCode Zen · DeepSeek V4 Flash</span><button id="editor-agent-copy-session" type="button" class="secondary-button compact">Copy session</button><span id="editor-agent-activity" class="agent-activity" hidden><i></i></span><button id="editor-agent-stop" type="button" class="secondary-button compact" hidden>Stop</button><button id="editor-agent-run" type="submit" class="primary-small compact">Run</button></div>
+		          </form>
+		        </aside>
 		      </div>
 		    </section>
 
