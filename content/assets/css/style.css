@@ -698,3 +698,25 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
   display:flex;
   align-items:center;
 }
+
+/* Tighten Agent composer spacing around the draggable boundary. */
+.agent-compose-resizer,
+.editor-agent-panel>.agent-compose-resizer{
+  flex-basis:4px;
+  height:4px;
+  min-height:4px;
+}
+.agent-compose{padding-top:5px}
+.editor-agent-compose{padding-top:5px}
+.editor-agent-panel{
+  grid-template-rows:40px 30px 34px minmax(0,1fr) 4px var(--editor-agent-compose-height)
+}
+
+/* Exact vertical centring for the empty editor-tab label. */
+.editor-tabs{align-items:center}
+.editor-empty-tab{
+  display:block;
+  height:35px;
+  padding:0 10px;
+  line-height:35px;
+}
