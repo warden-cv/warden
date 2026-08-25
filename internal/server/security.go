@@ -76,14 +76,21 @@ func (a *app) security(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet {
 		_, identity, _ := a.accounts.identityByID(sess.IdentityID)
-		jsonOut(w, map[string]any{"account": publicAccount(acct), "currentIdentity": identityView{ID: identity.ID, Type: identity.Type, Username: identity.Username, Email: identity.Email, Enabled: identity.Enabled, TOTPEnabled: identity.TOTPEnabled, RecoveryCodes: len(identity.RecoveryCodeHashes)}, "googleEnabled": a.googleReady(), "sessions": a.auth.listSessions(sess.AccountID), "currentSession": a.auth.currentSessionID(r)})
+		env := a.config.environmentSnapshot().Accounts[sess.AccountID]
+		jsonOut(w, map[string]any{"account": publicAccount(acct), "currentIdentity": identityView{ID: identity.ID, Type: identity.Type, Username: identity.Username, Email: identity.Email, Enabled: identity.Enabled, TOTPEnabled: identity.TOTPEnabled, RecoveryCodes: len(identity.RecoveryCodeHashes)}, "googleEnabled": a.googleReady(), "sessions": a.auth.listSessions(sess.AccountID), "currentSession": a.auth.currentSessionID(r), "environment": sortedEnvironment(env)})
 		return
 	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method", 405)
 		return
 	}
-	var q struct{ Action, Password, Code, Enrollment, SessionID string }
+	var q struct {
+		Action, Password, Code, Enrollment, SessionID string
+		Variables                                     []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		} `json:"variables"`
+	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&q) != nil {
 		http.Error(w, "invalid json", 400)
 		return
@@ -93,11 +100,30 @@ func (a *app) security(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "identity unavailable", 400)
 		return
 	}
-	if q.Action != "revoke-session" && identity.Type != "password" {
+	if strings.HasPrefix(q.Action, "totp-") && identity.Type != "password" {
 		http.Error(w, "TOTP is currently available for password logins", 400)
 		return
 	}
 	switch q.Action {
+	case "set-environment":
+		vars := map[string]string{}
+		for _, item := range q.Variables {
+			name := strings.TrimSpace(item.Name)
+			if name == "" {
+				continue
+			}
+			if _, exists := vars[name]; exists {
+				http.Error(w, "duplicate environment variable "+name, 400)
+				return
+			}
+			vars[name] = item.Value
+		}
+		if err := a.config.replaceAccountEnvironment(sess.AccountID, vars); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		a.auditEvent(r, "account_environment_update", fmt.Sprintf("count=%d", len(vars)))
+		jsonOut(w, map[string]any{"ok": true, "message": "Environment saved. New terminal and agent sessions will use it."})
 	case "totp-start":
 		if !a.accounts.verifyIdentityPassword(sess.AccountID, sess.IdentityID, q.Password) {
 			http.Error(w, "current password is incorrect", 403)
