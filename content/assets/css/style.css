@@ -660,3 +660,41 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
   height:28px;
   min-height:28px;
 }
+
+/* Final alignment/polish for Agent resize boundaries and Editor chrome. */
+.agent-compose{border-top:0}
+.agent-compose-resizer,
+.editor-agent-panel>.agent-compose-resizer{
+  background:#18191a;
+  border-top:1px solid var(--line);
+  border-bottom:0;
+  box-shadow:none;
+}
+.agent-compose-resizer:hover,
+.editor-agent-panel>.agent-compose-resizer:hover,
+.agent-compose-resizing .agent-compose-resizer{
+  border-top-color:var(--green);
+}
+
+/* Workspace buttons should read like Warden strips, not generic buttons. */
+.agent-workspace,
+.editor-agent-workspace{
+  background:#18191a;
+  color:var(--muted2);
+  border-bottom:1px solid var(--line);
+  box-shadow:none;
+}
+.agent-workspace:hover,
+.editor-agent-workspace:hover{
+  background:#1b1e1c;
+  color:#b9c4be;
+  border-bottom-color:var(--line);
+}
+
+/* Centre the empty editor-tab label vertically in the 35px tab row. */
+.editor-empty-tab{
+  height:35px;
+  padding:0 10px;
+  display:flex;
+  align-items:center;
+}
