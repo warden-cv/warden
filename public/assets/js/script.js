@@ -461,12 +461,13 @@ function chooseAgentWorkspace(){openAgentWorkspacePicker()}
 function clampAgentComposerHeight(form,height){
   const host=form.closest('.agent-panel,.editor-agent-panel');
   const max=Math.max(140,Math.floor((host?.getBoundingClientRect().height||600)*.58));
-  return Math.max(110,Math.min(max,Number(height)||150))
+  return Math.max(110,Math.min(max,Number(height)||132))
 }
 function applyAgentComposerHeight(form,height,persist=false){
-  if(!form)return 0;const value=clampAgentComposerHeight(form,height);
-  form.style.height=value+'px';form.style.flex='0 0 '+value+'px';
-  if(form.id==='editor-agent-form')form.closest('.editor-agent-panel')?.style.setProperty('--editor-agent-compose-height',value+'px');
+  if(!form)return 0;
+  const value=clampAgentComposerHeight(form,height),host=form.closest('.agent-panel,.editor-agent-panel');
+  if(form.id==='editor-agent-form')host?.style.setProperty('--editor-agent-compose-height',value+'px');
+  else host?.style.setProperty('--agent-compose-height',value+'px');
   if(persist)localStorage.setItem(form.id==='editor-agent-form'?editorAgentComposerHeightKey:agentComposerHeightKey,String(Math.round(value)));
   return value
 }
@@ -475,12 +476,16 @@ function startAgentComposerResize(e,form){
   const startY=e.clientY,startHeight=form.getBoundingClientRect().height;
   document.body.classList.add('agent-compose-resizing');
   const move=ev=>applyAgentComposerHeight(form,startHeight+(startY-ev.clientY));
-  const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);document.body.classList.remove('agent-compose-resizing');applyAgentComposerHeight(form,form.getBoundingClientRect().height,true)};
+  const up=()=>{
+    document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);
+    document.body.classList.remove('agent-compose-resizing');
+    applyAgentComposerHeight(form,form.getBoundingClientRect().height,true)
+  };
   document.addEventListener('pointermove',move);document.addEventListener('pointerup',up)
 }
 function restoreAgentComposerHeights(){
-  applyAgentComposerHeight($('#agent-form'),Number(localStorage.getItem(agentComposerHeightKey))||150);
-  applyAgentComposerHeight($('#editor-agent-form'),Number(localStorage.getItem(editorAgentComposerHeightKey))||128)
+  applyAgentComposerHeight($('#agent-form'),Number(localStorage.getItem(agentComposerHeightKey))||132);
+  applyAgentComposerHeight($('#editor-agent-form'),Number(localStorage.getItem(editorAgentComposerHeightKey))||118)
 }
 
 function buildAgentMenu(box){box.innerHTML='';const item=(title,meta,fn)=>{const b=document.createElement('button');b.type='button';const strong=document.createElement('strong');strong.textContent=title;const span=document.createElement('span');span.textContent=meta;b.append(strong,span);b.onclick=fn;box.append(b)};item('New session','Same workspace',newAgentSameWorkspace);item('New workspace','Choose another directory',newAgentWorkspace);if(agentClosedSessions.length){const hr=document.createElement('div');hr.className='agent-session-divider';box.append(hr);for(const s of agentClosedSessions.slice(0,8))item('Restore '+agentSessionTitle(s),s.workspace||'No workspace',()=>restoreAgentSession(s.id))}}
@@ -509,8 +514,8 @@ $('#agent-workspace-cancel')?.addEventListener('click',closeAgentWorkspacePicker
 $$('[data-close-agent-workspace]').forEach(x=>x.addEventListener('click',closeAgentWorkspacePicker));
 $('#agent-compose-resizer')?.addEventListener('pointerdown',e=>startAgentComposerResize(e,$('#agent-form')));
 $('#editor-agent-compose-resizer')?.addEventListener('pointerdown',e=>startAgentComposerResize(e,$('#editor-agent-form')));
-$('#agent-compose-resizer')?.addEventListener('dblclick',()=>applyAgentComposerHeight($('#agent-form'),150,true));
-$('#editor-agent-compose-resizer')?.addEventListener('dblclick',()=>applyAgentComposerHeight($('#editor-agent-form'),128,true));
+$('#agent-compose-resizer')?.addEventListener('dblclick',()=>applyAgentComposerHeight($('#agent-form'),132,true));
+$('#editor-agent-compose-resizer')?.addEventListener('dblclick',()=>applyAgentComposerHeight($('#editor-agent-form'),118,true));
 restoreAgentComposerHeights();
 $('#agent-form')?.addEventListener('submit',e=>{e.preventDefault();const p=$('#agent-prompt').value.trim();if(!p)return;$('#agent-prompt').value='';runAgent(p)});
 $('#agent-prompt')?.addEventListener('keydown',e=>{if(e.key!=='Enter'||e.shiftKey||e.isComposing)return;e.preventDefault();const p=e.currentTarget.value.trim();if(!p)return;e.currentTarget.value='';runAgent(p)});
@@ -532,7 +537,7 @@ $('#editor-agent-toggle')?.addEventListener('click',()=>setEditorAgent(!$('.edit
 $('#editor-agent-collapse')?.addEventListener('click',()=>setEditorAgent(false));
 const editorAgentResizer=$('#editor-agent-resizer');editorAgentResizer?.addEventListener('pointerdown',e=>{e.preventDefault();editorAgentResizer.setPointerCapture(e.pointerId);editorAgentResizer.classList.add('dragging');const bench=$('.editor-workbench'),rect=bench.getBoundingClientRect();const move=ev=>applyEditorAgentWidth(rect.right-ev.clientX,true);const up=ev=>{editorAgentResizer.classList.remove('dragging');editorAgentResizer.releasePointerCapture(ev.pointerId);editorAgentResizer.removeEventListener('pointermove',move);editorAgentResizer.removeEventListener('pointerup',up)};editorAgentResizer.addEventListener('pointermove',move);editorAgentResizer.addEventListener('pointerup',up)});
 const savedAgentWidth=Number(localStorage.getItem(editorAgentWidthKey));requestAnimationFrame(()=>{applyEditorAgentWidth(Number.isFinite(savedAgentWidth)&&savedAgentWidth>=280?savedAgentWidth:360);setEditorAgent(localStorage.getItem(editorAgentOpenKey)==='1',false)});
-addEventListener('resize',()=>{const current=parseFloat(getComputedStyle($('.editor-workbench')).getPropertyValue('--editor-agent-width'))||360;applyEditorAgentWidth(current)});addEventListener('resize',()=>{applyAgentComposerHeight($('#agent-form'),$('#agent-form')?.getBoundingClientRect().height||150);applyAgentComposerHeight($('#editor-agent-form'),$('#editor-agent-form')?.getBoundingClientRect().height||128)});
+addEventListener('resize',()=>{const current=parseFloat(getComputedStyle($('.editor-workbench')).getPropertyValue('--editor-agent-width'))||360;applyEditorAgentWidth(current)});addEventListener('resize',()=>{applyAgentComposerHeight($('#agent-form'),$('#agent-form')?.getBoundingClientRect().height||132);applyAgentComposerHeight($('#editor-agent-form'),$('#editor-agent-form')?.getBoundingClientRect().height||118)});
 $('#editor-agent-form')?.addEventListener('submit',e=>{e.preventDefault();const p=$('#editor-agent-prompt').value.trim();if(!p)return;$('#editor-agent-prompt').value='';runAgent(p)});
 $('#editor-agent-prompt')?.addEventListener('keydown',e=>{if(e.key!=='Enter'||e.shiftKey||e.isComposing)return;e.preventDefault();const p=e.currentTarget.value.trim();if(!p)return;e.currentTarget.value='';runAgent(p)});
 $('#editor-agent-stop')?.addEventListener('click',()=>agentActive()?.abort?.abort());

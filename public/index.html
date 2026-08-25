@@ -32,7 +32,7 @@
 		    </form>
 		  </section>
 		</div>
-
+		
 		<div id="twofactor-view" class="auth-shell" hidden>
 		  <section class="login-card">
 		    <div class="brand brand-login"><span class="brand-mark">W</span><span>Warden</span></div>
@@ -66,13 +66,13 @@
 		      <button id="logout" class="nav-item muted"><span class="nav-icon">↪</span><span>Sign out</span></button>
 		    </div>
 		  </aside>
-
+		
 		  <main class="workspace">
 		    <header class="topbar">
 		      <div><p class="eyebrow" id="section-kicker">Live system</p><h2 id="section-title">Overview</h2></div>
 		      <div class="topbar-actions"><span id="clock" class="clock"></span><span class="version-chip" id="version-chip">v0.1.0</span></div>
 		    </header>
-
+		
 		    <section class="view active" id="view-monitor">
 		      <div class="monitor-layout">
 		        <article class="metric-card primary-metric">
@@ -97,7 +97,7 @@
 		        </article>
 		      </div>
 		    </section>
-
+		
 		    <section class="view" id="view-explorer">
 		      <div class="explorer-shell panel">
 		        <div class="files-toolbar"><div class="crumb-area"><div class="crumbs" id="breadcrumbs"></div><button id="explorer-home" class="path-jump" title="Home directory">⌂ Home</button></div><div class="toolbar-actions"><div id="selection-actions" class="selection-actions"><span class="selection-count"><span id="selected-count">0</span> selected</span><button data-bulk="download">Download</button><button data-bulk="compress">Compress</button><button data-bulk="extract">Extract</button><button data-bulk="copy">Copy</button><button data-bulk="move">Move</button><button data-bulk="delete" class="danger-text">Delete</button><button id="clear-selection" title="Clear selection">×</button></div><input type="file" id="upload-input" hidden><button id="explorer-open-workspace" class="secondary-button" title="Open the current folder in Editor as the workspace">Open as Workspace</button><button id="upload-button" class="secondary-button">↑ Upload</button><button id="new-folder" class="secondary-button">＋ Folder</button><button id="new-file" class="primary-small">＋ File</button></div></div>
@@ -105,7 +105,7 @@
 		        <div id="file-list" class="file-list"></div>
 		      </div>
 		    </section>
-
+		
 		    <section class="view" id="view-editor">
 		      <div class="editor-workbench panel">
 		        <aside class="editor-explorer">
@@ -140,9 +140,10 @@
 		        <div id="editor-agent-resizer" class="editor-agent-resizer" title="Drag to resize coding agent"></div>
 		        <aside id="editor-agent-panel" class="editor-agent-panel" hidden>
 		          <div class="editor-agent-head"><div><strong>Warden Agent</strong><span id="editor-agent-state">Ready</span></div><button id="editor-agent-collapse" title="Collapse coding agent">×</button></div>
-		          <div id="editor-agent-workspace" class="editor-agent-workspace">Open a workspace before starting an agent task.</div>
+		          <button id="editor-agent-workspace" class="editor-agent-workspace" type="button" title="Choose agent workspace">Open a workspace before starting an agent task.</button>
 		          <div class="agent-sessionbar compact"><div id="editor-agent-session-tabs" class="agent-session-tabs"></div><div class="agent-new-wrap"><button id="editor-agent-new" class="agent-new-button" type="button">＋⌄</button><div id="editor-agent-session-menu" class="agent-session-menu" hidden></div></div></div>
 		          <div id="editor-agent-feed" class="agent-feed editor-agent-feed"><div class="agent-empty"><strong>Give Warden a development task</strong><span>The same coding agent, beside your editor.</span></div></div>
+		          <div id="editor-agent-compose-resizer" class="agent-compose-resizer" title="Drag to resize prompt area"></div>
 		          <form id="editor-agent-form" class="agent-compose editor-agent-compose">
 		            <textarea id="editor-agent-prompt" placeholder="Implement, investigate, fix, test…" spellcheck="true"></textarea>
 		            <div><select id="editor-agent-provider" class="agent-provider-select" aria-label="Agent provider"></select><button id="editor-agent-copy-session" type="button" class="secondary-button compact">Copy session</button><span id="editor-agent-activity" class="agent-activity" hidden><i></i></span><button id="editor-agent-stop" type="button" class="secondary-button compact" hidden>Stop</button><button id="editor-agent-run" type="submit" class="primary-small compact">Run</button></div>
@@ -150,14 +151,15 @@
 		        </aside>
 		      </div>
 		    </section>
-
+		
 		    <section class="view" id="view-agent">
 		      <div class="agent-layout">
 		        <section class="panel agent-panel">
 		          <div class="agent-head"><div><p class="eyebrow">Coding agent</p><h3>Warden Agent</h3><p>DeepSeek V4 Flash through OpenCode · runs inside the open Editor workspace.</p></div><div class="agent-state"><span id="agent-state-dot" class="status-dot"></span><span id="agent-state">Checking OpenCode…</span></div></div>
-		          <div id="agent-workspace" class="agent-workspace">Choose or open a workspace before starting an agent task.</div>
+		          <button id="agent-workspace" class="agent-workspace" type="button" title="Choose agent workspace">Choose or open a workspace before starting an agent task.</button>
 		          <div class="agent-sessionbar"><div id="agent-session-tabs" class="agent-session-tabs"></div><div class="agent-new-wrap"><button id="agent-new" class="agent-new-button" type="button">＋⌄</button><div id="agent-session-menu" class="agent-session-menu" hidden></div></div></div>
 		          <div id="agent-feed" class="agent-feed"><div class="agent-empty"><strong>Give Warden a development task</strong><span>The agent can inspect and modify the workspace, run commands, Git and tests through OpenCode.</span></div></div>
+		          <div id="agent-compose-resizer" class="agent-compose-resizer" title="Drag to resize prompt area"></div>
 		          <form id="agent-form" class="agent-compose">
 		            <textarea id="agent-prompt" placeholder="Implement, investigate, fix, test…" spellcheck="true"></textarea>
 		            <div><select id="agent-provider" class="agent-provider-select" aria-label="Agent provider"></select><span id="agent-model"></span><button id="agent-copy-session" type="button" class="secondary-button">Copy session</button><span id="agent-activity" class="agent-activity" hidden><i></i></span><button id="agent-stop" type="button" class="secondary-button" hidden>Stop</button><button id="agent-run" type="submit" class="primary-small">Run agent</button></div>
@@ -165,7 +167,7 @@
 		        </section>
 		      </div>
 		    </section>
-
+		
 		    <section class="view" id="view-admin">
 		      <div class="admin-page panel">
 		        <div class="admin-page-head"><div><p class="eyebrow" id="admin-eyebrow">System</p><h3 id="admin-heading">System</h3><p id="admin-description">Structured server administration.</p></div><button id="admin-refresh" class="secondary-button compact">↻ Refresh</button></div>
@@ -178,6 +180,15 @@
 		  </main>
 		</div>
 		<div id="media-modal" class="media-modal" hidden><div class="media-backdrop" data-close-media></div><section class="media-dialog"><header><div><strong id="media-title">Preview</strong><span id="media-meta"></span><span id="media-count" class="media-count"></span></div><div><a id="media-download" class="secondary-button compact" href="#">Download</a><button id="media-close" class="secondary-button compact">Close</button></div></header><div id="media-stage" class="media-stage"></div></section></div>
+		<div id="agent-workspace-modal" class="agent-workspace-modal" hidden>
+		  <div class="agent-workspace-backdrop" data-close-agent-workspace></div>
+		  <section class="agent-workspace-dialog">
+		    <header><div><p class="eyebrow">Workspace</p><h3>Choose a directory</h3></div><button id="agent-workspace-close" class="secondary-button compact">×</button></header>
+		    <div class="agent-workspace-path"><button id="agent-workspace-up" class="secondary-button compact" type="button">↑</button><span id="agent-workspace-path"></span></div>
+		    <div id="agent-workspace-dirs" class="agent-workspace-dirs"></div>
+		    <footer><button id="agent-workspace-cancel" class="secondary-button" type="button">Cancel</button><button id="agent-workspace-use" class="primary-small" type="button">Use this directory</button></footer>
+		  </section>
+		</div>
 		<div id="toast-root" aria-live="polite"></div>
 	</body>
 </html>
