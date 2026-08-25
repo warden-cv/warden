@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,7 +21,10 @@ type session struct {
 	AccountID  string    `json:"account_id"`
 	IdentityID string    `json:"identity_id"`
 	CSRF       string    `json:"csrf"`
+	Created    time.Time `json:"created,omitempty"`
 	Expires    time.Time `json:"expires"`
+	RemoteIP   string    `json:"remote_ip,omitempty"`
+	UserAgent  string    `json:"user_agent,omitempty"`
 }
 type sessionsFile struct {
 	Version  int                `json:"version"`
@@ -87,7 +91,8 @@ func (a *authStore) authenticatePassword(r *http.Request, username, password str
 
 func (a *authStore) createSession(w http.ResponseWriter, r *http.Request, accountID, identityID string) (session, error) {
 	sid, csrf := token(32), token(24)
-	s := session{AccountID: accountID, IdentityID: identityID, CSRF: csrf, Expires: time.Now().Add(12 * time.Hour)}
+	now := time.Now().UTC()
+	s := session{AccountID: accountID, IdentityID: identityID, CSRF: csrf, Created: now, Expires: now.Add(12 * time.Hour), RemoteIP: clientIP(r), UserAgent: strings.TrimSpace(r.UserAgent())}
 	a.mu.Lock()
 	a.sessions[sid] = s
 	delete(a.failures, clientIP(r))
@@ -180,6 +185,62 @@ func (a *authStore) revokeAccount(accountID string) {
 	}
 	_ = a.persistSessionsLocked()
 }
+
+type sessionView struct {
+	ID        string    `json:"id"`
+	Created   time.Time `json:"created"`
+	Expires   time.Time `json:"expires"`
+	RemoteIP  string    `json:"remoteIp,omitempty"`
+	UserAgent string    `json:"userAgent,omitempty"`
+}
+
+func (a *authStore) listSessions(accountID string) []sessionView {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	out := []sessionView{}
+	for id, s := range a.sessions {
+		if s.Expires.Before(now) {
+			delete(a.sessions, id)
+			continue
+		}
+		if s.AccountID == accountID {
+			out = append(out, sessionView{ID: id, Created: s.Created, Expires: s.Expires, RemoteIP: s.RemoteIP, UserAgent: s.UserAgent})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Created.After(out[j].Created) })
+	return out
+}
+func (a *authStore) countSessions(accountID string) int { return len(a.listSessions(accountID)) }
+func (a *authStore) revokeSession(accountID, sessionID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	s, ok := a.sessions[sessionID]
+	if !ok || s.AccountID != accountID {
+		return false
+	}
+	delete(a.sessions, sessionID)
+	_ = a.persistSessionsLocked()
+	return true
+}
+func (a *authStore) revokeIdentity(identityID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for id, s := range a.sessions {
+		if s.IdentityID == identityID {
+			delete(a.sessions, id)
+		}
+	}
+	_ = a.persistSessionsLocked()
+}
+func (a *authStore) currentSessionID(r *http.Request) string {
+	c, err := r.Cookie("warden_session")
+	if err != nil {
+		return ""
+	}
+	return c.Value
+}
+
 func (a *authStore) loadSessions() error {
 	var f sessionsFile
 	if _, err := os.Stat(a.sessionsPath); errors.Is(err, os.ErrNotExist) {

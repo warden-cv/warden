@@ -94,3 +94,17 @@ func TestCapabilitiesAndLastAdministratorInvariant(t *testing.T) {
 		t.Fatalf("could not disable admin after second admin assigned: %v", err)
 	}
 }
+
+func TestAccountIdentityAndDeletionInvariants(t *testing.T) {
+    dir := t.TempDir()
+    store, err := loadAccountStore(dir); if err != nil { t.Fatal(err) }
+    admin, err := store.createInitialAdmin("Admin", "admin", "1234567890password"); if err != nil { t.Fatal(err) }
+    if _, err := store.deleteAccount(admin.ID); err == nil { t.Fatal("deleted final administrator") }
+    user, err := store.createAccount("User", "user", "1234567890password", []string{"user"}); if err != nil { t.Fatal(err) }
+    if err := store.addPasswordIdentity(user.ID, "user2", "1234567890password"); err != nil { t.Fatal(err) }
+    acct, ok := store.accountByID(user.ID); if !ok || len(acct.Identities) != 2 { t.Fatal("second login identity missing") }
+    if _, err := store.removeIdentity(user.ID, acct.Identities[0].ID); err != nil { t.Fatal(err) }
+    acct, _ = store.accountByID(user.ID)
+    if _, err := store.removeIdentity(user.ID, acct.Identities[0].ID); err == nil { t.Fatal("removed final login identity") }
+    if _, err := store.deleteAccount(user.ID); err != nil { t.Fatal(err) }
+}

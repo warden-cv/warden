@@ -469,7 +469,7 @@ func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		a.audit.Printf("warden_config_reload ip=%s", clientIP(r))
+		a.auditEvent(r, "warden_config_reload", "")
 		jsonOut(w, map[string]any{"ok": true, "message": "Configuration reloaded and validated."})
 	case "set-google":
 		g := googleAuthConfig{Enabled: q.GoogleEnabled, ClientID: strings.TrimSpace(q.GoogleClientID), RedirectURL: strings.TrimSpace(q.GoogleRedirectURL)}
@@ -489,7 +489,7 @@ func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		a.audit.Printf("warden_google_auth_update ip=%s enabled=%t", clientIP(r), g.Enabled)
+		a.auditEvent(r, "warden_google_auth_update", fmt.Sprintf("enabled=%t", g.Enabled))
 		jsonOut(w, map[string]any{"ok": true, "message": "Google authentication settings saved."})
 	case "set-environment":
 		vars := map[string]string{}
@@ -508,7 +508,7 @@ func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		a.audit.Printf("warden_environment_update ip=%s count=%d", clientIP(r), len(vars))
+		a.auditEvent(r, "warden_environment_update", fmt.Sprintf("count=%d", len(vars)))
 		jsonOut(w, map[string]any{"ok": true, "message": "Environment saved. New terminal sessions will use it."})
 	case "reset-authentication":
 		if q.Confirmation != "RESET" {
@@ -521,7 +521,7 @@ func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 		}
 		a.auth.revokeAll()
 		_ = a.secrets.deletePrefix("totp:")
-		a.audit.Printf("warden_authentication_reset ip=%s", clientIP(r))
+		a.auditEvent(r, "warden_authentication_reset", "")
 		jsonOut(w, map[string]any{"ok": true, "message": "Authentication reset. Reload Warden to create a new administrator.", "setupRequired": true})
 	default:
 		http.Error(w, "unsupported action", http.StatusBadRequest)

@@ -76,20 +76,24 @@ func (a *app) security(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet {
 		_, identity, _ := a.accounts.identityByID(sess.IdentityID)
-		jsonOut(w, map[string]any{"account": publicAccount(acct), "currentIdentity": identityView{ID: identity.ID, Type: identity.Type, Username: identity.Username, Email: identity.Email, Enabled: identity.Enabled, TOTPEnabled: identity.TOTPEnabled, RecoveryCodes: len(identity.RecoveryCodeHashes)}, "googleEnabled": a.googleReady()})
+		jsonOut(w, map[string]any{"account": publicAccount(acct), "currentIdentity": identityView{ID: identity.ID, Type: identity.Type, Username: identity.Username, Email: identity.Email, Enabled: identity.Enabled, TOTPEnabled: identity.TOTPEnabled, RecoveryCodes: len(identity.RecoveryCodeHashes)}, "googleEnabled": a.googleReady(), "sessions": a.auth.listSessions(sess.AccountID), "currentSession": a.auth.currentSessionID(r)})
 		return
 	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method", 405)
 		return
 	}
-	var q struct{ Action, Password, Code, Enrollment string }
+	var q struct{ Action, Password, Code, Enrollment, SessionID string }
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&q) != nil {
 		http.Error(w, "invalid json", 400)
 		return
 	}
 	_, identity, ok := a.accounts.identityByID(sess.IdentityID)
-	if !ok || identity.Type != "password" {
+	if !ok {
+		http.Error(w, "identity unavailable", 400)
+		return
+	}
+	if q.Action != "revoke-session" && identity.Type != "password" {
 		http.Error(w, "TOTP is currently available for password logins", 400)
 		return
 	}
@@ -175,6 +179,17 @@ func (a *app) security(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jsonOut(w, map[string]any{"ok": true, "recoveryCodes": codes, "message": "Recovery codes regenerated. Previous codes no longer work."})
+	case "revoke-session":
+		if strings.TrimSpace(q.SessionID) == "" {
+			http.Error(w, "session id is required", 400)
+			return
+		}
+		if !a.auth.revokeSession(sess.AccountID, q.SessionID) {
+			http.Error(w, "session not found", 404)
+			return
+		}
+		a.auditEvent(r, "session_revoked", fmt.Sprintf("session=%s", q.SessionID))
+		jsonOut(w, map[string]any{"ok": true, "message": "Session revoked."})
 	default:
 		http.Error(w, errors.New(fmt.Sprintf("unsupported security action %q", strings.TrimSpace(q.Action))).Error(), 400)
 	}

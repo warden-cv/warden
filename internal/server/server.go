@@ -50,7 +50,7 @@ func Run(cfg Config) error {
 	if e != nil {
 		return fmt.Errorf("secrets: %w", e)
 	}
-	auditFile, e := os.OpenFile("warden-audit.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	auditFile, e := os.OpenFile(filepath.Join(cfg.ConfigDir, "audit.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if e != nil {
 		return e
 	}
@@ -197,6 +197,17 @@ func (a *app) sessionPayload(s session) map[string]any {
 	}
 }
 
+func (a *app) auditEvent(r *http.Request, event, detail string) {
+	accountID, identityID := "-", "-"
+	if s, ok := a.auth.get(r); ok {
+		accountID, identityID = s.AccountID, s.IdentityID
+	}
+	if strings.TrimSpace(detail) != "" {
+		detail = " " + strings.TrimSpace(detail)
+	}
+	a.audit.Printf("event=%s account=%s identity=%s ip=%s%s", event, accountID, identityID, clientIP(r), detail)
+}
+
 func (a *app) exportConfiguration(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method", http.StatusMethodNotAllowed)
@@ -223,39 +234,39 @@ func (a *app) file(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		a.audit.Printf("file_write ip=%s path=%q", clientIP(r), r.URL.Query().Get("path"))
+		a.auditEvent(r, "file_write", fmt.Sprintf("path=%q", r.URL.Query().Get("path")))
 		a.files.write(w, r)
 	default:
 		http.Error(w, "method", 405)
 	}
 }
 func (a *app) mutate(w http.ResponseWriter, r *http.Request) {
-	a.audit.Printf("file_mutate ip=%s", clientIP(r))
+	a.auditEvent(r, "file_mutate", "")
 	a.files.mutate(w, r)
 }
 func (a *app) archiveDownload(w http.ResponseWriter, r *http.Request) { a.files.archiveDownload(w, r) }
 func (a *app) compress(w http.ResponseWriter, r *http.Request) {
-	a.audit.Printf("file_compress ip=%s", clientIP(r))
+	a.auditEvent(r, "file_compress", "")
 	a.files.compress(w, r)
 }
 func (a *app) extract(w http.ResponseWriter, r *http.Request) {
-	a.audit.Printf("file_extract ip=%s", clientIP(r))
+	a.auditEvent(r, "file_extract", "")
 	a.files.extract(w, r)
 }
 func (a *app) workspaceSearch(w http.ResponseWriter, r *http.Request) { a.files.workspaceSearch(w, r) }
 func (a *app) workspaceReplace(w http.ResponseWriter, r *http.Request) {
-	a.audit.Printf("workspace_replace ip=%s", clientIP(r))
+	a.auditEvent(r, "workspace_replace", "")
 	a.files.workspaceReplace(w, r)
 }
 func (a *app) workspaceUndoReplace(w http.ResponseWriter, r *http.Request) {
-	a.audit.Printf("workspace_replace_undo ip=%s", clientIP(r))
+	a.auditEvent(r, "workspace_replace_undo", "")
 	a.files.workspaceUndoReplace(w, r)
 }
 func (a *app) sourceControlStatus(w http.ResponseWriter, r *http.Request) {
 	a.files.sourceControlStatus(w, r)
 }
 func (a *app) sourceControlMutate(w http.ResponseWriter, r *http.Request) {
-	a.audit.Printf("source_control_mutate ip=%s", clientIP(r))
+	a.auditEvent(r, "source_control_mutate", "")
 	a.files.sourceControlMutate(w, r)
 }
 func (a *app) terminal(w http.ResponseWriter, r *http.Request) {
@@ -290,9 +301,9 @@ func (a *app) terminal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	a.audit.Printf("terminal_open ip=%s cwd=%q", clientIP(r), cwd)
+	a.auditEvent(r, "terminal_open", fmt.Sprintf("cwd=%q", cwd))
 	if e := servePTY(w, r, cwd, a.config.environmentFor(s.AccountID)); e != nil {
-		a.audit.Printf("terminal_error ip=%s err=%q", clientIP(r), e)
+		a.auditEvent(r, "terminal_error", fmt.Sprintf("err=%q", e))
 	}
 }
 func (a *app) protect(next http.HandlerFunc) http.HandlerFunc { return a.require("", next) }

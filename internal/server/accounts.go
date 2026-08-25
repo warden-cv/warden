@@ -292,6 +292,7 @@ var capabilityCatalog = []capabilityInfo{
 	{"system.manage", "System", "Change system services/settings"},
 	{"accounts.manage", "Warden", "Manage Warden accounts and roles"},
 	{"settings.manage", "Warden", "Manage instance configuration"},
+	{"audit.read", "Warden", "View Warden audit history"},
 }
 
 func knownCapability(key string) bool {
@@ -552,6 +553,78 @@ func (s *accountStore) consumeRecoveryCode(accountID, identityID, hash string) b
 	return false
 }
 
+func (s *accountStore) removeIdentity(accountID, identityID string) (loginIdentity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.accounts
+	next.Accounts = append([]account(nil), s.accounts.Accounts...)
+	for i := range next.Accounts {
+		if next.Accounts[i].ID != accountID {
+			continue
+		}
+		ids := append([]loginIdentity(nil), next.Accounts[i].Identities...)
+		idx := -1
+		var removed loginIdentity
+		loginCapable := 0
+		for j, id := range ids {
+			if id.Type == "password" || id.Type == "google" {
+				loginCapable++
+			}
+			if id.ID == identityID {
+				idx = j
+				removed = id
+			}
+		}
+		if idx < 0 {
+			return loginIdentity{}, errors.New("identity not found")
+		}
+		if (removed.Type == "password" || removed.Type == "google") && loginCapable <= 1 {
+			return loginIdentity{}, errors.New("account must retain at least one login identity")
+		}
+		next.Accounts[i].Identities = append(ids[:idx], ids[idx+1:]...)
+		if err := validateAccounts(next, s.roles); err != nil {
+			return loginIdentity{}, err
+		}
+		if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
+			return loginIdentity{}, err
+		}
+		s.accounts = next
+		return removed, nil
+	}
+	return loginIdentity{}, errors.New("account not found")
+}
+
+func (s *accountStore) deleteAccount(accountID string) ([]loginIdentity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.accounts
+	next.Accounts = append([]account(nil), s.accounts.Accounts...)
+	idx := -1
+	var identities []loginIdentity
+	for i, a := range next.Accounts {
+		if a.ID == accountID {
+			idx = i
+			identities = append([]loginIdentity(nil), a.Identities...)
+			break
+		}
+	}
+	if idx < 0 {
+		return nil, errors.New("account not found")
+	}
+	next.Accounts = append(next.Accounts[:idx], next.Accounts[idx+1:]...)
+	if len(next.Accounts) == 0 || countEnabledAdmins(next.Accounts) == 0 {
+		return nil, errors.New("Warden must retain at least one enabled administrator")
+	}
+	if err := validateAccounts(next, s.roles); err != nil {
+		return nil, err
+	}
+	if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
+		return nil, err
+	}
+	s.accounts = next
+	return identities, nil
+}
+
 func (s *accountStore) setRole(id, name string, caps []string) error {
 	id = strings.TrimSpace(id)
 	name = strings.TrimSpace(name)
@@ -639,6 +712,7 @@ type accountView struct {
 	Identities  []identityView      `json:"identities"`
 	CreatedAt   time.Time           `json:"createdAt"`
 	Environment []map[string]string `json:"environment,omitempty"`
+	Sessions    int                 `json:"sessions"`
 }
 
 func publicAccount(a account) accountView {
@@ -655,16 +729,17 @@ func (a *app) collectAccessConfiguration() adminEnvelope {
 	for _, acct := range accounts {
 		v := publicAccount(acct)
 		v.Environment = sortedEnvironment(a.config.environmentSnapshot().Accounts[acct.ID])
+		v.Sessions = a.auth.countSessions(acct.ID)
 		views = append(views, v)
 	}
 	return adminEnvelope{Kind: "access", Available: true, Data: map[string]any{"accounts": views, "roles": a.accounts.listRoles(), "capabilities": capabilityCatalog}}
 }
 func (a *app) accessAction(w http.ResponseWriter, r *http.Request) {
 	var q struct {
-		Action, ID, DisplayName, Username, Password, Email, RoleID, RoleName string
-		Enabled                                                              *bool
-		Roles, Capabilities                                                  []string
-		Variables                                                            []struct {
+		Action, ID, IdentityID, DisplayName, Username, Password, Email, RoleID, RoleName string
+		Enabled                                                                          *bool
+		Roles, Capabilities                                                              []string
+		Variables                                                                        []struct {
 			Name  string `json:"name"`
 			Value string `json:"value"`
 		} `json:"variables"`
@@ -694,6 +769,30 @@ func (a *app) accessAction(w http.ResponseWriter, r *http.Request) {
 	case "add-password":
 		err = a.accounts.addPasswordIdentity(q.ID, q.Username, q.Password)
 		msg = "Password identity added."
+	case "revoke-sessions":
+		a.auth.revokeAccount(q.ID)
+		msg = "Account sessions revoked."
+	case "remove-identity":
+		removed, removeErr := a.accounts.removeIdentity(q.ID, q.IdentityID)
+		err = removeErr
+		if err == nil {
+			a.auth.revokeIdentity(q.IdentityID)
+			if removed.TOTPEnabled {
+				_ = a.secrets.delete(totpSecretKey(q.IdentityID))
+			}
+			msg = "Identity removed."
+		}
+	case "delete-account":
+		var identities []loginIdentity
+		identities, err = a.accounts.deleteAccount(q.ID)
+		if err == nil {
+			a.auth.revokeAccount(q.ID)
+			_ = a.config.replaceAccountEnvironment(q.ID, nil)
+			for _, identity := range identities {
+				_ = a.secrets.delete(totpSecretKey(identity.ID))
+			}
+			msg = "Account deleted."
+		}
 	case "set-role":
 		err = a.accounts.setRole(q.RoleID, q.RoleName, q.Capabilities)
 		msg = "Role saved."
@@ -714,7 +813,7 @@ func (a *app) accessAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	a.audit.Printf("warden_access action=%s target=%s ip=%s", q.Action, q.ID, clientIP(r))
+	a.auditEvent(r, "warden_access", fmt.Sprintf("action=%s target=%s", q.Action, q.ID))
 	jsonOut(w, map[string]any{"ok": true, "message": msg})
 }
 

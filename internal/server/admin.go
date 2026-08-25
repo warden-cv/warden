@@ -49,6 +49,9 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 	if kind == "access" {
 		needed = "accounts.manage"
 	}
+	if kind == "audit" {
+		needed = "audit.read"
+	}
 	if !a.accounts.hasCapability(sess.AccountID, needed) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
@@ -95,11 +98,31 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 		env = a.collectWardenConfiguration()
 	case "access":
 		env = a.collectAccessConfiguration()
+	case "audit":
+		env = a.collectAudit()
 	default:
 		http.NotFound(w, r)
 		return
 	}
 	jsonOut(w, env)
+}
+
+func (a *app) collectAudit() adminEnvelope {
+	path := filepath.Join(a.cfg.ConfigDir, "audit.log")
+	f, err := os.Open(path)
+	if err != nil {
+		return adminEnvelope{Kind: "audit", Available: false, Message: "Audit log is unavailable."}
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	lines := []string{}
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+		if len(lines) > 500 {
+			lines = lines[1:]
+		}
+	}
+	return adminEnvelope{Kind: "audit", Available: true, Data: map[string]any{"path": path, "lines": lines}}
 }
 
 func collectCertificates() adminEnvelope {
@@ -570,11 +593,11 @@ func (a *app) adminAction(w http.ResponseWriter, r *http.Request, kind string) {
 		return
 	}
 	if err != nil {
-		a.audit.Printf("admin_action_failed ip=%s kind=%q action=%q name=%q err=%q", clientIP(r), kind, q.Action, q.Name, err)
+		a.auditEvent(r, "admin_action_failed", fmt.Sprintf("kind=%q action=%q name=%q err=%q", kind, q.Action, q.Name, err))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.audit.Printf("admin_action ip=%s kind=%q action=%q name=%q target=%q", clientIP(r), kind, q.Action, q.Name, q.Target)
+	a.auditEvent(r, "admin_action", fmt.Sprintf("kind=%q action=%q name=%q target=%q", kind, q.Action, q.Name, q.Target))
 	jsonOut(w, adminActionResult{OK: true, Message: msg})
 }
 
