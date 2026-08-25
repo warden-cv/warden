@@ -621,3 +621,42 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 .editor-agent-compose{height:var(--editor-agent-compose-height);min-height:0;padding:9px 10px}
 .editor-agent-compose textarea{resize:none;min-height:0;max-height:none;height:calc(100% - 36px)}
 .editor-agent-panel>.agent-compose-resizer{height:10px;min-height:10px;border-top:1px solid var(--line)}
+
+/* Match Warden's existing pane-resize UX: the composer boundary itself is draggable. */
+.agent-compose-resizer{
+  flex:0 0 6px;
+  height:6px;
+  min-height:6px;
+  margin:0;
+  background:#18191a;
+  border-top:1px solid var(--line);
+  cursor:ns-resize;
+  touch-action:none;
+}
+.agent-compose-resizer::after{display:none!important}
+.agent-compose-resizer:hover,
+.agent-compose-resizing .agent-compose-resizer{border-top-color:#4f5d55}
+.agent-compose-resizing,.agent-compose-resizing *{cursor:ns-resize!important;user-select:none!important}
+
+.editor-agent-panel{
+  grid-template-rows:40px 30px 34px minmax(0,1fr) 6px var(--editor-agent-compose-height)
+}
+.editor-agent-panel>.agent-compose-resizer{
+  height:6px;
+  min-height:6px;
+  background:#18191a;
+  border-top:1px solid var(--line)
+}
+
+/* Keep the integrated Agent action row compact even in a narrow pane. */
+.editor-agent-compose #editor-agent-copy-session{
+  white-space:nowrap;
+  height:28px;
+  min-height:28px;
+  padding:4px 8px;
+  line-height:1;
+}
+.editor-agent-compose #editor-agent-run{
+  height:28px;
+  min-height:28px;
+}
