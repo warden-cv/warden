@@ -551,6 +551,7 @@ func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 	var q struct {
 		Action             string `json:"action"`
 		Confirmation       string `json:"confirmation"`
+		Password           string `json:"password"`
 		GoogleEnabled      bool   `json:"googleEnabled"`
 		GoogleClientID     string `json:"googleClientId"`
 		GoogleClientSecret string `json:"googleClientSecret"`
@@ -612,6 +613,11 @@ func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 		a.auditEvent(r, "warden_environment_update", fmt.Sprintf("count=%d", len(vars)))
 		jsonOut(w, map[string]any{"ok": true, "message": "Environment saved. New terminal sessions will use it."})
 	case "reset-instance":
+		sess, ok := a.auth.get(r)
+		if !ok || !a.accounts.verifyAccountPassword(sess.AccountID, q.Password) {
+			http.Error(w, "your current Warden account password is incorrect", http.StatusForbidden)
+			return
+		}
 		if q.Confirmation != "RESET WARDEN" {
 			http.Error(w, "type RESET WARDEN to confirm", http.StatusBadRequest)
 			return
@@ -623,6 +629,11 @@ func (a *app) wardenConfigAction(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonOut(w, map[string]any{"ok": true, "message": "Warden state reset. Workspace files were not touched.", "setupRequired": true})
 	case "reset-authentication":
+		sess, ok := a.auth.get(r)
+		if !ok || !a.accounts.verifyAccountPassword(sess.AccountID, q.Password) {
+			http.Error(w, "your current Warden account password is incorrect", http.StatusForbidden)
+			return
+		}
 		if q.Confirmation != "RESET" {
 			http.Error(w, "type RESET to confirm", http.StatusBadRequest)
 			return

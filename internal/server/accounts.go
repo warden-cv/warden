@@ -516,6 +516,22 @@ func (s *accountStore) verifyIdentityPassword(accountID, identityID, password st
 	return ok && a.ID == accountID && a.Enabled && id.Enabled && id.Type == "password" && verifyPassword(id.PasswordHash, password)
 }
 
+func (s *accountStore) verifyAccountPassword(accountID, password string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, a := range s.accounts.Accounts {
+		if a.ID != accountID || !a.Enabled {
+			continue
+		}
+		for _, id := range a.Identities {
+			if id.Enabled && id.Type == "password" && verifyPassword(id.PasswordHash, password) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *accountStore) setIdentityPassword(accountID, identityID, password string) error {
 	if len(password) < 10 {
 		return errors.New("password must be at least 10 characters")
@@ -860,6 +876,11 @@ func (a *app) accessAction(w http.ResponseWriter, r *http.Request) {
 			msg = "Identity removed."
 		}
 	case "delete-account":
+		sess, ok := a.auth.get(r)
+		if !ok || !a.accounts.verifyAccountPassword(sess.AccountID, q.Password) {
+			err = errors.New("your current Warden account password is incorrect")
+			break
+		}
 		var identities []loginIdentity
 		identities, err = a.accounts.deleteAccount(q.ID)
 		if err == nil {
