@@ -39,19 +39,7 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	needed := "system.read"
-	if r.Method != http.MethodGet {
-		needed = "system.manage"
-	}
-	if kind == "warden" {
-		needed = "settings.manage"
-	}
-	if kind == "access" {
-		needed = "accounts.manage"
-	}
-	if kind == "audit" {
-		needed = "audit.read"
-	}
+	needed := requiredAdminCapability(kind, r.Method)
 	if !a.accounts.hasCapability(sess.AccountID, needed) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
@@ -105,6 +93,22 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOut(w, env)
+}
+
+func requiredAdminCapability(kind, method string) string {
+	if kind == "warden" {
+		return "settings.manage"
+	}
+	if kind == "access" {
+		return "accounts.manage"
+	}
+	if kind == "audit" {
+		return "audit.read"
+	}
+	if method == http.MethodGet {
+		return "system.read"
+	}
+	return "system.manage"
 }
 
 func (a *app) collectAudit() adminEnvelope {

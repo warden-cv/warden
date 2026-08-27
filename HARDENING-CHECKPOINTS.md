@@ -484,7 +484,7 @@ Reviewer:
 | BH01 | Complete | Bounded API bodies, encoding rejection and response headers |
 | BH02 | Complete | Bounded sessions and identity-state revalidation |
 | BH03 | Complete | Single-use MFA/OAuth state and verified Google identity |
-| BH04 | Planned | Not started |
+| BH04 | Complete | Route capability matrix and live authority revalidation |
 | BH05 | Planned | Not started |
 | BH06 | Planned | Not started |
 | BH07 | Planned | Not started |
