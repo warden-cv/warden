@@ -408,7 +408,11 @@ func requestScheme(r *http.Request) string {
 		return "https"
 	}
 	if trustedProxy(r) {
-		if proto := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0])); proto == "https" || proto == "http" {
+		raw := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
+		if strings.Contains(raw, ",") {
+			return "http"
+		}
+		if proto := strings.ToLower(raw); proto == "https" || proto == "http" {
 			return proto
 		}
 	}
@@ -417,11 +421,9 @@ func requestScheme(r *http.Request) string {
 
 func forwardedClientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		for _, raw := range strings.Split(xff, ",") {
-			candidate := strings.TrimSpace(raw)
-			if ip := net.ParseIP(candidate); ip != nil {
-				return ip.String()
-			}
+		candidate := strings.TrimSpace(strings.Split(xff, ",")[0])
+		if ip := net.ParseIP(candidate); ip != nil {
+			return ip.String()
 		}
 	}
 	if raw := strings.TrimSpace(r.Header.Get("X-Real-IP")); raw != "" {
@@ -455,10 +457,10 @@ func sameOrigin(r *http.Request) bool {
 		return false
 	}
 	u, err := url.Parse(o)
-	if err != nil || u.Host == "" {
+	if err != nil || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 		return false
 	}
-	return strings.EqualFold(u.Host, r.Host)
+	return strings.EqualFold(u.Host, r.Host) && strings.EqualFold(u.Scheme, requestScheme(r))
 }
 
 func isLoopbackClient(r *http.Request) bool {

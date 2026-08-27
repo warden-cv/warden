@@ -485,7 +485,7 @@ Reviewer:
 | BH02 | Complete | Bounded sessions and identity-state revalidation |
 | BH03 | Complete | Single-use MFA/OAuth state and verified Google identity |
 | BH04 | Complete | Route capability matrix and live authority revalidation |
-| BH05 | Planned | Not started |
+| BH05 | Complete | Fail-closed proxy parsing, scheme-aware origin and CSRF tests |
 | BH06 | Planned | Not started |
 | BH07 | Planned | Not started |
 | BH08 | Planned | Not started |
