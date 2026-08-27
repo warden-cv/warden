@@ -545,16 +545,42 @@ func collectUsers(scope string) adminEnvelope {
 	return adminEnvelope{Kind: "users", Available: true, Data: map[string]any{"users": rows, "scope": scope, "uidMin": uidMin}}
 }
 
+var systemExecutableDirs = []string{"/usr/sbin", "/usr/bin", "/sbin", "/bin"}
+
 func fixedCommand(timeout time.Duration, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
-	out, err := cmd.CombinedOutput()
+	binary, err := systemExecutable(name)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C", "LANG=C"}
+	out := &boundedCommandOutput{limit: 1 << 20}
+	cmd.Stdout = out
+	cmd.Stderr = out
+	err = cmd.Run()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	return out, err
+	if out.truncated {
+		return nil, errors.New("command output exceeded 1 MiB limit")
+	}
+	return out.Bytes(), err
+}
+
+func systemExecutable(name string) (string, error) {
+	if filepath.Base(name) != name || strings.ContainsAny(name, "/\\\x00") {
+		return "", errors.New("invalid system executable")
+	}
+	for _, dir := range systemExecutableDirs {
+		candidate := filepath.Join(dir, name)
+		info, err := os.Stat(candidate)
+		if err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("%s is not installed in a system executable directory", name)
 }
 func emptyMessage[T any](v []T, msg string) string {
 	if len(v) == 0 {
@@ -626,7 +652,7 @@ func actionCertificate(q adminActionRequest) (string, error) {
 	if q.Action != "renew" || !safeNameRE.MatchString(q.Name) {
 		return "", errors.New("invalid certificate action")
 	}
-	if _, err := exec.LookPath("certbot"); err != nil {
+	if _, err := systemExecutable("certbot"); err != nil {
 		return "", errors.New("certbot is not installed")
 	}
 	out, err := fixedCommand(90*time.Second, "certbot", "renew", "--cert-name", q.Name, "--non-interactive")
@@ -893,19 +919,32 @@ func actionUser(q adminActionRequest) (string, error) {
 }
 
 func fixedCommandInput(timeout time.Duration, input []byte, name string, args ...string) ([]byte, error) {
+	if len(input) > 1<<20 {
+		return nil, errors.New("command input exceeded 1 MiB limit")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
+	binary, err := systemExecutable(name)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C", "LANG=C"}
 	cmd.Stdin = bytes.NewReader(input)
-	out, err := cmd.CombinedOutput()
+	out := &boundedCommandOutput{limit: 1 << 20}
+	cmd.Stdout = out
+	cmd.Stderr = out
+	err = cmd.Run()
 	if ctx.Err() != nil {
-		return out, ctx.Err()
+		return out.Bytes(), ctx.Err()
+	}
+	if out.truncated {
+		return nil, errors.New("command output exceeded 1 MiB limit")
 	}
 	if err != nil {
-		return out, commandError(name+" failed", out, err)
+		return out.Bytes(), commandError(name+" failed", out.Bytes(), err)
 	}
-	return out, nil
+	return out.Bytes(), nil
 }
 
 func commandError(prefix string, out []byte, err error) error {

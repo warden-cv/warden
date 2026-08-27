@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -77,9 +78,17 @@ func (a *app) websitesAPI(w http.ResponseWriter, r *http.Request) {
 	case "save":
 		err = a.saveWebsite(sess.AccountID, &q.Website)
 	case "delete":
-		_, err = a.db.Exec("DELETE FROM websites WHERE id=?", q.ID)
+		if !validAgentSessionID(q.ID) {
+			err = errors.New("invalid website id")
+		} else {
+			_, err = a.db.Exec("DELETE FROM websites WHERE id=?", q.ID)
+		}
 	case "publish":
-		err = a.queueWebsiteJob(sess.AccountID, q.ID, "publish")
+		if !validAgentSessionID(q.ID) {
+			err = errors.New("invalid website id")
+		} else {
+			err = a.queueWebsiteJob(sess.AccountID, q.ID, "publish")
+		}
 	default:
 		err = errors.New("unknown website action")
 	}
@@ -124,6 +133,14 @@ func (a *app) saveWebsite(accountID string, site *managedWebsite) error {
 		return err
 	}
 	defer tx.Rollback()
+	var currentRevision int
+	err = tx.QueryRow("SELECT COALESCE(MAX(sequence),0) FROM website_revisions WHERE website_id=?", site.ID).Scan(&currentRevision)
+	if err != nil {
+		return err
+	}
+	if currentRevision > 0 && site.Revision != currentRevision {
+		return errors.New("website was changed by another request; reload before saving")
+	}
 	_, err = tx.Exec(`INSERT INTO websites(id,name,kind,document_root,upstream,enabled,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,document_root=excluded.document_root,upstream=excluded.upstream,enabled=excluded.enabled,updated_at=excluded.updated_at`, site.ID, strings.TrimSpace(site.Name), site.Kind, site.DocumentRoot, site.Upstream, site.Enabled, accountID, now, now)
 	if err != nil {
@@ -137,10 +154,7 @@ func (a *app) saveWebsite(accountID string, site *managedWebsite) error {
 			return err
 		}
 	}
-	var sequence int
-	if err = tx.QueryRow("SELECT COALESCE(MAX(sequence),0)+1 FROM website_revisions WHERE website_id=?", site.ID).Scan(&sequence); err != nil {
-		return err
-	}
+	sequence := currentRevision + 1
 	site.Revision = sequence
 	snapshot, _ := json.Marshal(site)
 	if _, err = tx.Exec("INSERT INTO website_revisions(id,website_id,sequence,configuration_json,created_by,created_at) VALUES(?,?,?,?,?,?)", token(18), site.ID, sequence, snapshot, accountID, now); err != nil {
@@ -286,7 +300,7 @@ func (a *app) processWebsiteJob() {
 			err = os.MkdirAll(dir, 0700)
 		}
 		if err == nil {
-			err = os.WriteFile(filepath.Join(dir, site.ID+".caddy"), []byte(renderCaddyWebsite(*site)), 0600)
+			err = writeAtomicPath(filepath.Join(dir, site.ID+".caddy"), []byte(renderCaddyWebsite(*site)), 0600)
 		}
 		if err != nil {
 			state = "failed"
@@ -300,12 +314,13 @@ func (a *app) processWebsiteJob() {
 
 func renderCaddyWebsite(site managedWebsite) string {
 	if !site.Enabled {
-		return fmt.Sprintf("# disabled website %s (%s)\n", site.Name, strings.Join(site.Domains, ", "))
+		name := strings.NewReplacer("\r", " ", "\n", " ").Replace(site.Name)
+		return fmt.Sprintf("# disabled website %s (%s)\n", name, strings.Join(site.Domains, ", "))
 	}
 	target := site.DocumentRoot
-	directive := "root * " + target + "\n\tfile_server"
+	directive := "root * " + strconv.Quote(target) + "\n\tfile_server"
 	if site.Kind == "proxy" {
-		directive = "reverse_proxy " + site.Upstream
+		directive = "reverse_proxy " + strconv.Quote(site.Upstream)
 	}
 	return fmt.Sprintf("%s {\n\t%s\n}\n", strings.Join(site.Domains, ", "), directive)
 }

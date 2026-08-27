@@ -217,12 +217,13 @@ func TestServiceActionUsesStructuredArguments(t *testing.T) {
 	bin := t.TempDir()
 	logPath := filepath.Join(bin, "args.log")
 	script := filepath.Join(bin, "systemctl")
-	body := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$WARDEN_TEST_ARGS\"\nexit 0\n"
+	body := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + logPath + "\nexit 0\n"
 	if err := os.WriteFile(script, []byte(body), 0755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("WARDEN_TEST_ARGS", logPath)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	originalDirs := systemExecutableDirs
+	systemExecutableDirs = []string{bin}
+	t.Cleanup(func() { systemExecutableDirs = originalDirs })
 	if _, err := actionService(adminActionRequest{Action: "restart", Name: "nginx.service"}); err != nil {
 		t.Fatal(err)
 	}
