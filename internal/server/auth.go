@@ -47,6 +47,8 @@ type authStore struct {
 	secure       bool
 }
 
+const maxSessionsPerAccount = 32
+
 func newAuth(accounts *accountStore, secure bool, configDir string) *authStore {
 	a := &authStore{sessions: map[string]session{}, failures: map[string][]time.Time{}, challenges: map[string]loginChallenge{}, accounts: accounts, sessionsPath: filepath.Join(configDir, "sessions.json"), secure: secure}
 	_ = a.loadSessions()
@@ -94,6 +96,26 @@ func (a *authStore) createSession(w http.ResponseWriter, r *http.Request, accoun
 	now := time.Now().UTC()
 	s := session{AccountID: accountID, IdentityID: identityID, CSRF: csrf, Created: now, Expires: now.Add(12 * time.Hour), RemoteIP: clientIP(r), UserAgent: strings.TrimSpace(r.UserAgent())}
 	a.mu.Lock()
+	for id, existing := range a.sessions {
+		if now.After(existing.Expires) {
+			delete(a.sessions, id)
+		}
+	}
+	type candidate struct {
+		id      string
+		created time.Time
+	}
+	owned := []candidate{}
+	for id, existing := range a.sessions {
+		if existing.AccountID == accountID {
+			owned = append(owned, candidate{id, existing.Created})
+		}
+	}
+	sort.Slice(owned, func(i, j int) bool { return owned[i].created.Before(owned[j].created) })
+	for len(owned) >= maxSessionsPerAccount {
+		delete(a.sessions, owned[0].id)
+		owned = owned[1:]
+	}
 	a.sessions[sid] = s
 	delete(a.failures, clientIP(r))
 	err := a.persistSessionsLocked()
@@ -163,6 +185,18 @@ func (a *authStore) get(r *http.Request) (session, bool) {
 	}
 	acct, ok := a.accounts.accountByID(s.AccountID)
 	if !ok || !acct.Enabled {
+		delete(a.sessions, c.Value)
+		_ = a.persistSessionsLocked()
+		return session{}, false
+	}
+	identityOK := false
+	for _, identity := range acct.Identities {
+		if identity.ID == s.IdentityID && identity.Enabled {
+			identityOK = true
+			break
+		}
+	}
+	if !identityOK {
 		delete(a.sessions, c.Value)
 		_ = a.persistSessionsLocked()
 		return session{}, false
