@@ -27,6 +27,8 @@ type oauthStateStore struct {
 	states map[string]oauthState
 }
 
+const maxOAuthStates = 128
+
 func newOAuthStateStore() *oauthStateStore { return &oauthStateStore{states: map[string]oauthState{}} }
 func (s *oauthStateStore) put(v oauthState) string {
 	id := token(32)
@@ -36,6 +38,12 @@ func (s *oauthStateStore) put(v oauthState) string {
 	for k, st := range s.states {
 		if st.Expires.Before(now) {
 			delete(s.states, k)
+		}
+	}
+	for len(s.states) >= maxOAuthStates {
+		for k := range s.states {
+			delete(s.states, k)
+			break
 		}
 	}
 	s.states[id] = v
@@ -200,6 +208,9 @@ func exchangeGoogleCode(ctx context.Context, cfg googleAuthConfig, secret, code,
 	}
 	if strings.TrimSpace(profile.Sub) == "" {
 		return googleProfile{}, errors.New("Google profile has no subject")
+	}
+	if strings.TrimSpace(profile.Email) == "" || !profile.EmailVerified {
+		return googleProfile{}, errors.New("Google profile email is not verified")
 	}
 	return profile, nil
 }

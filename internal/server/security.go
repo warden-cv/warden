@@ -32,7 +32,7 @@ func (a *app) loginTOTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "too many attempts", 429)
 		return
 	}
-	c, ok := a.auth.getChallenge(r, q.Challenge)
+	c, ok := a.auth.takeChallenge(r, q.Challenge)
 	if !ok {
 		http.Error(w, "invalid or expired two-factor challenge", 401)
 		return

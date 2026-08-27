@@ -149,17 +149,16 @@ func (a *authStore) beginChallenge(r *http.Request, accountID, identityID string
 	return id
 }
 
-func (a *authStore) getChallenge(r *http.Request, id string) (loginChallenge, bool) {
+func (a *authStore) takeChallenge(r *http.Request, id string) (loginChallenge, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	c, ok := a.challenges[id]
+	delete(a.challenges, id)
 	if !ok || time.Now().After(c.Expires) || c.IP != clientIP(r) {
-		delete(a.challenges, id)
 		return loginChallenge{}, false
 	}
 	return c, true
 }
-func (a *authStore) consumeChallenge(id string) { a.mu.Lock(); delete(a.challenges, id); a.mu.Unlock() }
 
 func (a *authStore) logout(w http.ResponseWriter, r *http.Request) {
 	if c, e := r.Cookie("warden_session"); e == nil {

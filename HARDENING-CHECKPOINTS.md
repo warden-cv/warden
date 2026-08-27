@@ -483,7 +483,7 @@ Reviewer:
 | BH00 | Complete | Route registry and threat-model baseline |
 | BH01 | Complete | Bounded API bodies, encoding rejection and response headers |
 | BH02 | Complete | Bounded sessions and identity-state revalidation |
-| BH03 | Planned | Not started |
+| BH03 | Complete | Single-use MFA/OAuth state and verified Google identity |
 | BH04 | Planned | Not started |
 | BH05 | Planned | Not started |
 | BH06 | Planned | Not started |
