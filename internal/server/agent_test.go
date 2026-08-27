@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -57,6 +58,50 @@ func TestAgentDiagnosticRedactsCredential(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(got), []byte("[redacted]")) {
 		t.Fatal("diagnostic did not retain useful redaction marker")
+	}
+}
+
+func TestAgentProviderEventsAreBoundedAndRedacted(t *testing.T) {
+	const key = "sk-provider-secret"
+	raw := map[string]any{
+		"type": "tool",
+		"data": map[string]any{
+			"apiKey": key,
+			"text":   "provider repeated " + key,
+			"long":   string(bytes.Repeat([]byte("x"), 70000)),
+		},
+	}
+	clean := sanitizeAgentProviderValue(raw, key, 0)
+	b, err := json.Marshal(clean)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(b, []byte(key)) {
+		t.Fatalf("provider event leaked credential: %s", b)
+	}
+	if !bytes.Contains(b, []byte("[redacted]")) || !bytes.Contains(b, []byte("[truncated]")) {
+		t.Fatalf("provider event was not visibly bounded/redacted: %s", b)
+	}
+}
+
+func TestAgentRunRejectsHostileProviderSessionID(t *testing.T) {
+	a, _, sess, cookie := permissionTestApp(t)
+	files, err := newFiles(a.cfg.FileRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.files = files
+	if err := a.accounts.setRole("user", "User", []string{"agent.run", "ai.use", "ai.credentials"}); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"workspace":"/","prompt":"test","session":"../../escape"}`)
+	req := httptest.NewRequest(http.MethodPost, "http://warden/api/agent/run", bytes.NewReader(body))
+	req.AddCookie(cookie)
+	req.Header.Set("X-Warden-CSRF", sess.CSRF)
+	rec := httptest.NewRecorder()
+	a.agentRun(rec, req)
+	if rec.Code != http.StatusBadRequest || !bytes.Contains(rec.Body.Bytes(), []byte("invalid provider session")) {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
 	}
 }
 

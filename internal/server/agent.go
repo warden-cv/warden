@@ -124,6 +124,10 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "prompt is too large", http.StatusBadRequest)
 		return
 	}
+	if q.Session != "" && !validAgentSessionID(strings.TrimSpace(q.Session)) {
+		http.Error(w, "invalid provider session", http.StatusBadRequest)
+		return
+	}
 	workspace, err := a.files.resolve(q.Workspace, false)
 	if err != nil {
 		http.Error(w, "invalid workspace: "+err.Error(), http.StatusBadRequest)
@@ -276,13 +280,13 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		var raw map[string]any
 		if json.Unmarshal(line, &raw) == nil {
 			collectAgentUsage(raw, &inputTokens, &outputTokens, &cost)
-			if id, _ := raw["sessionID"].(string); id != "" {
+			if id, _ := raw["sessionID"].(string); validAgentSessionID(id) {
 				sessionID = id
 			}
 			if agentEventText(raw) != "" {
 				sawAssistantText = true
 			}
-			writeAgentEvent(w, flusher, "opencode", raw)
+			writeAgentEvent(w, flusher, "opencode", sanitizeAgentProviderValue(raw, key, 0))
 		} else {
 			writeAgentEvent(w, flusher, "output", map[string]any{"text": string(line)})
 		}
@@ -385,23 +389,34 @@ func agentEventText(raw map[string]any) string {
 }
 
 func recoverOpenCodeSession(ctx context.Context, binary, sessionID, workspace string, env []string) (string, uint64, uint64, float64, error) {
+	if !validAgentSessionID(sessionID) {
+		return "", 0, 0, 0, errors.New("invalid provider session")
+	}
 	cmd := exec.CommandContext(ctx, binary, "export", sessionID)
 	cmd.Dir = workspace
 	cmd.Env = env
-	out, err := cmd.Output()
+	out := &boundedCommandOutput{limit: 8 << 20}
+	errOut := &boundedCommandOutput{limit: 256 << 10}
+	cmd.Stdout = out
+	cmd.Stderr = errOut
+	err := cmd.Run()
+	if out.truncated || errOut.truncated {
+		return "", 0, 0, 0, errors.New("session export exceeded output limit")
+	}
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", 0, 0, 0, errors.New(strings.TrimSpace(string(ee.Stderr)))
+		message := strings.TrimSpace(errOut.String())
+		if message == "" {
+			message = err.Error()
 		}
-		return "", 0, 0, 0, err
+		return "", 0, 0, 0, errors.New(message)
 	}
 	// Older OpenCode releases briefly prefixed export JSON with a status line.
-	start := strings.IndexByte(string(out), '{')
+	start := strings.IndexByte(out.String(), '{')
 	if start < 0 {
 		return "", 0, 0, 0, errors.New("session export did not contain JSON")
 	}
 	var exported any
-	if err := json.Unmarshal(out[start:], &exported); err != nil {
+	if err := json.Unmarshal(out.Bytes()[start:], &exported); err != nil {
 		return "", 0, 0, 0, err
 	}
 	texts := exportAssistantTexts(exported)
@@ -458,6 +473,50 @@ func sanitizeAgentDiagnostic(message, secret string) string {
 		message = message[len(message)-12000:]
 	}
 	return message
+}
+
+func sanitizeAgentProviderValue(v any, secret string, depth int) any {
+	if depth > 32 {
+		return "[depth limit]"
+	}
+	switch x := v.(type) {
+	case string:
+		if secret != "" {
+			x = strings.ReplaceAll(x, secret, "[redacted]")
+		}
+		if len(x) > 65536 {
+			x = x[:65536] + "[truncated]"
+		}
+		return x
+	case []any:
+		if len(x) > 1024 {
+			x = x[:1024]
+		}
+		out := make([]any, len(x))
+		for i := range x {
+			out[i] = sanitizeAgentProviderValue(x[i], secret, depth+1)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any)
+		count := 0
+		for k, value := range x {
+			if count >= 256 {
+				out["_truncated"] = true
+				break
+			}
+			lower := strings.ToLower(k)
+			if strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "credential") || strings.Contains(lower, "authorization") || strings.Contains(lower, "apikey") || strings.Contains(lower, "api_key") {
+				out[k] = "[redacted]"
+			} else {
+				out[k] = sanitizeAgentProviderValue(value, secret, depth+1)
+			}
+			count++
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func writeAgentEvent(w http.ResponseWriter, f http.Flusher, kind string, data any) {

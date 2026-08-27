@@ -489,7 +489,7 @@ Reviewer:
 | BH06 | Complete | Atomic extraction, archive limits and special-file refusal |
 | BH07 | Complete | Bounded Git execution, hook isolation and hostile-path tests |
 | BH08 | Complete | PTY process-group cleanup, frame/env/session resource bounds |
-| BH09 | Planned | Not started |
+| BH09 | Complete | Bounded/redacted provider events and session-export limits |
 | BH10 | Planned | Not started |
 | BH11 | Planned | Not started |
 | BH12 | Planned | Not started |
