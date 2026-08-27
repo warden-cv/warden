@@ -1,15 +1,40 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 )
+
+const maxGitOutputBytes = 4 << 20
+
+type boundedCommandOutput struct {
+	bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (w *boundedCommandOutput) Write(p []byte) (int, error) {
+	n := len(p)
+	remaining := w.limit - w.Len()
+	if remaining > 0 {
+		if remaining > len(p) {
+			remaining = len(p)
+		}
+		_, _ = w.Buffer.Write(p[:remaining])
+	}
+	if remaining < len(p) {
+		w.truncated = true
+	}
+	return n, nil
+}
 
 type sourceControlEntry struct {
 	Path      string `json:"path"`
@@ -161,17 +186,25 @@ func runGit(root string, args ...string) (string, error) {
 func runGitBytes(root string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-	out, err := cmd.CombinedOutput()
+	prefix := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.pager=cat", "-c", "diff.external=", "-C", root}
+	cmd := exec.CommandContext(ctx, "git", append(prefix, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_PAGER=cat", "GIT_EXTERNAL_DIFF=", "GIT_TERMINAL_PROMPT=0")
+	out := &boundedCommandOutput{limit: maxGitOutputBytes}
+	cmd.Stdout = out
+	cmd.Stderr = out
+	err := cmd.Run()
 	if ctx.Err() != nil {
 		return nil, errors.New("git command timed out")
 	}
+	if out.truncated {
+		return nil, errors.New("git output exceeded 4 MiB limit")
+	}
 	if err != nil {
-		msg := strings.TrimSpace(string(out))
+		msg := strings.TrimSpace(out.String())
 		if msg == "" {
 			msg = err.Error()
 		}
 		return nil, errors.New(msg)
 	}
-	return out, nil
+	return out.Bytes(), nil
 }

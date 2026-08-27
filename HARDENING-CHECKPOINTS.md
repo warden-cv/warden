@@ -487,7 +487,7 @@ Reviewer:
 | BH04 | Complete | Route capability matrix and live authority revalidation |
 | BH05 | Complete | Fail-closed proxy parsing, scheme-aware origin and CSRF tests |
 | BH06 | Complete | Atomic extraction, archive limits and special-file refusal |
-| BH07 | Planned | Not started |
+| BH07 | Complete | Bounded Git execution, hook isolation and hostile-path tests |
 | BH08 | Planned | Not started |
 | BH09 | Planned | Not started |
 | BH10 | Planned | Not started |
