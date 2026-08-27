@@ -480,7 +480,7 @@ Reviewer:
 
 | Checkpoint | Status | Evidence |
 | --- | --- | --- |
-| BH00 | Planned | Not started |
+| BH00 | Complete | Route registry and threat-model baseline |
 | BH01 | Planned | Not started |
 | BH02 | Planned | Not started |
 | BH03 | Planned | Not started |
