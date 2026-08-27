@@ -34,6 +34,7 @@
   </section>
 </div>
 <div id="app-view" class="app-shell" hidden>
+  <a class="skip-link" href="#workspace-main">Skip to workspace</a>
   <aside class="sidebar">
     <div class="brand"><span class="brand-mark">W</span><span>Warden</span></div>
     <nav class="nav-stack" aria-label="Primary">
@@ -55,7 +56,7 @@
     </div>
   </aside>
 
-  <main class="workspace">
+  <main class="workspace" id="workspace-main" tabindex="-1">
     <header class="topbar">
       <div><p class="eyebrow" id="section-kicker">Live system</p><h2 id="section-title">Overview</h2></div>
       <div class="topbar-actions"><span id="clock" class="clock"></span><span class="version-chip" id="version-chip">v0.1.0</span></div>
