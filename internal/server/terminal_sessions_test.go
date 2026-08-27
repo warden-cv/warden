@@ -32,3 +32,26 @@ func TestTerminalSessionsAreAccountOwnedAndBounded(t *testing.T) {
 		t.Fatalf("scrollback was not bounded: %d, %v", len(items[0].Scrollback), err)
 	}
 }
+
+func TestTerminalSessionCountIsBounded(t *testing.T) {
+	db, err := openDatabase(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	files, err := newFiles(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{db: db, files: files}
+	for i := 0; i < maxTerminalSessionsPerAccount; i++ {
+		s := terminalSession{ID: "terminal-" + string(rune('a'+i)), CWD: "/"}
+		if err := a.saveTerminalSession("account-a", &s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	extra := terminalSession{ID: "terminal-overflow", CWD: "/"}
+	if err := a.saveTerminalSession("account-a", &extra); err == nil {
+		t.Fatal("created terminal session beyond account cap")
+	}
+}

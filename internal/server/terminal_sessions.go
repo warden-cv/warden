@@ -20,6 +20,19 @@ type terminalSession struct {
 	Scrollback string `json:"scrollback,omitempty"`
 }
 
+const maxTerminalSessionsPerAccount = 16
+
+func (a *app) ensureTerminalSessionCapacity(accountID, id string) error {
+	var exists, count int
+	if err := a.db.QueryRow("SELECT EXISTS(SELECT 1 FROM terminal_sessions WHERE account_id=? AND id=?), COUNT(*) FROM terminal_sessions WHERE account_id=?", accountID, id, accountID).Scan(&exists, &count); err != nil {
+		return err
+	}
+	if exists == 0 && count >= maxTerminalSessionsPerAccount {
+		return errors.New("terminal session limit reached")
+	}
+	return nil
+}
+
 func (a *app) terminalSessionsAPI(w http.ResponseWriter, r *http.Request) {
 	sess, ok := a.auth.get(r)
 	if !ok {
@@ -70,6 +83,9 @@ func (a *app) saveTerminalSession(accountID string, s *terminalSession) error {
 	if err != nil {
 		return errors.New("invalid terminal cwd")
 	}
+	if err := a.ensureTerminalSessionCapacity(accountID, s.ID); err != nil {
+		return err
+	}
 	now := time.Now().UnixMilli()
 	if s.CreatedAt <= 0 {
 		s.CreatedAt = now
@@ -116,6 +132,9 @@ func (a *app) loadTerminalSessions(accountID string) ([]terminalSession, error) 
 }
 
 func (a *app) connectTerminalSession(accountID, id, cwd string) error {
+	if err := a.ensureTerminalSessionCapacity(accountID, id); err != nil {
+		return err
+	}
 	now := time.Now().UnixMilli()
 	_, err := a.db.Exec(`INSERT INTO terminal_sessions(account_id,id,title,cwd,state,created_at,updated_at)
 		VALUES(?,?, 'Terminal',?,'connected',?,?) ON CONFLICT(account_id,id) DO UPDATE SET cwd=excluded.cwd,state='connected',updated_at=excluded.updated_at,closed_at=NULL`, accountID, id, cwd, now, now)

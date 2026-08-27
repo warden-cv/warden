@@ -24,6 +24,8 @@ import (
 
 const wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+const maxTerminalFrameBytes = 64 << 10
+
 type ptyHooks struct {
 	Output func([]byte)
 }
@@ -112,18 +114,30 @@ func servePTY(w http.ResponseWriter, r *http.Request, cwd string, extraEnv map[s
 		}
 	}
 end:
-	_ = cmd.Process.Kill()
+	terminateProcessGroup(cmd.Process.Pid)
 	_ = cmd.Wait()
 	<-done
 	return nil
 }
 
+func terminateProcessGroup(pid int) {
+	if pid <= 0 {
+		return
+	}
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+}
+
 func mergedEnvironment(base []string, layers ...map[string]string) []string {
+	blocked := map[string]bool{"LD_PRELOAD": true, "LD_LIBRARY_PATH": true, "BASH_ENV": true, "ENV": true}
 	values := map[string]string{}
 	order := []string{}
 	for _, item := range base {
 		if i := strings.IndexByte(item, '='); i > 0 {
 			k := item[:i]
+			if blocked[k] {
+				continue
+			}
 			if _, ok := values[k]; !ok {
 				order = append(order, k)
 			}
@@ -132,6 +146,9 @@ func mergedEnvironment(base []string, layers ...map[string]string) []string {
 	}
 	for _, layer := range layers {
 		for k, v := range layer {
+			if blocked[k] || strings.ContainsAny(k+v, "\x00\r\n") {
+				continue
+			}
 			if _, ok := values[k]; !ok {
 				order = append(order, k)
 			}
@@ -330,32 +347,40 @@ func readWS(r *bufio.Reader) (byte, []byte, error) {
 		return 0, nil, e
 	}
 	op := h[0] & 0xf
+	if h[0]&0x70 != 0 || h[0]&0x80 == 0 {
+		return 0, nil, errors.New("fragmented or reserved websocket frame")
+	}
 	masked := h[1]&0x80 != 0
+	if !masked {
+		return 0, nil, errors.New("client websocket frame must be masked")
+	}
 	n := uint64(h[1] & 0x7f)
 	if n == 126 {
 		var b [2]byte
-		io.ReadFull(r, b[:])
+		if _, err := io.ReadFull(r, b[:]); err != nil {
+			return 0, nil, err
+		}
 		n = uint64(binary.BigEndian.Uint16(b[:]))
 	} else if n == 127 {
 		var b [8]byte
-		io.ReadFull(r, b[:])
+		if _, err := io.ReadFull(r, b[:]); err != nil {
+			return 0, nil, err
+		}
 		n = binary.BigEndian.Uint64(b[:])
 	}
-	if n > 1<<20 {
+	if n > maxTerminalFrameBytes {
 		return 0, nil, errors.New("frame too large")
 	}
 	var mask [4]byte
-	if masked {
-		io.ReadFull(r, mask[:])
+	if _, err := io.ReadFull(r, mask[:]); err != nil {
+		return 0, nil, err
 	}
 	p := make([]byte, n)
 	if _, e := io.ReadFull(r, p); e != nil {
 		return 0, nil, e
 	}
-	if masked {
-		for i := range p {
-			p[i] ^= mask[i%4]
-		}
+	for i := range p {
+		p[i] ^= mask[i%4]
 	}
 	return op, p, nil
 }

@@ -488,7 +488,7 @@ Reviewer:
 | BH05 | Complete | Fail-closed proxy parsing, scheme-aware origin and CSRF tests |
 | BH06 | Complete | Atomic extraction, archive limits and special-file refusal |
 | BH07 | Complete | Bounded Git execution, hook isolation and hostile-path tests |
-| BH08 | Planned | Not started |
+| BH08 | Complete | PTY process-group cleanup, frame/env/session resource bounds |
 | BH09 | Planned | Not started |
 | BH10 | Planned | Not started |
 | BH11 | Planned | Not started |
