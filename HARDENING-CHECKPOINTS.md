@@ -494,7 +494,7 @@ Reviewer:
 | BH11 | Complete | Fixed system binaries, bounded commands and revision-safe website publishing |
 | BH12 | Complete | Versioned audit envelopes, request correlation, denial evidence and secret-canary redaction |
 | BH13 | Complete | Historical migration matrix, integrity/future-schema refusal, concurrent startup and encrypted backup drill |
-| BH14 | Planned | Not started |
+| BH14 | Complete | Six retained fuzz targets, 32-worker stress case, race gate and published resource ceilings |
 | BH15 | Planned | Not started |
 | BH16 | Planned | Not started |
 | BH17 | Planned | Not started |
