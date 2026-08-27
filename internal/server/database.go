@@ -323,6 +323,14 @@ func openDatabase(configDir string) (*sql.DB, error) {
 		db.Close()
 		return nil, err
 	}
+	var integrity string
+	if err := db.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&integrity); err != nil || integrity != "ok" {
+		db.Close()
+		if err != nil {
+			return nil, fmt.Errorf("check Warden database integrity: %w", err)
+		}
+		return nil, fmt.Errorf("check Warden database integrity: %s", integrity)
+	}
 	return db, nil
 }
 
@@ -345,20 +353,33 @@ func migrateDatabase(ctx context.Context, db *sql.DB) error {
 		if migration.version <= current {
 			continue
 		}
-		tx, err := db.BeginTx(ctx, nil)
+		conn, err := db.Conn(ctx)
 		if err != nil {
+			return fmt.Errorf("reserve migration connection %d: %w", migration.version, err)
+		}
+		if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+			conn.Close()
 			return fmt.Errorf("begin migration %d: %w", migration.version, err)
 		}
-		if _, err = tx.ExecContext(ctx, migration.sql); err == nil {
-			_, err = tx.ExecContext(ctx, "INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)", migration.version, migration.name, time.Now().UnixMilli())
+		var lockedCurrent int
+		err = conn.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&lockedCurrent)
+		if err == nil && lockedCurrent < migration.version {
+			_, err = conn.ExecContext(ctx, migration.sql)
+		}
+		if err == nil && lockedCurrent < migration.version {
+			_, err = conn.ExecContext(ctx, "INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)", migration.version, migration.name, time.Now().UnixMilli())
 		}
 		if err != nil {
-			tx.Rollback()
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+			conn.Close()
 			return fmt.Errorf("apply migration %d (%s): %w", migration.version, migration.name, err)
 		}
-		if err := tx.Commit(); err != nil {
+		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+			conn.Close()
 			return fmt.Errorf("commit migration %d: %w", migration.version, err)
 		}
+		conn.Close()
+		current = migration.version
 	}
 	return nil
 }
