@@ -22,4 +22,4 @@ The campaign risk register begins with these retained limits:
 - Google availability and identity assertions depend on the provider;
 - filesystem confinement must continue to defend against platform-specific
   links, races and special files;
-- Warden remains a development build until BH17 closes the campaign.
+- BH17 closed the initial hardening campaign; retained risks and frozen candidate guarantees live in `FINAL-REVIEW.md`.

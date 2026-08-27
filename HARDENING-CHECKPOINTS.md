@@ -497,4 +497,4 @@ Reviewer:
 | BH14 | Complete | Six retained fuzz targets, 32-worker stress case, race gate and published resource ceilings |
 | BH15 | Complete | Hostile-display smoke test, skip navigation, visible focus, reduced motion and responsive frontend audit |
 | BH16 | Complete | Least-privilege pinned workflow, dependency inventory, six archives, checksums and full-history binary scan |
-| BH17 | Planned | Not started |
+| BH17 | Complete | Unprivileged deployment smoke, proxy contract suite, final claim audit, disclosure process and retained-risk freeze |

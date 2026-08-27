@@ -57,11 +57,11 @@ Warden is intentionally a privileged application. This first slice establishes r
 - privileged actions are written to `warden-audit.log` with mode `0600`;
 - static responses receive restrictive CSP/frame/referrer/content-type headers.
 
-This is not yet a completed security audit. Before an Internet-facing release, Warden still needs the planned adversarial security corpus, session revocation UX, optional 2FA, terminal resize messages, stronger audit structure/rotation, and platform/deployment hardening.
+The BH00-BH17 hardening campaign is complete. Its executable evidence, limits and retained risks are recorded in `HARDENING-CHECKPOINTS.md`, `docs/security/` and the public Battle Tested page. This is evidence for the tested candidate, not a universal claim that Warden or its deployment environment is vulnerability-free.
 
 ## Product direction
 
-Warden v1 focuses on authenticated monitoring, a full filesystem explorer, workspace-oriented code/text editing with bounded Git source control, and an interactive PTY terminal. The System submenu also provides structured administration for certificates, cron, Docker, fail2ban, firewall, services, SSH and users. These pages intentionally present typed state rather than raw command output and now expose the corresponding privileged actions through authenticated/CSRF-protected APIs with audit events. This remains a development build: do not expose it to the public Internet until the planned auth/role/security campaign is complete. Website management remains a later module.
+Warden v1 focuses on authenticated monitoring, a full filesystem explorer, workspace-oriented code/text editing with bounded Git source control, interactive PTY terminals, durable coding-agent sessions, alerts and revisioned website management. The System submenu provides structured administration for certificates, cron, Docker, fail2ban, firewall, services, SSH and users. Internet-facing deployments still require a dedicated OS account, TLS reverse proxy, tested backups and deliberate capability assignment.
 
 
 ## Install
