@@ -274,6 +274,16 @@ var databaseMigrations = []databaseMigration{
 			detail TEXT NOT NULL DEFAULT ''
 		);`,
 	},
+	{
+		version: 7,
+		name:    "structured audit evidence",
+		sql: `ALTER TABLE audit_events ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1;
+		ALTER TABLE audit_events ADD COLUMN request_id TEXT NOT NULL DEFAULT '';
+		ALTER TABLE audit_events ADD COLUMN action TEXT NOT NULL DEFAULT '';
+		ALTER TABLE audit_events ADD COLUMN target TEXT NOT NULL DEFAULT '';
+		ALTER TABLE audit_events ADD COLUMN outcome TEXT NOT NULL DEFAULT 'success';
+		CREATE INDEX audit_events_request_idx ON audit_events(request_id);`,
+	},
 }
 
 func openDatabase(configDir string) (*sql.DB, error) {

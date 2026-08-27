@@ -112,22 +112,35 @@ func requiredAdminCapability(kind, method string) string {
 }
 
 func (a *app) collectAudit() adminEnvelope {
-	rows, dbErr := a.db.Query("SELECT created_at,event,account_id,identity_id,remote_ip,detail FROM audit_events ORDER BY created_at DESC LIMIT 500")
+	type auditView struct {
+		SchemaVersion int    `json:"schemaVersion"`
+		RequestID     string `json:"requestId"`
+		Action        string `json:"action"`
+		Target        string `json:"target"`
+		Outcome       string `json:"outcome"`
+		AccountID     string `json:"accountId"`
+		IdentityID    string `json:"identityId"`
+		RemoteIP      string `json:"remoteIp"`
+		Detail        string `json:"detail"`
+		CreatedAt     int64  `json:"createdAt"`
+	}
+	rows, dbErr := a.db.Query("SELECT schema_version,request_id,action,target,outcome,account_id,identity_id,remote_ip,detail,created_at FROM audit_events ORDER BY created_at DESC LIMIT 500")
 	if dbErr == nil {
 		defer rows.Close()
 		lines := []string{}
+		events := []auditView{}
 		for rows.Next() {
-			var created int64
-			var event, accountID, identityID, remoteIP, detail string
-			if err := rows.Scan(&created, &event, &accountID, &identityID, &remoteIP, &detail); err != nil {
+			var event auditView
+			if err := rows.Scan(&event.SchemaVersion, &event.RequestID, &event.Action, &event.Target, &event.Outcome, &event.AccountID, &event.IdentityID, &event.RemoteIP, &event.Detail, &event.CreatedAt); err != nil {
 				return adminEnvelope{Kind: "audit", Available: false, Message: "SQLite audit history is unavailable."}
 			}
-			lines = append(lines, fmt.Sprintf("%s event=%s account=%s identity=%s ip=%s %s", time.UnixMilli(created).UTC().Format(time.RFC3339), event, accountID, identityID, remoteIP, detail))
+			events = append(events, event)
+			lines = append(lines, fmt.Sprintf("%s action=%s target=%s outcome=%s account=%s identity=%s request=%s %s", time.UnixMilli(event.CreatedAt).UTC().Format(time.RFC3339), event.Action, event.Target, event.Outcome, event.AccountID, event.IdentityID, event.RequestID, event.Detail))
 		}
 		for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
 			lines[i], lines[j] = lines[j], lines[i]
 		}
-		return adminEnvelope{Kind: "audit", Available: true, Data: map[string]any{"path": filepath.Join(a.cfg.ConfigDir, "warden.db"), "lines": lines}}
+		return adminEnvelope{Kind: "audit", Available: true, Data: map[string]any{"path": filepath.Join(a.cfg.ConfigDir, "warden.db"), "lines": lines, "events": events, "limit": 500, "retention": 100000, "tamperProof": false}}
 	}
 	path := filepath.Join(a.cfg.ConfigDir, "audit.log")
 	f, err := os.Open(path)

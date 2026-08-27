@@ -492,7 +492,7 @@ Reviewer:
 | BH09 | Complete | Bounded/redacted provider events and session-export limits |
 | BH10 | Complete | Atomic key creation, fail-closed secrets and destructive reauthentication |
 | BH11 | Complete | Fixed system binaries, bounded commands and revision-safe website publishing |
-| BH12 | Planned | Not started |
+| BH12 | Complete | Versioned audit envelopes, request correlation, denial evidence and secret-canary redaction |
 | BH13 | Planned | Not started |
 | BH14 | Planned | Not started |
 | BH15 | Planned | Not started |

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -206,16 +207,36 @@ func (a *app) sessionPayload(s session) map[string]any {
 
 func (a *app) auditEvent(r *http.Request, event, detail string) {
 	accountID, identityID := "-", "-"
-	if s, ok := a.auth.get(r); ok {
-		accountID, identityID = s.AccountID, s.IdentityID
+	if a.auth != nil {
+		if s, ok := a.auth.get(r); ok {
+			accountID, identityID = s.AccountID, s.IdentityID
+		}
 	}
-	if strings.TrimSpace(detail) != "" {
-		detail = " " + strings.TrimSpace(detail)
+	detail = redactAuditDetail(detail)
+	outcome := "success"
+	if strings.Contains(event, "failed") || strings.Contains(event, "error") || strings.Contains(event, "denied") {
+		outcome = "denied"
 	}
-	a.audit.Printf("event=%s account=%s identity=%s ip=%s%s", event, accountID, identityID, clientIP(r), detail)
+	target := r.URL.Path
+	requestID := requestIDFrom(r)
+	if a.audit != nil {
+		a.audit.Printf("schema=1 request=%s action=%s target=%s outcome=%s account=%s identity=%s ip=%s detail=%q", requestID, event, target, outcome, accountID, identityID, clientIP(r), detail)
+	}
 	if a.db != nil {
-		_, _ = a.db.Exec("INSERT INTO audit_events(event,account_id,identity_id,remote_ip,detail,created_at) VALUES(?,?,?,?,?,?)", event, accountID, identityID, clientIP(r), strings.TrimSpace(detail), time.Now().UnixMilli())
+		_, _ = a.db.Exec("INSERT INTO audit_events(event,account_id,identity_id,remote_ip,detail,created_at,schema_version,request_id,action,target,outcome) VALUES(?,?,?,?,?,?,1,?,?,?,?)", event, accountID, identityID, clientIP(r), detail, time.Now().UnixMilli(), requestID, event, target, outcome)
+		_, _ = a.db.Exec("DELETE FROM audit_events WHERE id <= COALESCE((SELECT id FROM audit_events ORDER BY id DESC LIMIT 1 OFFSET 100000),0)")
 	}
+}
+
+var auditSecretPattern = regexp.MustCompile(`(?i)(password|token|secret|credential|authorization|recovery|totp|api[_-]?key|session)\s*=\s*("[^"]*"|[^\s]+)`)
+
+func redactAuditDetail(detail string) string {
+	detail = strings.ToValidUTF8(strings.TrimSpace(detail), "�")
+	detail = auditSecretPattern.ReplaceAllString(detail, "$1=[redacted]")
+	if len(detail) > 4096 {
+		detail = detail[:4096] + "[truncated]"
+	}
+	return detail
 }
 
 func (a *app) exportConfiguration(w http.ResponseWriter, r *http.Request) {
@@ -334,14 +355,17 @@ func (a *app) require(capability string, next http.HandlerFunc) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		s, ok := a.auth.get(r)
 		if !ok {
+			a.auditEvent(r, "authorization_denied", "reason=unauthenticated")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		if capability != "" && !a.accounts.hasCapability(s.AccountID, capability) {
+			a.auditEvent(r, "authorization_denied", "capability="+capability)
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Warden-CSRF") != s.CSRF {
+			a.auditEvent(r, "authorization_denied", "reason=csrf")
 			http.Error(w, "csrf", http.StatusForbidden)
 			return
 		}
@@ -365,8 +389,18 @@ func securityHeaders(next http.Handler) http.Handler {
 
 const maxRequestBody = 64 << 20
 
+type requestIDKey struct{}
+
+func requestIDFrom(r *http.Request) string {
+	id, _ := r.Context().Value(requestIDKey{}).(string)
+	return id
+}
+
 func httpBoundary(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := token(12)
+		r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, requestID))
+		w.Header().Set("X-Warden-Request-ID", requestID)
 		if enc := strings.TrimSpace(r.Header.Get("Content-Encoding")); enc != "" && !strings.EqualFold(enc, "identity") {
 			http.Error(w, "unsupported content encoding", http.StatusUnsupportedMediaType)
 			return
