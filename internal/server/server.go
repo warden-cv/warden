@@ -93,7 +93,7 @@ func Run(cfg Config) error {
 	} else {
 		mux.Handle("/", http.FileServer(http.Dir(cfg.StaticDir)))
 	}
-	srv := &http.Server{Addr: cfg.Listen, Handler: securityHeaders(proxyTrust(cfg.TrustProxy, mux)), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second}
+	srv := &http.Server{Addr: cfg.Listen, Handler: securityHeaders(httpBoundary(proxyTrust(cfg.TrustProxy, mux))), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	log.Printf("Warden %s listening on http://%s (root %s)", cfg.Version, cfg.Listen, f.root)
 	return srv.ListenAndServe()
 }
@@ -357,7 +357,24 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		next.ServeHTTP(w, r)
+	})
+}
+
+const maxRequestBody = 64 << 20
+
+func httpBoundary(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if enc := strings.TrimSpace(r.Header.Get("Content-Encoding")); enc != "" && !strings.EqualFold(enc, "identity") {
+			http.Error(w, "unsupported content encoding", http.StatusUnsupportedMediaType)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		}
 		next.ServeHTTP(w, r)
 	})
 }

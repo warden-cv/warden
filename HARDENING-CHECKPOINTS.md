@@ -481,7 +481,7 @@ Reviewer:
 | Checkpoint | Status | Evidence |
 | --- | --- | --- |
 | BH00 | Complete | Route registry and threat-model baseline |
-| BH01 | Planned | Not started |
+| BH01 | Complete | Bounded API bodies, encoding rejection and response headers |
 | BH02 | Planned | Not started |
 | BH03 | Planned | Not started |
 | BH04 | Planned | Not started |
