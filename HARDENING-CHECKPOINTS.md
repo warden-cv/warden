@@ -490,7 +490,7 @@ Reviewer:
 | BH07 | Complete | Bounded Git execution, hook isolation and hostile-path tests |
 | BH08 | Complete | PTY process-group cleanup, frame/env/session resource bounds |
 | BH09 | Complete | Bounded/redacted provider events and session-export limits |
-| BH10 | Planned | Not started |
+| BH10 | Complete | Atomic key creation, fail-closed secrets and destructive reauthentication |
 | BH11 | Planned | Not started |
 | BH12 | Planned | Not started |
 | BH13 | Planned | Not started |

@@ -39,11 +39,36 @@ func loadSecretStore(dir string) (*secretStore, error) {
 		if _, err = rand.Read(key); err != nil {
 			return nil, err
 		}
-		if err = os.WriteFile(keyPath, key, 0600); err != nil {
-			return nil, fmt.Errorf("write master key: %w", err)
+		keyFile, createErr := os.CreateTemp(dir, ".warden-master-key-*")
+		keyTemp := ""
+		if createErr == nil {
+			keyTemp = keyFile.Name()
+			defer os.Remove(keyTemp)
+			createErr = keyFile.Chmod(0600)
+		}
+		if createErr == nil {
+			_, createErr = keyFile.Write(key)
+			if syncErr := keyFile.Sync(); createErr == nil {
+				createErr = syncErr
+			}
+			if closeErr := keyFile.Close(); createErr == nil {
+				createErr = closeErr
+			}
+		}
+		if createErr == nil {
+			createErr = os.Link(keyTemp, keyPath)
+		}
+		if errors.Is(createErr, os.ErrExist) {
+			key, createErr = os.ReadFile(keyPath)
+		}
+		if createErr != nil {
+			return nil, fmt.Errorf("write master key: %w", createErr)
 		}
 	} else if err != nil {
 		return nil, err
+	}
+	if info, err := os.Lstat(keyPath); err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("master.key must be a regular file")
 	}
 	if len(key) != 32 {
 		return nil, errors.New("master.key must contain exactly 32 bytes")
@@ -57,6 +82,12 @@ func loadSecretStore(dir string) (*secretStore, error) {
 			return nil, err
 		}
 	} else if err != nil {
+		return nil, err
+	}
+	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("secrets.json must be a regular file")
+	}
+	if err := os.Chmod(path, 0600); err != nil {
 		return nil, err
 	}
 	s := &secretStore{dir: dir, key: append([]byte(nil), key...)}
