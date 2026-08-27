@@ -486,7 +486,7 @@ Reviewer:
 | BH03 | Complete | Single-use MFA/OAuth state and verified Google identity |
 | BH04 | Complete | Route capability matrix and live authority revalidation |
 | BH05 | Complete | Fail-closed proxy parsing, scheme-aware origin and CSRF tests |
-| BH06 | Planned | Not started |
+| BH06 | Complete | Atomic extraction, archive limits and special-file refusal |
 | BH07 | Planned | Not started |
 | BH08 | Planned | Not started |
 | BH09 | Planned | Not started |

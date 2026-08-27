@@ -13,6 +13,36 @@ import (
 	"strings"
 )
 
+const (
+	maxArchiveEntries        = 10000
+	maxArchiveExpandedBytes  = 2 << 30
+	maxArchiveExpansionRatio = 1000
+)
+
+func validateZip(zr *zip.ReadCloser) error {
+	if len(zr.File) > maxArchiveEntries {
+		return errors.New("archive contains too many entries")
+	}
+	var total uint64
+	for _, zf := range zr.File {
+		total += zf.UncompressedSize64
+		if total > maxArchiveExpandedBytes {
+			return errors.New("archive expands beyond 2 GiB safety limit")
+		}
+		if zf.UncompressedSize64 > 1<<20 && zf.CompressedSize64 > 0 && zf.UncompressedSize64/zf.CompressedSize64 > maxArchiveExpansionRatio {
+			return errors.New("archive entry exceeds expansion-ratio limit")
+		}
+		if zf.Mode()&os.ModeSymlink != 0 || (!zf.FileInfo().IsDir() && !zf.Mode().IsRegular()) {
+			return errors.New("archive contains unsupported special file")
+		}
+		clean := filepath.Clean(filepath.FromSlash(zf.Name))
+		if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+			return errors.New("archive contains unsafe path")
+		}
+	}
+	return nil
+}
+
 func (f *fileAPI) archiveDownload(w http.ResponseWriter, r *http.Request) {
 	paths := r.URL.Query()["path"]
 	if len(paths) == 0 {
@@ -134,8 +164,11 @@ func (f *fileAPI) extract(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	if err = os.MkdirAll(target, 0750); err != nil {
-		http.Error(w, err.Error(), 500)
+	if _, statErr := os.Lstat(target); statErr == nil {
+		http.Error(w, "extraction target already exists", 400)
+		return
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		http.Error(w, statErr.Error(), 500)
 		return
 	}
 	zr, err := zip.OpenReader(src)
@@ -144,28 +177,20 @@ func (f *fileAPI) extract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer zr.Close()
-	if len(zr.File) > 10000 {
-		http.Error(w, "archive contains too many entries", 400)
+	if err = validateZip(zr); err != nil {
+		http.Error(w, err.Error(), 400)
 		return
 	}
-	var total uint64
+	stage, err := os.MkdirTemp(filepath.Dir(target), ".warden-extract-*")
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	defer os.RemoveAll(stage)
 	for _, zf := range zr.File {
-		total += zf.UncompressedSize64
-		if total > 2<<30 {
-			http.Error(w, "archive expands beyond 2 GiB safety limit", 400)
-			return
-		}
-		if zf.Mode()&os.ModeSymlink != 0 {
-			http.Error(w, "symlinks in archives are not extracted", 400)
-			return
-		}
 		clean := filepath.Clean(filepath.FromSlash(zf.Name))
-		if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
-			http.Error(w, "archive contains unsafe path", 400)
-			return
-		}
-		out := filepath.Join(target, clean)
-		if !isWithin(target, out) {
+		out := filepath.Join(stage, clean)
+		if !isWithin(stage, out) {
 			http.Error(w, "archive path escapes extraction directory", 400)
 			return
 		}
@@ -203,6 +228,10 @@ func (f *fileAPI) extract(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, e.Error(), 500)
 			return
 		}
+	}
+	if err = os.Rename(stage, target); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
 	}
 	jsonOut(w, map[string]any{"ok": true, "path": targetRel})
 }

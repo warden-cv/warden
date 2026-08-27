@@ -229,14 +229,24 @@ func (f *fileAPI) mutate(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, map[string]any{"ok": true})
 }
 func copyPath(src, dst string) error {
-	info, e := os.Stat(src)
+	info, e := os.Lstat(src)
 	if e != nil {
 		return e
+	}
+	if info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
+		return errors.New("refusing to copy symlink or special file")
 	}
 	if info.IsDir() {
 		return filepath.WalkDir(src, func(p string, d fs.DirEntry, e error) error {
 			if e != nil {
 				return e
+			}
+			info, e := d.Info()
+			if e != nil {
+				return e
+			}
+			if info.Mode()&os.ModeSymlink != 0 || (!d.IsDir() && !info.Mode().IsRegular()) {
+				return errors.New("refusing to copy symlink or special file")
 			}
 			rel, _ := filepath.Rel(src, p)
 			to := filepath.Join(dst, rel)
@@ -249,12 +259,18 @@ func copyPath(src, dst string) error {
 	return copyFile(src, dst)
 }
 func copyFile(src, dst string) error {
+	info, e := os.Lstat(src)
+	if e != nil {
+		return e
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("refusing to copy non-regular file")
+	}
 	in, e := os.Open(src)
 	if e != nil {
 		return e
 	}
 	defer in.Close()
-	info, _ := in.Stat()
 	out, e := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
 	if e != nil {
 		return e
