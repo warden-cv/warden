@@ -284,6 +284,11 @@ var databaseMigrations = []databaseMigration{
 		ALTER TABLE audit_events ADD COLUMN outcome TEXT NOT NULL DEFAULT 'success';
 		CREATE INDEX audit_events_request_idx ON audit_events(request_id);`,
 	},
+	{
+		version: 8,
+		name:    "image attachment names",
+		sql:     `ALTER TABLE conversation_events ADD COLUMN name TEXT NOT NULL DEFAULT '';`,
+	},
 }
 
 func openDatabase(configDir string) (*sql.DB, error) {

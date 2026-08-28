@@ -12,6 +12,7 @@ import (
 type durableAgentEvent struct {
 	Kind      string `json:"kind"`
 	Text      string `json:"text"`
+	Name      string `json:"name,omitempty"`
 	CreatedAt int64  `json:"createdAt,omitempty"`
 }
 
@@ -151,14 +152,14 @@ func (a *app) saveConversation(accountID string, c *durableConversation) error {
 		return err
 	}
 	for sequence, event := range c.Events {
-		if event.Kind == "" || len(event.Text) > 1<<20 {
+		if event.Kind == "" || len(event.Text) > 1<<20 || len(event.Name) > 500 {
 			return errors.New("invalid conversation event")
 		}
 		created := event.CreatedAt
 		if created <= 0 {
 			created = c.CreatedAt + int64(sequence)
 		}
-		if _, err = tx.Exec("INSERT INTO conversation_events(account_id,conversation_id,sequence,kind,text,created_at) VALUES(?,?,?,?,?,?)", accountID, c.ID, sequence, event.Kind, event.Text, created); err != nil {
+		if _, err = tx.Exec("INSERT INTO conversation_events(account_id,conversation_id,sequence,kind,text,name,created_at) VALUES(?,?,?,?,?,?,?)", accountID, c.ID, sequence, event.Kind, event.Text, event.Name, created); err != nil {
 			return err
 		}
 	}
@@ -193,7 +194,7 @@ func (a *app) loadConversations(accountID string) ([]durableConversation, error)
 }
 
 func (a *app) loadConversationEvents(accountID, conversationID string) ([]durableAgentEvent, error) {
-	rows, err := a.db.Query("SELECT kind,text,created_at FROM conversation_events WHERE account_id=? AND conversation_id=? ORDER BY sequence", accountID, conversationID)
+	rows, err := a.db.Query("SELECT kind,text,name,created_at FROM conversation_events WHERE account_id=? AND conversation_id=? ORDER BY sequence", accountID, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +202,7 @@ func (a *app) loadConversationEvents(accountID, conversationID string) ([]durabl
 	events := []durableAgentEvent{}
 	for rows.Next() {
 		var event durableAgentEvent
-		if err := rows.Scan(&event.Kind, &event.Text, &event.CreatedAt); err != nil {
+		if err := rows.Scan(&event.Kind, &event.Text, &event.Name, &event.CreatedAt); err != nil {
 			return nil, err
 		}
 		events = append(events, event)

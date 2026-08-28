@@ -134,7 +134,8 @@
           <div id="editor-agent-feed" class="agent-feed editor-agent-feed"><div class="agent-empty"><strong>Give Warden a development task</strong><span>The same coding agent, beside your editor.</span></div></div>
           <div id="editor-agent-compose-resizer" class="agent-compose-resizer" title="Drag to resize prompt area"></div>
           <form id="editor-agent-form" class="agent-compose editor-agent-compose">
-            <textarea id="editor-agent-prompt" placeholder="Implement, investigate, fix, test…" spellcheck="true"></textarea>
+            <textarea id="editor-agent-prompt" placeholder="Implement, investigate, fix, test… · drop or paste images" spellcheck="true"></textarea>
+            <div id="editor-agent-attachments" class="agent-attachments" hidden></div>
             <div><select id="editor-agent-provider" class="agent-provider-select" aria-label="Agent provider"></select><button id="editor-agent-copy-session" type="button" class="secondary-button compact">Copy session</button><span id="editor-agent-activity" class="agent-activity" hidden><i></i></span><button id="editor-agent-stop" type="button" class="secondary-button compact" hidden>Stop</button><button id="editor-agent-run" type="submit" class="primary-small compact">Run</button></div>
           </form>
         </aside>
@@ -150,7 +151,8 @@
           <div id="agent-feed" class="agent-feed"><div class="agent-empty"><strong>Give Warden a development task</strong><span>The agent can inspect and modify the workspace, run commands, Git and tests through OpenCode.</span></div></div>
           <div id="agent-compose-resizer" class="agent-compose-resizer" title="Drag to resize prompt area"></div>
           <form id="agent-form" class="agent-compose">
-            <textarea id="agent-prompt" placeholder="Implement, investigate, fix, test…" spellcheck="true"></textarea>
+            <textarea id="agent-prompt" placeholder="Implement, investigate, fix, test… · drop or paste images" spellcheck="true"></textarea>
+            <div id="agent-attachments" class="agent-attachments" hidden></div>
             <div><select id="agent-provider" class="agent-provider-select" aria-label="Agent provider"></select><span id="agent-model"></span><button id="agent-copy-session" type="button" class="secondary-button">Copy session</button><span id="agent-activity" class="agent-activity" hidden><i></i></span><button id="agent-stop" type="button" class="secondary-button" hidden>Stop</button><button id="agent-run" type="submit" class="primary-small">Run agent</button></div>
           </form>
         </section>
