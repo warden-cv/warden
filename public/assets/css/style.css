@@ -534,7 +534,7 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 /* Integrated coding agent beside Editor. */
 .editor-workbench{--editor-agent-width:360px;--editor-agent-column:0px;grid-template-columns:var(--editor-sidebar-width) minmax(0,1fr) var(--editor-agent-column)}
 .editor-main{grid-column:2}
-.editor-agent-panel{grid-column:3;min-width:0;min-height:0;display:grid;grid-template-rows:40px 30px minmax(0,1fr) auto;border-left:1px solid var(--line);background:#18191a;overflow:hidden}
+.editor-agent-panel{grid-column:3;min-width:0;min-height:0;display:grid;grid-template-rows:40px 30px minmax(0,1fr) auto;border-left:1px solid var(--line);background:#18191a;overflow:hidden;container-type:inline-size}
 .editor-agent-panel[hidden]{display:none!important}
 .editor-workbench.agent-open{--editor-agent-column:var(--editor-agent-width)}
 .editor-agent-resizer{display:none;position:absolute;z-index:11;top:0;bottom:0;right:calc(var(--editor-agent-width) - 3px);width:6px;cursor:ew-resize;background:transparent}
@@ -546,7 +546,7 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 .editor-agent-head button{border:0;background:transparent;color:var(--muted);font-size:15px}.editor-agent-head button:hover{color:#fff}
 .editor-agent-workspace{padding:7px 10px;border-bottom:1px solid var(--line);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font:9px var(--mono)}
 .editor-agent-feed{padding:10px;gap:8px}.editor-agent-feed .agent-event{max-width:100%;font-size:11.5px}.editor-agent-feed .agent-empty{font-size:10px}
-.editor-agent-compose{padding:9px 10px}.editor-agent-compose textarea{min-height:72px;font-size:12px}.editor-agent-compose>div{gap:5px}.editor-agent-compose>div>span:first-child{display:none}.editor-agent-compose .agent-activity{flex-basis:58px;width:58px}.editor-agent-compose .agent-activity i{animation-name:editor-agent-sweep}@keyframes editor-agent-sweep{from{transform:translateX(0)}to{transform:translateX(30px)}}
+.editor-agent-compose{padding:9px 10px}.editor-agent-compose textarea{min-height:72px;font-size:12px}.editor-agent-compose>div{gap:5px}.editor-agent-compose>div>span:first-child{display:none}.editor-agent-compose .agent-activity{flex-basis:58px;width:58px}.editor-agent-compose .agent-activity i{animation-name:editor-agent-sweep}@keyframes editor-agent-sweep{from{transform:translateX(0)}to{transform:translateX(30px)}}@container(max-width:460px){.editor-agent-compose>div{flex-wrap:wrap}.editor-agent-compose>div .agent-provider-select{flex-basis:100%}.editor-agent-compose>div #agent-copy-session{margin-left:0}.editor-agent-panel .editor-agent-compose textarea{height:calc(100% - 64px)}}
 @media(max-width:1050px){.editor-workbench{--editor-agent-width:320px}}
 
 /* Agent sessions and provider selection. */
