@@ -243,21 +243,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	args := agentRunArgs(workspace, modelRef, q.Session, imageFiles, q.Prompt)
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = workspace
-	env := append([]string{}, os.Environ()...)
-	env = append(env,
-		"OPENCODE_CONFIG="+filepath.Join(configDir, "opencode.json"),
-		"OPENCODE_CONFIG_DIR="+configDir,
-		"XDG_CONFIG_HOME="+configDir,
-		"XDG_DATA_HOME="+dataDir,
-		"OPENCODE_DISABLE_AUTOUPDATE=1",
-	)
-	if runtime.NeedsKey {
-		env = setEnvPair(env, "WARDEN_AGENT_API_KEY", key)
-	}
-	// Apply Warden's persistent instance/account environment after the inherited OS environment.
-	for name, value := range a.config.environmentFor(sess.AccountID) {
-		env = setEnvPair(env, name, value)
-	}
+	env := agentSubprocessEnv(os.Environ(), configDir, dataDir, key, runtime.NeedsKey, a.config.environmentFor(sess.AccountID))
 	cmd.Env = env
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -739,20 +725,7 @@ func (a *app) agentModels(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "models", runtime.OpenCodeID)
-	env := append([]string{}, os.Environ()...)
-	env = append(env,
-		"OPENCODE_CONFIG="+configPath,
-		"OPENCODE_CONFIG_DIR="+configDir,
-		"XDG_CONFIG_HOME="+configDir,
-		"XDG_DATA_HOME="+dataDir,
-		"OPENCODE_DISABLE_AUTOUPDATE=1",
-	)
-	if runtime.NeedsKey {
-		env = setEnvPair(env, "WARDEN_AGENT_API_KEY", key)
-	}
-	for name, value := range a.config.environmentFor(sess.AccountID) {
-		env = setEnvPair(env, name, value)
-	}
+	env := agentSubprocessEnv(os.Environ(), configDir, dataDir, key, runtime.NeedsKey, a.config.environmentFor(sess.AccountID))
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1025,6 +998,39 @@ func setEnvPair(env []string, key, value string) []string {
 		}
 	}
 	return append(env, prefix+value)
+}
+
+// agentSubprocessEnv builds the environment for an OpenCode subprocess. The
+// base OS environment is inherited, OpenCode's own configuration is isolated
+// into temporary XDG directories, and then Warden's persistent per-account
+// environment overrides are applied last so an administrator can explicitly
+// grant an account access to host tooling such as the GitHub CLI. Host GitHub
+// authentication is intentionally NOT inherited by default: it is only shared
+// when an account's environment sets GH_CONFIG_DIR explicitly.
+func agentSubprocessEnv(baseEnv []string, configDir, dataDir, key string, needsKey bool, overrides map[string]string) []string {
+	env := append([]string{}, baseEnv...)
+	env = setEnvPair(env, "OPENCODE_CONFIG", filepath.Join(configDir, "opencode.json"))
+	env = setEnvPair(env, "OPENCODE_CONFIG_DIR", configDir)
+	env = setEnvPair(env, "XDG_CONFIG_HOME", configDir)
+	env = setEnvPair(env, "XDG_DATA_HOME", dataDir)
+	env = setEnvPair(env, "OPENCODE_DISABLE_AUTOUPDATE", "1")
+	if needsKey {
+		env = setEnvPair(env, "WARDEN_AGENT_API_KEY", key)
+	}
+	for name, value := range overrides {
+		env = setEnvPair(env, name, value)
+	}
+	return env
+}
+
+func agentEnvValue(env []string, key string) string {
+	prefix := key + "="
+	for _, v := range env {
+		if strings.HasPrefix(v, prefix) {
+			return v[len(prefix):]
+		}
+	}
+	return ""
 }
 
 func ioReadAllLimit(r interface{ Read([]byte) (int, error) }, max int64) ([]byte, error) {

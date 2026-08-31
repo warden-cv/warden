@@ -42,6 +42,34 @@ Open `http://127.0.0.1:8080`. Explorer and Terminal start in the server user's h
 
 Warden binds to loopback by default. Loopback development automatically uses a non-Secure session cookie so plain `http://127.0.0.1` works correctly. Non-loopback listeners default to Secure cookies; behind an HTTPS reverse proxy enable `WARDEN_TRUST_PROXY=true`; Warden accepts forwarded scheme/client headers only from a loopback proxy and marks HTTPS sessions Secure.
 
+## Run as a systemd user service
+
+Run Warden in the foreground with `warden` or `warden serve`. To keep it running without a terminal, install a per-user systemd unit:
+
+```sh
+warden service install            # --config, --listen, --root accepted
+warden service status
+warden service logs               # or: warden service logs --follow
+warden service restart
+warden service uninstall          # stops the service but keeps all Warden configuration, accounts and databases
+```
+
+The user unit is written to `~/.config/systemd/user/warden.service` and managed with `systemctl --user` and `journalctl --user-unit warden.service`. `service install` resolves the executable to a stable absolute path, refuses empty, relative or transient paths, writes the unit atomically, reloads systemd, and enables and starts the service. An existing unit that is not managed by Warden is never overwritten or removed silently. `warden service status` reports enabled/running state, PID, version, listen address and a live health check, and exits nonzero when the service is failed or missing.
+
+`service install --system` (system-wide units) is a documented follow-up and is not yet supported; user mode is the default.
+
+### GitHub CLI authentication and the multi-user boundary
+
+Warden is multi-user and intentionally does **not** inherit the host account's GitHub CLI authentication for every account. Agent subprocesses isolate `XDG_CONFIG_HOME` for OpenCode, so `gh` finds no configuration by default — this is the desired default-deny behavior. To grant one account access to the host GitHub CLI deliberately, set that account's environment in **System → Access → Accounts → that account → Environment overrides**:
+
+```text
+GH_CONFIG_DIR=/home/nick/.config/gh
+```
+
+Only that account's agent (and terminal) subprocesses receive the value; other accounts remain isolated. `GH_HOST` can be added the same way if needed. This grants the selected Warden account the GitHub permissions of the Warden service OS user, so only grant it to accounts you trust with that authority. Token values are never displayed or written to the audit log or transcript.
+
+Because a user service runs as your OS user, the GitHub token stored in the login keyring remains reachable when that keyring is unlocked. A future system-wide service would run under a dedicated account with no login keyring, so GitHub CLI authentication there would need `gh auth login` for that account or an explicit `GH_TOKEN`/`GITHUB_TOKEN` in its environment.
+
 ## Security boundary in this slice
 
 Warden is intentionally a privileged application. This first slice establishes rather than hand-waves its boundaries:

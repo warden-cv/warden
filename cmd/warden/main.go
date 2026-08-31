@@ -20,17 +20,24 @@ import (
 var version = "0.1.0-dev"
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "hash-password" {
-		if len(os.Args) != 3 {
-			fmt.Fprintln(os.Stderr, "usage: warden hash-password <password>")
-			os.Exit(2)
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "service":
+			os.Exit(runService(os.Args[2:], version))
+		case "serve":
+			os.Args = append(os.Args[:1], os.Args[2:]...)
+		case "hash-password":
+			if len(os.Args) != 3 {
+				fmt.Fprintln(os.Stderr, "usage: warden hash-password <password>")
+				os.Exit(2)
+			}
+			h, err := hashPassword(os.Args[2])
+			if err != nil {
+				fatal(err)
+			}
+			fmt.Println(h)
+			return
 		}
-		h, err := hashPassword(os.Args[2])
-		if err != nil {
-			fatal(err)
-		}
-		fmt.Println(h)
-		return
 	}
 	fs := flag.NewFlagSet("warden", flag.ExitOnError)
 	configDir := fs.String("config", server.DefaultConfigDir(), "Warden configuration directory")

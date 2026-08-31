@@ -525,10 +525,14 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 .agent-tool-arrow{color:#77827c}
 .agent-tool-name{color:#9fc7ba}
 .agent-tool-separator{color:#69736e}
+.agent-tool-status{color:#c2c8c4}
 .agent-tool-status.completed{color:#82c997}
 .agent-tool-status.error{color:#e19a9a}
-.agent-tool-status.running,.agent-tool-status.pending{color:#d6bf7a}
+.agent-tool-status.running,.agent-tool-status.pending,.agent-tool-status.queued{color:#d6bf7a}
+.agent-tool-status.failed{color:#e19a9a}
+.agent-tool-status.cancelled,.agent-tool-status.interrupted{color:#9a9d9f}
 .agent-tool-body{margin-top:5px;color:#c2c8c4;white-space:pre-wrap}
+.agent-md-quote{color:#b8c987}
 .agent-compose>div #agent-copy-session{margin-left:auto}
 .agent-compose>div #agent-copy-session+.agent-activity{margin-left:0}
 /* Integrated coding agent beside Editor. */
