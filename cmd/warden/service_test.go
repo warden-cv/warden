@@ -17,23 +17,24 @@ import (
 type fakeRunner struct {
 	mu      sync.Mutex
 	calls   []string
-	handler func(name string, args ...string) (string, error)
+	handler func(name string, args ...string) (string, int, error)
 	out     string
+	code    int
 	err     error
 }
 
-func (f *fakeRunner) Run(name string, args ...string) (string, error) {
+func (f *fakeRunner) Run(name string, args ...string) (string, int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, name+" "+strings.Join(args, " "))
 	if f.handler != nil {
 		return f.handler(name, args...)
 	}
-	return f.out, f.err
+	return f.out, f.code, f.err
 }
 
 func (f *fakeRunner) Stream(name string, args ...string) (int, error) {
-	_, _ = f.Run(name, args...)
+	_, _, _ = f.Run(name, args...)
 	return 0, f.err
 }
 
@@ -69,6 +70,18 @@ func jsonServer(t *testing.T, code int, body string, ct string) *httptest.Server
 	return srv
 }
 
+func activeHandler(fr *fakeRunner) func(name string, args ...string) (string, int, error) {
+	return func(name string, args ...string) (string, int, error) {
+		switch {
+		case fr.contains(args, "is-active"):
+			return "active", 0, nil
+		case fr.contains(args, "is-enabled"):
+			return "enabled", 0, nil
+		}
+		return "", 0, nil
+	}
+}
+
 func readManagedUnitBytes(t *testing.T, data []byte) (unitMeta, error) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "warden.service")
@@ -97,8 +110,6 @@ func TestBuildWardenUnit(t *testing.T) {
 			t.Fatalf("unit missing %q\n%s", want, unit)
 		}
 	}
-	// Multi-user boundary: host GitHub authentication must never be injected
-	// into the service unit or otherwise granted to all accounts.
 	if strings.Contains(unit, "GH_CONFIG_DIR") || strings.Contains(unit, "GH_TOKEN") {
 		t.Fatal("warden unit must not grant host GitHub authentication")
 	}
@@ -132,6 +143,21 @@ func TestResolveExecutable(t *testing.T) {
 	}
 	if got != "/bin/true" {
 		t.Fatalf("resolved %q want /bin/true", got)
+	}
+}
+
+func TestValidateNoControl(t *testing.T) {
+	if err := validateNoControl("/home/nick/.config/warden", "config"); err != nil {
+		t.Fatalf("valid config rejected: %v", err)
+	}
+	for _, bad := range []string{"/config\nRestart=always", "a\x00b", "a\x0db"} {
+		if err := validateNoControl(bad, "config"); err == nil {
+			t.Fatalf("control characters accepted: %q", bad)
+		}
+	}
+	m, _, _ := newFakeManager(t)
+	if err := m.install("/config\nRestart=always", "127.0.0.1:8080", "/", os.Stderr); err == nil {
+		t.Fatal("install accepted a control-character config path")
 	}
 }
 
@@ -184,13 +210,35 @@ func TestManagedUnitIntegrity(t *testing.T) {
 			t.Fatalf("want errNotManaged, got %v", err)
 		}
 	})
-	t.Run("malformed metadata with valid checksum", func(t *testing.T) {
+	t.Run("wrong health path rejected", func(t *testing.T) {
 		body := renderWardenUnitBody("/usr/local/bin/warden", "/config", "127.0.0.1:8080", "/")
-		content := "# warden-config: \n# warden-listen: 127.0.0.1:8080\n# warden-health: /api/setup/status\n" + body
+		content := "# warden-config: /config\n# warden-listen: 127.0.0.1:8080\n# warden-health: /other\n" + body
 		sum := sha256.Sum256([]byte(content))
 		bad := wardenUnitMarker + "\n" + wardenManagedPrefix + "v1 sha256=" + hex.EncodeToString(sum[:]) + "\n" + content
 		if _, err := readManagedUnitBytes(t, []byte(bad)); !errors.Is(err, errMalformed) {
-			t.Fatalf("empty config metadata; want errMalformed, got %v", err)
+			t.Fatalf("health path must be application-owned; want errMalformed, got %v", err)
+		}
+	})
+	t.Run("duplicate metadata rejected even with valid checksum", func(t *testing.T) {
+		body := renderWardenUnitBody("/usr/local/bin/warden", "/config", "127.0.0.1:8080", "/")
+		content := "# warden-config: /config\n# warden-config: /other\n# warden-listen: 127.0.0.1:8080\n# warden-health: /api/setup/status\n" + body
+		sum := sha256.Sum256([]byte(content))
+		bad := wardenUnitMarker + "\n" + wardenManagedPrefix + "v1 sha256=" + hex.EncodeToString(sum[:]) + "\n" + content
+		if _, err := readManagedUnitBytes(t, []byte(bad)); !errors.Is(err, errMalformed) {
+			t.Fatalf("duplicate metadata with recomputed checksum; want errMalformed, got %v", err)
+		}
+	})
+	t.Run("malformed metadata with valid checksum", func(t *testing.T) {
+		body := renderWardenUnitBody("/usr/local/bin/warden", "/config", "127.0.0.1:8080", "/")
+		for _, content := range []string{
+			"# warden-config: \n# warden-listen: 127.0.0.1:8080\n# warden-health: /api/setup/status\n" + body,
+			"# warden-config: /config\n# warden-listen: 127.0.0.1:8080\x00x\n# warden-health: /api/setup/status\n" + body,
+		} {
+			sum := sha256.Sum256([]byte(content))
+			bad := wardenUnitMarker + "\n" + wardenManagedPrefix + "v1 sha256=" + hex.EncodeToString(sum[:]) + "\n" + content
+			if _, err := readManagedUnitBytes(t, []byte(bad)); !errors.Is(err, errMalformed) {
+				t.Fatalf("malformed metadata; want errMalformed, got %v", err)
+			}
 		}
 	})
 }
@@ -284,15 +332,7 @@ func TestUninstallFailClosed(t *testing.T) {
 		if err := m.install(configDir, "127.0.0.1:8080", "/", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
-		fr.handler = func(name string, args ...string) (string, error) {
-			switch {
-			case fr.contains(args, "is-active"):
-				return "active", nil
-			case fr.contains(args, "is-enabled"):
-				return "enabled", nil
-			}
-			return "", nil
-		}
+		fr.handler = activeHandler(fr)
 		if err := m.uninstall(os.Stderr); err != nil {
 			t.Fatalf("uninstall: %v", err)
 		}
@@ -309,22 +349,26 @@ func TestUninstallFailClosed(t *testing.T) {
 			}
 		}
 	})
-	t.Run("already inactive and disabled", func(t *testing.T) {
+	t.Run("inactive and disabled with normal exit codes", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
 		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
-		fr.handler = func(name string, args ...string) (string, error) {
+		fr.calls = nil
+		fr.handler = func(name string, args ...string) (string, int, error) {
 			switch {
 			case fr.contains(args, "is-active"):
-				return "inactive", nil
+				return "inactive", 3, nil
 			case fr.contains(args, "is-enabled"):
-				return "disabled", nil
+				return "disabled", 1, nil
 			}
-			return "", nil
+			return "", 0, nil
 		}
 		if err := m.uninstall(os.Stderr); err != nil {
-			t.Fatalf("uninstall: %v", err)
+			t.Fatalf("uninstall with inactive/disabled states: %v", err)
+		}
+		if _, err := os.Stat(m.unitPath); !os.IsNotExist(err) {
+			t.Fatal("unit still present after uninstall")
 		}
 		joined := strings.Join(fr.calls, "\n")
 		if strings.Contains(joined, "stop warden.service") {
@@ -339,14 +383,15 @@ func TestUninstallFailClosed(t *testing.T) {
 		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
-		fr.handler = func(name string, args ...string) (string, error) {
+		fr.calls = nil
+		fr.handler = func(name string, args ...string) (string, int, error) {
 			switch {
 			case fr.contains(args, "is-active"):
-				return "active", nil
+				return "active", 0, nil
 			case fr.contains(args, "stop"):
-				return "Failed to stop", errors.New("stop failed")
+				return "Failed to stop", 1, nil
 			}
-			return "", nil
+			return "", 0, nil
 		}
 		if err := m.uninstall(os.Stderr); err == nil {
 			t.Fatal("uninstall succeeded despite stop failure")
@@ -369,6 +414,96 @@ func TestUninstallFailClosed(t *testing.T) {
 		}
 		if _, err := os.Stat(m.unitPath); err != nil {
 			t.Fatalf("unit removed despite modification: %v", err)
+		}
+	})
+}
+
+func TestUninstallStateQueryFailures(t *testing.T) {
+	t.Run("is-active launch failure", func(t *testing.T) {
+		m, fr, _ := newFakeManager(t)
+		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fr.calls = nil
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "is-active") {
+				return "", -1, errors.New("systemctl not found")
+			}
+			return "", 0, nil
+		}
+		if err := m.uninstall(os.Stderr); err == nil {
+			t.Fatal("uninstall ignored an is-active launch failure")
+		}
+		if _, err := os.Stat(m.unitPath); err != nil {
+			t.Fatalf("unit removed despite query failure: %v", err)
+		}
+		joined := strings.Join(fr.calls, "\n")
+		if strings.Contains(joined, "stop warden.service") || strings.Contains(joined, "disable warden.service") || strings.Contains(joined, "daemon-reload") {
+			t.Fatalf("destructive steps ran after an active-state query failure: %s", joined)
+		}
+	})
+	t.Run("is-active bus failure is not read as inactive", func(t *testing.T) {
+		m, fr, _ := newFakeManager(t)
+		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "is-active") {
+				return "Failed to connect to bus: No such file or directory", 1, nil
+			}
+			return "", 0, nil
+		}
+		if err := m.uninstall(os.Stderr); err == nil {
+			t.Fatal("uninstall treated a bus failure as inactive")
+		} else if !strings.Contains(err.Error(), "unrecognized") {
+			t.Fatalf("bus failure should surface as unrecognized state, got: %v", err)
+		}
+		if _, serr := os.Stat(m.unitPath); serr != nil {
+			t.Fatalf("unit removed despite bus failure: %v", serr)
+		}
+	})
+	t.Run("unrecognized is-active output", func(t *testing.T) {
+		m, fr, _ := newFakeManager(t)
+		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "is-active") {
+				return "something-else", 1, nil
+			}
+			return "", 0, nil
+		}
+		if err := m.uninstall(os.Stderr); err == nil {
+			t.Fatal("uninstall accepted unrecognized is-active output")
+		}
+		if _, err := os.Stat(m.unitPath); err != nil {
+			t.Fatalf("unit removed despite unrecognized state: %v", err)
+		}
+	})
+	t.Run("is-enabled bus failure", func(t *testing.T) {
+		m, fr, _ := newFakeManager(t)
+		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fr.calls = nil
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			switch {
+			case fr.contains(args, "is-active"):
+				return "inactive", 3, nil
+			case fr.contains(args, "is-enabled"):
+				return "Failed to connect to bus: No such file or directory", 1, nil
+			}
+			return "", 0, nil
+		}
+		if err := m.uninstall(os.Stderr); err == nil {
+			t.Fatal("uninstall ignored an is-enabled bus failure")
+		}
+		if _, err := os.Stat(m.unitPath); err != nil {
+			t.Fatalf("unit removed despite enablement query failure: %v", err)
+		}
+		joined := strings.Join(fr.calls, "\n")
+		if strings.Contains(joined, "disable warden.service") || strings.Contains(joined, "daemon-reload") {
+			t.Fatalf("disable/reload ran after an enablement query failure: %s", joined)
 		}
 	})
 }
@@ -417,14 +552,39 @@ func TestStatus(t *testing.T) {
 		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
-		fr.handler = func(name string, args ...string) (string, error) {
-			if fr.contains(args, "is-active") {
-				return "inactive", nil
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			switch {
+			case fr.contains(args, "is-active"):
+				return "inactive", 3, nil
+			case fr.contains(args, "is-enabled"):
+				return "enabled", 0, nil
 			}
-			return "", nil
+			return "", 0, nil
 		}
 		if err := m.status(os.Stderr, "1.0"); err == nil {
 			t.Fatal("status of an inactive service should fail")
+		}
+	})
+	t.Run("surfaces is-active bus failure", func(t *testing.T) {
+		m, fr, _ := newFakeManager(t)
+		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			switch {
+			case fr.contains(args, "is-active"):
+				return "Failed to connect to bus", 1, nil
+			case fr.contains(args, "is-enabled"):
+				return "enabled", 0, nil
+			}
+			return "", 0, nil
+		}
+		err := m.status(os.Stderr, "1.0")
+		if err == nil {
+			t.Fatal("status swallowed an is-active bus failure")
+		}
+		if !strings.Contains(err.Error(), "unrecognized") {
+			t.Fatalf("bus failure should surface as unrecognized state: %v", err)
 		}
 	})
 	t.Run("durable config overrides bootstrap listen", func(t *testing.T) {
@@ -435,19 +595,13 @@ func TestStatus(t *testing.T) {
 		if err := os.MkdirAll(configDir, 0700); err != nil {
 			t.Fatal(err)
 		}
-		// Bootstrap listen in the unit differs from the durable config listen.
 		if err := m.install(configDir, "127.0.0.1:8080", "/", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"`+effective+`"}`), 0600); err != nil {
 			t.Fatal(err)
 		}
-		fr.handler = func(name string, args ...string) (string, error) {
-			if fr.contains(args, "is-active") {
-				return "active", nil
-			}
-			return "", nil
-		}
+		fr.handler = activeHandler(fr)
 		if err := m.status(os.Stderr, "1.0"); err != nil {
 			t.Fatalf("status with durable listen failed: %v", err)
 		}
@@ -465,12 +619,7 @@ func TestStatus(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"`+strings.TrimPrefix(srv.URL, "http://")+`"}`), 0600); err != nil {
 			t.Fatal(err)
 		}
-		fr.handler = func(name string, args ...string) (string, error) {
-			if fr.contains(args, "is-active") {
-				return "active", nil
-			}
-			return "", nil
-		}
+		fr.handler = activeHandler(fr)
 		if err := m.status(os.Stderr, "1.0"); err == nil {
 			t.Fatal("status with a 404 health response should fail")
 		}
@@ -488,12 +637,7 @@ func TestStatus(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"`+strings.TrimPrefix(srv.URL, "http://")+`"}`), 0600); err != nil {
 			t.Fatal(err)
 		}
-		fr.handler = func(name string, args ...string) (string, error) {
-			if fr.contains(args, "is-active") {
-				return "active", nil
-			}
-			return "", nil
-		}
+		fr.handler = activeHandler(fr)
 		if err := m.status(os.Stderr, "1.0"); err == nil {
 			t.Fatal("status with a 401 health response should fail")
 		}
@@ -511,12 +655,7 @@ func TestStatus(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"`+strings.TrimPrefix(srv.URL, "http://")+`"}`), 0600); err != nil {
 			t.Fatal(err)
 		}
-		fr.handler = func(name string, args ...string) (string, error) {
-			if fr.contains(args, "is-active") {
-				return "active", nil
-			}
-			return "", nil
-		}
+		fr.handler = activeHandler(fr)
 		if err := m.status(os.Stderr, "1.0"); err == nil {
 			t.Fatal("status with a non-JSON 200 health response should fail")
 		}
