@@ -46,26 +46,40 @@ const ctx=load(src,'function appendAgentMarkdownInline','function renderAgentFee
   if(!flat.includes('foo_bar')||!flat.includes('__init__'))throw new Error('underscore identifiers not preserved');
 }
 
-// 3. Quoted-string highlighting (escaped-aware).
+// 3. Quoted-string highlighting (escaped-aware; single quotes need a preceding space).
 {
   const cases=[
     ['"this should be highlighted"','"this should be highlighted"'],
-    ["'as should this'","'as should this'"],
-    ["'that\\'s counted too'","'that\\'s counted too'"],
+    ["Value: 'as should this'","'as should this'"],
+    ["Value: 'that\\'s counted too'","'that\\'s counted too'"],
     ['"say \\"hello\\""','"say \\"hello\\""'],
-    ["'C:\\Users\\Nick'","'C:\\Users\\Nick'"],
-    ['"single quote \' inside double quotes"',"\"single quote ' inside double quotes\""],
-    ["'double quote \" inside single quotes'","'double quote \" inside single quotes'"],
+    ["Path: 'C:\\Users\\Nick'","'C:\\Users\\Nick'"],
+    ['"single quote \' inside double quotes"','"single quote \' inside double quotes"'],
+    ["Value: 'double quote \" inside single quotes'","'double quote \" inside single quotes'"],
   ];
-  for(const [text] of cases){
+  for(const [text,want] of cases){
     const row=new Node('div');
     ctx.renderAgentMarkdown(row,text);
     const quotes=byClass(row,'agent-md-quote');
-    if(quotes.length!==1||quotes[0].textContent!==text)throw new Error('quote mismatch for '+JSON.stringify(text)+' got '+quotes.length+' spans');
+    if(quotes.length!==1||quotes[0].textContent!==want)throw new Error('quote mismatch for '+JSON.stringify(text)+' got '+quotes.length+' spans');
   }
   const row=new Node('div');
   ctx.renderAgentMarkdown(row,'an unterminated "string and \'other');
   if(byClass(row,'agent-md-quote').length)throw new Error('unterminated string was highlighted');
+  {
+    const prose=['this isn\'t a sentence we want highlighted just cause it\'s got single quotes',"Nick's project","can't match through another apostrophe later","rock'n'roll","foo'bar'"];
+    for(const text of prose){
+      const r=new Node('div');
+      ctx.renderAgentMarkdown(r,text);
+      if(byClass(r,'agent-md-quote').length)throw new Error('apostrophe prose was highlighted: '+text);
+    }
+  }
+  {
+    const r=new Node('div');
+    ctx.renderAgentMarkdown(r,"Use 'this quoted block' here");
+    const quotes=byClass(r,'agent-md-quote');
+    if(quotes.length!==1||quotes[0].textContent!=="'this quoted block'")throw new Error('space-prefixed quote handling wrong');
+  }
 }
 
 // 4. Tool-status events (live and restored shapes).

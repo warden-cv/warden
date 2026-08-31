@@ -66,7 +66,7 @@ Warden is multi-user and intentionally does **not** inherit the host account's G
 GH_CONFIG_DIR=/home/nick/.config/gh
 ```
 
-Only that account's agent (and terminal) subprocesses receive the value; other accounts remain isolated. `GH_HOST` can be added the same way if needed. This grants the selected Warden account the GitHub permissions of the Warden service OS user, so only grant it to accounts you trust with that authority. Token values are never displayed or written to the audit log or transcript.
+Only that account's agent (and terminal) subprocesses receive the value; other accounts remain isolated. Warden also scrubs any `GH_CONFIG_DIR`, `GH_TOKEN`, `GITHUB_TOKEN` or `GH_HOST` present in Warden's own inherited environment before applying account policy, so credentials carried by the terminal or service environment are never inherited globally by accident — they must be re-granted explicitly per account. `GH_HOST` can be added the same way if needed. This grants the selected Warden account the GitHub permissions of the Warden service OS user, so only grant it to accounts you trust with that authority. Token values are never displayed or written to the audit log or transcript.
 
 Because a user service runs as your OS user, the GitHub token stored in the login keyring remains reachable when that keyring is unlocked. A future system-wide service would run under a dedicated account with no login keyring, so GitHub CLI authentication there would need `gh auth login` for that account or an explicit `GH_TOKEN`/`GITHUB_TOKEN` in its environment.
 

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,15 +12,28 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/warden-app/warden/internal/server"
 )
 
-// wardenUnitMarker marks unit files written by `warden service`. Unmanaged or
-// hand-modified units are never overwritten or removed silently.
+// wardenUnitMarker marks unit files written by `warden service`.
 const wardenUnitMarker = "# Managed by warden. Do not edit manually."
+
+// wardenManagedPrefix introduces the versioned integrity header. The header is
+// followed by a SHA-256 of everything below it (managed metadata plus the unit
+// body), so any hand edit is detected on the next write, action or uninstall.
+const wardenManagedPrefix = "# warden-managed: "
+
+const wardenHealthPath = "/api/setup/status"
+
+var (
+	errNotManaged = errors.New("not a managed unit")
+	errMalformed  = errors.New("malformed managed unit header")
+	errModified   = errors.New("managed unit body no longer matches its recorded checksum")
+)
 
 // serviceRunner abstracts systemctl/journalctl so the CLI is testable without
 // touching a real systemd user manager.
@@ -56,6 +72,12 @@ type serviceManager struct {
 	run      serviceRunner
 }
 
+type unitMeta struct {
+	config string
+	listen string
+	health string
+}
+
 func userUnitPath(unitName string) string {
 	base, err := os.UserConfigDir()
 	if err != nil {
@@ -86,13 +108,12 @@ func systemdQuote(s string) string {
 	return b.String()
 }
 
-// renderWardenUnit renders the user unit. It intentionally does NOT set
-// GH_CONFIG_DIR or any host GitHub authentication: Warden is multi-user and
-// host credentials are only shared for accounts that explicitly configure
-// their own environment.
-func renderWardenUnit(exe, configDir, listen, root string) string {
+// renderWardenUnitBody renders the systemd directives (no managed header).
+// It intentionally does NOT set GH_CONFIG_DIR or any host GitHub
+// authentication: Warden is multi-user and host credentials are only shared
+// for accounts that explicitly configure their own environment.
+func renderWardenUnitBody(exe, configDir, listen, root string) string {
 	var b strings.Builder
-	b.WriteString(wardenUnitMarker + "\n")
 	b.WriteString("[Unit]\n")
 	b.WriteString("Description=Warden server console\n")
 	b.WriteString("After=network-online.target\n")
@@ -112,10 +133,61 @@ func renderWardenUnit(exe, configDir, listen, root string) string {
 	return b.String()
 }
 
+func buildWardenUnit(exe, configDir, listen, root string) string {
+	content := "# warden-config: " + configDir + "\n# warden-listen: " + listen + "\n# warden-health: " + wardenHealthPath + "\n" + renderWardenUnitBody(exe, configDir, listen, root)
+	sum := sha256.Sum256([]byte(content))
+	header := wardenUnitMarker + "\n" + wardenManagedPrefix + "v1 sha256=" + hex.EncodeToString(sum[:]) + "\n"
+	return header + content
+}
+
+func readManagedUnit(path string) (unitMeta, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return unitMeta{}, err
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) < 3 || lines[0] != wardenUnitMarker {
+		return unitMeta{}, errNotManaged
+	}
+	count := 0
+	for _, ln := range lines {
+		if strings.HasPrefix(ln, wardenManagedPrefix) {
+			count++
+		}
+	}
+	if count != 1 || !strings.HasPrefix(lines[1], wardenManagedPrefix) {
+		return unitMeta{}, errMalformed
+	}
+	sm := regexp.MustCompile(`^# warden-managed: v1 sha256=([0-9a-f]{64})$`).FindStringSubmatch(lines[1])
+	if sm == nil {
+		return unitMeta{}, errMalformed
+	}
+	content := strings.Join(lines[2:], "\n")
+	sum := sha256.Sum256([]byte(content))
+	if hex.EncodeToString(sum[:]) != sm[1] {
+		return unitMeta{}, errModified
+	}
+	meta := unitMeta{}
+	for _, ln := range lines[2:] {
+		switch {
+		case strings.HasPrefix(ln, "# warden-config: "):
+			meta.config = strings.TrimSpace(strings.TrimPrefix(ln, "# warden-config: "))
+		case strings.HasPrefix(ln, "# warden-listen: "):
+			meta.listen = strings.TrimSpace(strings.TrimPrefix(ln, "# warden-listen: "))
+		case strings.HasPrefix(ln, "# warden-health: "):
+			meta.health = strings.TrimSpace(strings.TrimPrefix(ln, "# warden-health: "))
+		}
+	}
+	if meta.config == "" || meta.listen == "" || meta.health == "" {
+		return unitMeta{}, errMalformed
+	}
+	return meta, nil
+}
+
 func writeManagedUnit(path, content string) error {
-	if existing, err := os.ReadFile(path); err == nil {
-		if !strings.Contains(string(existing), wardenUnitMarker) {
-			return fmt.Errorf("refusing to overwrite %s: not a managed unit", path)
+	if _, err := os.Stat(path); err == nil {
+		if _, err := readManagedUnit(path); err != nil {
+			return fmt.Errorf("refusing to overwrite %s: %w", path, err)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -157,14 +229,10 @@ func resolveExecutable(exe string) (string, error) {
 	if strings.TrimSpace(exe) == "" {
 		return "", errors.New("empty executable path")
 	}
-	abs, err := filepath.Abs(exe)
-	if err != nil {
-		return "", err
+	if !filepath.IsAbs(exe) {
+		return "", fmt.Errorf("executable path %q is not absolute", exe)
 	}
-	abs = filepath.Clean(abs)
-	if !filepath.IsAbs(abs) {
-		return "", fmt.Errorf("executable path %q is not absolute", abs)
-	}
+	abs := filepath.Clean(exe)
 	if strings.HasPrefix(abs, os.TempDir()) {
 		return "", fmt.Errorf("executable path %q is transient; install warden somewhere stable first", abs)
 	}
@@ -184,14 +252,59 @@ func healthCheck(url string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("expected 2xx, got HTTP %d", resp.StatusCode)
+	}
+	if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "json") {
+		return fmt.Errorf("expected a JSON response, got %q", resp.Header.Get("Content-Type"))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	var v map[string]any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return fmt.Errorf("expected a JSON object response: %v", err)
+	}
+	return nil
+}
+
+// wardenEffectiveListen resolves the actual listen address from Warden's
+// durable config when it exists; the recorded unit value is only a bootstrap
+// fallback. The command-line --listen default is not authoritative once a
+// durable config exists.
+func wardenEffectiveListen(configDir, fallback string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(configDir, "config.json"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fallback, nil
+		}
+		return "", err
+	}
+	var cfg struct {
+		Listen string `json:"listen"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("config.json is malformed: %w", err)
+	}
+	if strings.TrimSpace(cfg.Listen) == "" {
+		return "", errors.New("config.json has an empty listen address")
+	}
+	return cfg.Listen, nil
+}
+
+func (m *serviceManager) requireManaged(verb string) error {
+	if _, err := readManagedUnit(m.unitPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("refusing to %s %s: unit is not installed", verb, m.unitName)
+		}
+		return fmt.Errorf("refusing to %s %s: %w", verb, m.unitName, err)
 	}
 	return nil
 }
 
 func (m *serviceManager) install(configDir, listen, root string, out io.Writer) error {
-	unit := renderWardenUnit(m.exe, configDir, listen, root)
+	unit := buildWardenUnit(m.exe, configDir, listen, root)
 	if err := writeManagedUnit(m.unitPath, unit); err != nil {
 		return err
 	}
@@ -217,6 +330,9 @@ func (m *serviceManager) install(configDir, listen, root string, out io.Writer) 
 }
 
 func (m *serviceManager) action(verb string, out io.Writer) error {
+	if err := m.requireManaged(verb); err != nil {
+		return err
+	}
 	o, err := m.systemctl(verb, m.unitName)
 	if out != nil && strings.TrimSpace(o) != "" {
 		fmt.Fprintln(out, strings.TrimSpace(o))
@@ -227,37 +343,44 @@ func (m *serviceManager) action(verb string, out io.Writer) error {
 	return nil
 }
 
-func (m *serviceManager) status(out io.Writer, version, listen, healthPath string) error {
-	if _, err := os.Stat(m.unitPath); err != nil {
-		return fmt.Errorf("%s is not installed (no unit at %s)", m.unitName, m.unitPath)
+func (m *serviceManager) status(out io.Writer, version string) error {
+	meta, err := readManagedUnit(m.unitPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%s is not installed (no unit at %s)", m.unitName, m.unitPath)
+		}
+		return fmt.Errorf("%s unit is not valid: %w", m.unitName, err)
+	}
+	listen, err := wardenEffectiveListen(meta.config, meta.listen)
+	if err != nil {
+		return fmt.Errorf("cannot resolve the effective listen address: %w", err)
 	}
 	enabled, _ := m.systemctl("is-enabled", m.unitName)
 	active, _ := m.systemctl("is-active", m.unitName)
 	pid, _ := m.systemctl("show", "-p", "MainPID", "--value", m.unitName)
 	fmt.Fprintf(out, "unit:    %s\n", m.unitName)
 	fmt.Fprintf(out, "file:    %s\n", m.unitPath)
+	fmt.Fprintf(out, "config:  %s\n", meta.config)
 	fmt.Fprintf(out, "enabled: %s\n", strings.TrimSpace(enabled))
 	fmt.Fprintf(out, "active:  %s\n", strings.TrimSpace(active))
 	fmt.Fprintf(out, "pid:     %s\n", strings.TrimSpace(pid))
 	fmt.Fprintf(out, "version: %s\n", version)
 	fmt.Fprintf(out, "listen:  %s\n", listen)
-	state := strings.TrimSpace(active)
-	switch state {
-	case "active":
-		if err := healthCheck("http://" + listen + healthPath); err != nil {
-			fmt.Fprintf(out, "health:  unreachable (%v)\n", err)
-			return fmt.Errorf("service is active but its health check failed: %v", err)
-		}
-		fmt.Fprintln(out, "health:  ok")
-		return nil
-	case "failed":
-		return fmt.Errorf("%s is in a failed state; run '%s service logs'", m.unitName, "warden")
-	default:
-		return nil
+	if state := strings.TrimSpace(active); state != "active" {
+		return fmt.Errorf("%s is %q; expected active", m.unitName, state)
 	}
+	if err := healthCheck("http://" + listen + meta.health); err != nil {
+		fmt.Fprintf(out, "health:  unreachable (%v)\n", err)
+		return fmt.Errorf("service is active but its health check failed: %v", err)
+	}
+	fmt.Fprintln(out, "health:  ok")
+	return nil
 }
 
 func (m *serviceManager) logs(follow bool, out io.Writer) error {
+	if err := m.requireManaged("view logs for"); err != nil {
+		return err
+	}
 	args := []string{"--user-unit", m.unitName}
 	if follow {
 		args = append(args, "-f")
@@ -279,18 +402,28 @@ func (m *serviceManager) logs(follow bool, out io.Writer) error {
 }
 
 func (m *serviceManager) uninstall(out io.Writer) error {
-	existing, err := os.ReadFile(m.unitPath)
-	if err != nil {
+	if _, err := readManagedUnit(m.unitPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("%s is not installed", m.unitName)
 		}
-		return err
+		return fmt.Errorf("refusing to uninstall %s: %w", m.unitName, err)
 	}
-	if !strings.Contains(string(existing), wardenUnitMarker) {
-		return fmt.Errorf("refusing to remove %s: not a managed unit", m.unitPath)
+	active, _ := m.systemctl("is-active", m.unitName)
+	if strings.TrimSpace(active) == "active" {
+		if o, err := m.systemctl("stop", m.unitName); err != nil {
+			return fmt.Errorf("stop %s failed: %w: %s", m.unitName, err, strings.TrimSpace(o))
+		}
+	} else {
+		fmt.Fprintf(out, "note: %s is already inactive; nothing to stop\n", m.unitName)
 	}
-	_, _ = m.systemctl("stop", m.unitName)
-	_, _ = m.systemctl("disable", m.unitName)
+	enabled, _ := m.systemctl("is-enabled", m.unitName)
+	if strings.TrimSpace(enabled) == "enabled" {
+		if o, err := m.systemctl("disable", m.unitName); err != nil {
+			return fmt.Errorf("disable %s failed: %w: %s", m.unitName, err, strings.TrimSpace(o))
+		}
+	} else {
+		fmt.Fprintf(out, "note: %s is already disabled; nothing to disable\n", m.unitName)
+	}
 	if err := os.Remove(m.unitPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -315,7 +448,7 @@ func runService(args []string, version string) int {
 	system := fs.Bool("system", false, "install a system-wide unit (not yet supported; user mode is the default)")
 	follow := fs.Bool("follow", false, "follow new journal output")
 	configDir := fs.String("config", server.DefaultConfigDir(), "Warden configuration directory recorded in the unit")
-	listen := fs.String("listen", env("WARDEN_LISTEN", "127.0.0.1:8080"), "listen address recorded in the unit")
+	listen := fs.String("listen", env("WARDEN_LISTEN", "127.0.0.1:8080"), "bootstrap listen address recorded in the unit")
 	root := fs.String("root", env("WARDEN_FILE_ROOT", "/"), "filesystem root recorded in the unit")
 	if err := fs.Parse(rest); err != nil {
 		return 2
@@ -362,7 +495,7 @@ func runService(args []string, version string) int {
 		}
 		return 0
 	case "status":
-		if err := m.status(os.Stdout, version, *listen, "/api/setup/status"); err != nil {
+		if err := m.status(os.Stdout, version); err != nil {
 			fmt.Fprintln(os.Stderr, "warden:", err)
 			return 1
 		}

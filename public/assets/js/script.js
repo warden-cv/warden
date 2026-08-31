@@ -562,7 +562,7 @@ function buildAgentMenu(box){box.innerHTML='';const item=(title,meta,fn)=>{const
 function toggleAgentMenu(which){const box=$(which);const open=box.hidden;hideAgentMenus();if(open){buildAgentMenu(box);box.hidden=false}}
 function renderAgentTabs(target){const box=$(target);if(!box)return;box.innerHTML='';for(const s of Object.values(agentSessions)){const b=document.createElement('button');b.type='button';b.className='agent-session-tab'+(s.id===activeAgentSessionId?' active':'');const title=document.createElement('span');title.textContent=agentSessionTitle(s);const close=document.createElement('span');close.textContent='×';close.className='agent-session-close';close.onclick=e=>{e.stopPropagation();closeAgentSession(s.id)};b.append(title,close);b.onclick=()=>{activeAgentSessionId=s.id;saveAgentSessions();renderAgentSession();loadAgentStatus()};box.append(b);if(s.id===activeAgentSessionId)requestAnimationFrame(()=>b.scrollIntoView({block:'nearest',inline:'nearest'}))}}
 function appendAgentMarkdownInline(parent,text){
-  const re=/(`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\))/g;
+  const re=/(`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*|"(?:\\.|[^"\\])*"| '(?:\\.|[^'\\])*'|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\))/g;
   let at=0,m;
   while((m=re.exec(text))){
     if(m.index>at)parent.append(document.createTextNode(text.slice(at,m.index)));
@@ -570,7 +570,8 @@ function appendAgentMarkdownInline(parent,text){
     if(token.startsWith('`')){const el=document.createElement('code');el.textContent=token;parent.append(el)}
     else if(token.startsWith('**')){const el=document.createElement('strong');el.textContent=token;parent.append(el)}
     else if(token.startsWith('*')){const el=document.createElement('em');el.textContent=token;parent.append(el)}
-    else if(token.startsWith('"')||token.startsWith("'")){const el=document.createElement('span');el.className='agent-md-quote';el.textContent=token;parent.append(el)}
+    else if(token.startsWith('"')){const el=document.createElement('span');el.className='agent-md-quote';el.textContent=token;parent.append(el)}
+    else if(token.startsWith(" '")){parent.append(document.createTextNode(' '));const el=document.createElement('span');el.className='agent-md-quote';el.textContent=token.slice(1);parent.append(el)}
     else{const lm=token.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/),a=document.createElement('a');a.textContent=lm[1];a.href=lm[2];a.target='_blank';a.rel='noopener noreferrer';parent.append(a)}
     at=m.index+token.length
   }

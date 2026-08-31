@@ -25,22 +25,49 @@ func TestAgentSubprocessEnvGHPolicy(t *testing.T) {
 		}
 	})
 
-	t.Run("per-account enablement", func(t *testing.T) {
-		overrides := map[string]string{"GH_CONFIG_DIR": "/home/warden/.config/gh"}
-		env := agentSubprocessEnv(base, configDir, dataDir, "", false, overrides)
-		if v := agentEnvValue(env, "GH_CONFIG_DIR"); v != "/home/warden/.config/gh" {
+	t.Run("inherited host GitHub variables are scrubbed", func(t *testing.T) {
+		baseWith := append([]string{}, base...)
+		baseWith = append(baseWith, "GH_CONFIG_DIR=/host/.config/gh", "GH_TOKEN=TEST_VALUE_NOT_A_SECRET", "GITHUB_TOKEN=TEST_VALUE_NOT_A_SECRET", "GH_HOST=github.example.com")
+		env := agentSubprocessEnv(baseWith, configDir, dataDir, "", false, nil)
+		for _, v := range []string{"GH_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST"} {
+			if got := agentEnvValue(env, v); got != "" {
+				t.Fatalf("%s=%q survived scrubbing", v, got)
+			}
+		}
+	})
+
+	t.Run("per-account enablement overrides scrub", func(t *testing.T) {
+		baseWith := append([]string{}, base...)
+		baseWith = append(baseWith, "GH_CONFIG_DIR=/host/.config/gh", "GITHUB_TOKEN=TEST_VALUE_NOT_A_SECRET")
+		overrides := map[string]string{"GH_CONFIG_DIR": "/account/gh", "GH_TOKEN": "TEST_VALUE_NOT_A_SECRET"}
+		env := agentSubprocessEnv(baseWith, configDir, dataDir, "", false, overrides)
+		if v := agentEnvValue(env, "GH_CONFIG_DIR"); v != "/account/gh" {
 			t.Fatalf("GH_CONFIG_DIR=%q want account value", v)
+		}
+		if v := agentEnvValue(env, "GH_TOKEN"); v != "TEST_VALUE_NOT_A_SECRET" {
+			t.Fatalf("GH_TOKEN=%q want account value", v)
+		}
+		// Scrub first, so a value not configured for the account is absent.
+		if v := agentEnvValue(env, "GITHUB_TOKEN"); v != "" {
+			t.Fatalf("GITHUB_TOKEN=%q leaked from host into account", v)
 		}
 	})
 
 	t.Run("account isolation", func(t *testing.T) {
-		envA := agentSubprocessEnv(base, configDir, dataDir, "", false, map[string]string{"GH_CONFIG_DIR": "/host/gh-a"})
-		envB := agentSubprocessEnv(base, configDir, dataDir, "", false, map[string]string{})
+		baseWith := append([]string{}, base...)
+		baseWith = append(baseWith, "GH_CONFIG_DIR=/host/gh", "GH_TOKEN=TEST_VALUE_NOT_A_SECRET")
+		envA := agentSubprocessEnv(baseWith, configDir, dataDir, "", false, map[string]string{"GH_CONFIG_DIR": "/host/gh-a"})
+		envB := agentSubprocessEnv(baseWith, configDir, dataDir, "", false, map[string]string{})
 		if agentEnvValue(envA, "GH_CONFIG_DIR") != "/host/gh-a" {
 			t.Fatalf("account A lost its GH_CONFIG_DIR")
 		}
-		if agentEnvValue(envB, "GH_CONFIG_DIR") != "" {
-			t.Fatalf("account B received account A's GH_CONFIG_DIR")
+		if agentEnvValue(envA, "GH_TOKEN") != "" {
+			t.Fatalf("account A inherited host GH_TOKEN")
+		}
+		for _, v := range []string{"GH_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN"} {
+			if agentEnvValue(envB, v) != "" {
+				t.Fatalf("account B received host %s", v)
+			}
 		}
 	})
 

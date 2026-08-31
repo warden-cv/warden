@@ -1000,15 +1000,47 @@ func setEnvPair(env []string, key, value string) []string {
 	return append(env, prefix+value)
 }
 
-// agentSubprocessEnv builds the environment for an OpenCode subprocess. The
-// base OS environment is inherited, OpenCode's own configuration is isolated
-// into temporary XDG directories, and then Warden's persistent per-account
-// environment overrides are applied last so an administrator can explicitly
-// grant an account access to host tooling such as the GitHub CLI. Host GitHub
-// authentication is intentionally NOT inherited by default: it is only shared
-// when an account's environment sets GH_CONFIG_DIR explicitly.
+// hostGitHubEnvVars are scrubbed from inherited subprocess environments so
+// Warden's default-deny policy cannot be bypassed by a terminal or service
+// environment that happens to carry host GitHub credentials. GH_HOST is not a
+// credential but changes host selection, so it is account-controlled too: an
+// administrator may re-introduce any of these per-account through the
+// protected environment mechanism.
+var hostGitHubEnvVars = []string{"GH_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST"}
+
+func scrubHostGitHubEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, v := range env {
+		name, _, ok := strings.Cut(v, "=")
+		if !ok {
+			continue
+		}
+		skip := false
+		for _, n := range hostGitHubEnvVars {
+			if name == n {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// agentSubprocessEnv builds the environment for an OpenCode subprocess. It
+// starts from the inherited OS environment, removes any host GitHub credential
+// selectors so they are never inherited globally by accident, redirects
+// OpenCode's own configuration into temporary XDG directories, and then
+// applies Warden's persistent per-account environment overrides last so an
+// administrator can explicitly grant one account access to host tooling such
+// as the GitHub CLI. Host GitHub authentication is intentionally NOT inherited
+// by default: it is only shared when an account's environment sets GH_*
+// variables explicitly.
 func agentSubprocessEnv(baseEnv []string, configDir, dataDir, key string, needsKey bool, overrides map[string]string) []string {
-	env := append([]string{}, baseEnv...)
+	env := scrubHostGitHubEnv(baseEnv)
 	env = setEnvPair(env, "OPENCODE_CONFIG", filepath.Join(configDir, "opencode.json"))
 	env = setEnvPair(env, "OPENCODE_CONFIG_DIR", configDir)
 	env = setEnvPair(env, "XDG_CONFIG_HOME", configDir)
