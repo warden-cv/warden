@@ -1,3 +1,4 @@
 /dist/
+/warden
 /warden-audit.log
 .nift/.ownership-gate
