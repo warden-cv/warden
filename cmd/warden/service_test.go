@@ -269,14 +269,23 @@ func TestManagedUnitIntegrity(t *testing.T) {
 type fakeSystemd struct {
 	mu       sync.Mutex
 	unitPath string
-	enabled  string // enabled, enabled-runtime, masked, masked-runtime, disabled, static, ...
-	active   string // active, inactive, failed, ...
-	failVerb string // systemctl verb (e.g. "enable") whose next invocation fails
-	calls    []string
+	enable   bool // persistent enablement link
+	enableRT bool // runtime enablement link
+	mask     bool // persistent mask
+	maskRT   bool // runtime mask
+	active   string
+	// Overrides simulate systemctl reports for prior states that have no
+	// corresponding link layer (for example not-found on a loaded unit, or
+	// static/alias unit-file states). They are used only to exercise the
+	// refuse-before-mutation path.
+	overrideEnabled string
+	overrideActive  string
+	failVerb        string
+	calls           []string
 }
 
 func newFakeSystemd(unitPath string) *fakeSystemd {
-	return &fakeSystemd{unitPath: unitPath, enabled: "disabled", active: "inactive"}
+	return &fakeSystemd{unitPath: unitPath, active: "inactive"}
 }
 
 func exitForEnabled(word string) int {
@@ -301,6 +310,41 @@ func exitForActive(word string) int {
 		return 4
 	}
 	return 3
+}
+
+// enabledWord derives the is-enabled word from the persistent/runtime
+// enablement and mask layers, matching systemd's precedence: a persistent mask
+// reports masked, a runtime-only mask masked-runtime, persistent enablement
+// enabled, runtime-only enablement enabled-runtime, and otherwise disabled when
+// the unit file is present.
+func (f *fakeSystemd) enabledWord() string {
+	if f.overrideEnabled != "" {
+		return f.overrideEnabled
+	}
+	switch {
+	case f.mask:
+		return "masked"
+	case f.maskRT:
+		return "masked-runtime"
+	case f.enable:
+		return "enabled"
+	case f.enableRT:
+		return "enabled-runtime"
+	}
+	if _, err := os.Stat(f.unitPath); err != nil {
+		return "not-found"
+	}
+	return "disabled"
+}
+
+func (f *fakeSystemd) activeWord() string {
+	if f.overrideActive != "" {
+		return f.overrideActive
+	}
+	if _, err := os.Stat(f.unitPath); err != nil {
+		return "inactive"
+	}
+	return f.active
 }
 
 // runner returns a serviceRunner wired to the fake model.
@@ -328,19 +372,15 @@ func (f *fakeSystemd) runner() *fakeRunner {
 			return "", 0, nil
 		}
 		if verb == "is-enabled" {
-			word := f.enabled
-			if _, err := os.Stat(f.unitPath); err != nil {
-				word = "not-found"
-			}
+			word := f.enabledWord()
 			return word, exitForEnabled(word), nil
 		}
 		if verb == "is-active" {
-			word := f.active
-			if _, err := os.Stat(f.unitPath); err != nil {
-				word = "inactive"
-			}
+			word := f.activeWord()
 			return word, exitForActive(word), nil
 		}
+		// enable, enable --runtime, disable, mask, mask --runtime, start,
+		// restart, stop
 		switch verb {
 		case "enable", "disable", "mask":
 			if containsStr(args, "--runtime") {
@@ -348,17 +388,33 @@ func (f *fakeSystemd) runner() *fakeRunner {
 			}
 			switch verb {
 			case "enable":
-				f.enabled = "enabled"
+				// A masked unit cannot be enabled.
+				if f.mask || f.maskRT {
+					return "Failed to enable unit: masked", 1, nil
+				}
+				f.enable = true
 			case "enable-runtime":
-				f.enabled = "enabled-runtime"
+				if f.mask || f.maskRT {
+					return "Failed to enable unit: masked", 1, nil
+				}
+				f.enableRT = true
 			case "disable":
-				f.enabled = "disabled"
+				// Normalization: remove both persistent and runtime links.
+				f.enable = false
+				f.enableRT = false
 			case "mask":
-				f.enabled = "masked"
+				f.mask = true
+				f.enable = false
+				f.enableRT = false
 			case "mask-runtime":
-				f.enabled = "masked-runtime"
+				f.maskRT = true
+				f.enable = false
+				f.enableRT = false
 			}
 		case "start", "restart":
+			if f.mask || f.maskRT {
+				return "Failed to start unit: masked", 1, nil
+			}
 			f.active = "active"
 		case "stop":
 			f.active = "inactive"
@@ -371,11 +427,40 @@ func (f *fakeSystemd) runner() *fakeRunner {
 	return fr
 }
 
+// setState seeds a prior enablement/active pair. Enablement words that have a
+// real link representation populate the layers; words that only systemctl could
+// report for a synthetic state (not-found, static, dead, unknown, ...) are kept
+// as overrides so the refuse-before-mutation path sees them verbatim.
 func (f *fakeSystemd) setState(enabled, active string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.enabled = enabled
-	f.active = active
+	f.overrideEnabled = ""
+	f.overrideActive = ""
+	f.enable = false
+	f.enableRT = false
+	f.mask = false
+	f.maskRT = false
+	switch enabled {
+	case "enabled":
+		f.enable = true
+	case "enabled-runtime":
+		f.enableRT = true
+	case "masked":
+		f.mask = true
+	case "masked-runtime":
+		f.maskRT = true
+	case "disabled":
+		// No link layers; is-enabled derives from the unit file's presence.
+	default:
+		f.overrideEnabled = enabled
+	}
+	switch active {
+	case "active", "inactive":
+		f.active = active
+	default:
+		f.active = active
+		f.overrideActive = active
+	}
 }
 
 func (f *fakeSystemd) callsContain(needle string) bool {
@@ -418,11 +503,11 @@ func TestInstallFreshAndChanged(t *testing.T) {
 				t.Fatalf("fresh install did not call %q\ncalls: %v", want, fs.calls)
 			}
 		}
-		if fs.active != "active" {
-			t.Fatalf("service not started: %q", fs.active)
+		if fs.activeWord() != "active" {
+			t.Fatalf("service not started: %q", fs.activeWord())
 		}
-		if fs.enabled != "enabled" {
-			t.Fatalf("service not enabled: %q", fs.enabled)
+		if fs.enabledWord() != "enabled" {
+			t.Fatalf("service not enabled: %q", fs.enabledWord())
 		}
 	})
 
@@ -569,8 +654,77 @@ func TestInstallRollbackMatrix(t *testing.T) {
 			if strings.TrimSpace(ew) != p.enabled || strings.TrimSpace(aw) != p.active {
 				t.Fatalf("rollback final raw state %q/%q want %q/%q", ew, aw, p.enabled, p.active)
 			}
-			if fs.enabled != p.enabled || fs.active != p.active {
-				t.Fatalf("rollback final model state %q/%q want %q/%q", fs.enabled, fs.active, p.enabled, p.active)
+			if fs.enabledWord() != p.enabled || fs.activeWord() != p.active {
+				t.Fatalf("rollback final model state %q/%q want %q/%q", fs.enabledWord(), fs.activeWord(), p.enabled, p.active)
+			}
+		})
+	}
+}
+
+// TestInstallRestoresEnablementLayers proves the rollback normalizes
+// enablement links before recreating them, so a runtime-only prior never keeps
+// the persistent link created by the attempted install.
+func TestInstallRestoresEnablementLayers(t *testing.T) {
+	cases := []struct {
+		prior              string
+		wantEnable, wantRT bool
+	}{
+		{"enabled", true, false},
+		{"enabled-runtime", false, true},
+		{"disabled", false, false},
+	}
+	for _, tc := range cases {
+		t.Run("prior="+tc.prior, func(t *testing.T) {
+			m, _, _ := newFakeManager(t)
+			fs := newFakeSystemd(m.unitPath)
+			m.run = fs.runner()
+			if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+				t.Fatal(err)
+			}
+			fs.setState(tc.prior, "inactive")
+			fs.failVerb = "restart"
+			if err := m.install("/configY", "127.0.0.1:8083", "/", os.Stderr); err == nil {
+				t.Fatal("install should fail at restart")
+			}
+			ew, _, _ := m.systemctl("is-enabled", m.unitName)
+			if strings.TrimSpace(ew) != tc.prior {
+				t.Fatalf("is-enabled %q want %q", ew, tc.prior)
+			}
+			if fs.enable != tc.wantEnable || fs.enableRT != tc.wantRT {
+				t.Fatalf("links enable=%v enableRT=%v want %v/%v", fs.enable, fs.enableRT, tc.wantEnable, tc.wantRT)
+			}
+			if fs.mask || fs.maskRT {
+				t.Fatal("unexpected mask link after rollback")
+			}
+		})
+	}
+}
+
+// TestInstallReachesInstalledStateForAcceptedPriors proves every accepted prior
+// state lets the install reach the documented enabled-and-active state, so a
+// state is never accepted merely because rollback could recover from an install
+// that can never succeed.
+func TestInstallReachesInstalledStateForAcceptedPriors(t *testing.T) {
+	for _, p := range [][2]string{
+		{"enabled", "active"}, {"enabled", "inactive"},
+		{"enabled-runtime", "active"}, {"enabled-runtime", "inactive"},
+		{"disabled", "active"}, {"disabled", "inactive"},
+	} {
+		t.Run(p[0]+"/"+p[1], func(t *testing.T) {
+			m, _, _ := newFakeManager(t)
+			fs := newFakeSystemd(m.unitPath)
+			m.run = fs.runner()
+			if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+				t.Fatal(err)
+			}
+			fs.setState(p[0], p[1])
+			if err := m.install("/configY", "127.0.0.1:8083", "/", os.Stderr); err != nil {
+				t.Fatalf("accepted prior %s/%s could not reach the installed state: %v", p[0], p[1], err)
+			}
+			ew, _, _ := m.systemctl("is-enabled", m.unitName)
+			aw, _, _ := m.systemctl("is-active", m.unitName)
+			if strings.TrimSpace(ew) != "enabled" || strings.TrimSpace(aw) != "active" {
+				t.Fatalf("final %q/%q want enabled/active", ew, aw)
 			}
 		})
 	}
@@ -599,11 +753,11 @@ func TestInstallFailureRestoresPriorState(t *testing.T) {
 				if _, statErr := os.Stat(m.unitPath); !errors.Is(statErr, os.ErrNotExist) {
 					t.Fatalf("failed fresh install left the unit behind")
 				}
-				if fs.enabled != "disabled" {
-					t.Fatalf("failed fresh install left enablement %q", fs.enabled)
+				if fs.enabledWord() != "not-found" {
+					t.Fatalf("failed fresh install left enablement %q", fs.enabledWord())
 				}
-				if fs.active != "inactive" {
-					t.Fatalf("failed fresh install left active %q", fs.active)
+				if fs.activeWord() != "inactive" {
+					t.Fatalf("failed fresh install left active %q", fs.activeWord())
 				}
 			})
 		}
@@ -628,11 +782,11 @@ func TestInstallFailureRestoresPriorState(t *testing.T) {
 				if string(priorUnit) != string(after) {
 					t.Fatal("failed reinstall did not restore the prior unit bytes")
 				}
-				if fs.enabled != "enabled-runtime" {
-					t.Fatalf("rollback did not restore enablement %q", fs.enabled)
+				if fs.enabledWord() != "enabled-runtime" {
+					t.Fatalf("rollback did not restore enablement %q", fs.enabledWord())
 				}
-				if fs.active != "inactive" {
-					t.Fatalf("rollback did not restore active %q", fs.active)
+				if fs.activeWord() != "inactive" {
+					t.Fatalf("rollback did not restore active %q", fs.activeWord())
 				}
 			})
 		}
@@ -649,8 +803,8 @@ func TestInstallFailureRestoresPriorState(t *testing.T) {
 		if err := m.install("/configZ", "127.0.0.1:8084", "/", os.Stderr); err == nil {
 			t.Fatal("reinstall with restart failure did not fail")
 		}
-		if fs.enabled != "enabled" || fs.active != "active" {
-			t.Fatalf("rollback did not restore enabled+active, got %q/%q", fs.enabled, fs.active)
+		if fs.enabledWord() != "enabled" || fs.activeWord() != "active" {
+			t.Fatalf("rollback did not restore enabled+active, got %q/%q", fs.enabledWord(), fs.activeWord())
 		}
 	})
 	t.Run("failed fresh install keeps no enablement link or active service", func(t *testing.T) {
