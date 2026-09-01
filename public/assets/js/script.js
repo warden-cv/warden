@@ -491,7 +491,7 @@ function loadAgentSessions(){agentSessions={};agentClosedSessions=[];activeAgent
 async function syncAgentConversations(){const legacy=[...Object.values(agentSessions),...agentClosedSessions].map(safeAgentSession),first=await api('/api/agent/conversations');let stored=first;if(!first.length&&legacy.length){await api('/api/agent/conversations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversations:legacy})});stored=await api('/api/agent/conversations')}agentSessions={};agentClosedSessions=[];for(const item of stored){item.abort=null;item.currentRunId=item.currentRunId||'';if(item.archivedAt){item.closedAt=item.archivedAt;agentClosedSessions.push(item)}else agentSessions[item.id]=item}for(const s of Object.values(agentSessions)){s.busy=(s.state==='running');if(s.followBottom===undefined)s.followBottom=true}if(!Object.keys(agentSessions).length)newAgentSession(workspaceRoot||'',false);if(!agentSessions[activeAgentSessionId])activeAgentSessionId=Object.keys(agentSessions)[0];agentServerReady=true;saveAgentSessions();renderAgentSession();loadAgentStatus()}
 function agentActive(){return agentSessions[activeAgentSessionId]}
 function newAgentSession(workspace='',render=true){const id=agentSid(),now=Date.now();agentSessions[id]={id,workspace,title:'',provider:agentActive()?.provider||'opencode',model:'',openCodeSession:'',state:'idle',createdAt:now,updatedAt:now,events:[],busy:false,abort:null,followBottom:true,unread:0};activeAgentSessionId=id;saveAgentSessions();if(render)renderAgentSession();return agentSessions[id]}
-async function closeAgentSession(id){const s=agentSessions[id];if(!s)return;if(s.busy&&!confirm('This agent is still working. Stop and close it?'))return;if(s.busy){const res=await stopAgentFor(s);if(res&&res.rejected){toast('Could not stop the running agent; the session stays open.',true);return}if(res&&res.draining){toast('Stop accepted; the agent is still winding down.',true);return}if(s.busy)await reconcileAgentRunState(id)}else{s.abort?.abort()}const now=Date.now();agentClosedSessions=[{...safeAgentSession(s),state:'idle',archivedAt:now,closedAt:now},...agentClosedSessions.filter(x=>x.id!==id)].slice(0,20);const fallback=s.workspace||workspaceRoot||'';delete agentSessions[id];if(!Object.keys(agentSessions).length)newAgentSession(fallback,false);if(activeAgentSessionId===id)activeAgentSessionId=Object.keys(agentSessions)[0];saveAgentSessions();renderAgentSession();loadAgentStatus()}
+async function closeAgentSession(id){const s=agentSessions[id];if(!s)return;if(s.busy&&!confirm('This agent is still working. Stop and close it?'))return;if(s.busy){const res=await stopAgentFor(s);if(res&&res.rejected){toast('Could not stop the running agent; the session stays open.',true);return}if(res&&res.draining){toast('Stop accepted; the agent is still winding down.',true);return}if(res&&res.unconfirmed){toast('Could not confirm the stop; the agent is still running.',true);return}if(s.busy)await reconcileAgentRunState(id)}else{s.abort?.abort()}const now=Date.now();agentClosedSessions=[{...safeAgentSession(s),state:'idle',archivedAt:now,closedAt:now},...agentClosedSessions.filter(x=>x.id!==id)].slice(0,20);const fallback=s.workspace||workspaceRoot||'';delete agentSessions[id];if(!Object.keys(agentSessions).length)newAgentSession(fallback,false);if(activeAgentSessionId===id)activeAgentSessionId=Object.keys(agentSessions)[0];saveAgentSessions();renderAgentSession();loadAgentStatus()}
 function restoreAgentSession(id){const i=agentClosedSessions.findIndex(x=>x.id===id);if(i<0)return;const s=agentClosedSessions.splice(i,1)[0];agentSessions[id]={...s,archivedAt:0,busy:false,abort:null};delete agentSessions[id].closedAt;activeAgentSessionId=id;saveAgentSessions();hideAgentMenus();renderAgentSession();loadAgentStatus()}
 function newAgentSameWorkspace(){const s=agentActive();newAgentSession(s?.workspace||workspaceRoot||'');hideAgentMenus();loadAgentStatus()}
 function newAgentWorkspace(){newAgentSession('',true);hideAgentMenus();chooseAgentWorkspace()}
@@ -672,32 +672,54 @@ async function agentAddGeneratedImage(id,im){
 }
 async function runAgent(prompt){const s=agentActive();if(!s||s.busy||!s.workspace)return;const id=s.id;s.busy=true;s.state='running';s.runID='';s.abort=new AbortController();s.model=agentProviders.find(p=>p.id===(s.provider||'opencode'))?.model||s.model||'';if(!s.title)s.title=prompt.split(/\s+/).slice(0,5).join(' ');const images=agentAttachments.map(a=>({name:a.name,data:a.dataUrl}));for(const a of agentAttachments)addAgentEvent(id,'image',a.thumb,a.name);addAgentEvent(id,'user',prompt);agentAttachments=[];agentRenderAttachments();renderAgentSession();if(id===activeAgentSessionId){$('#agent-state').textContent='Working…';$('#editor-agent-state').textContent='Working…'}try{const r=await fetch('/api/agent/run',{method:'POST',headers:{'Content-Type':'application/json','X-Warden-CSRF':csrf},body:JSON.stringify({workspace:s.workspace,prompt,session:s.openCodeSession||'',clientSession:id,provider:s.provider||'opencode',images}),signal:s.abort.signal});if(!r.ok)throw Error((await r.text()).trim()||r.statusText);const reader=r.body.getReader(),dec=new TextDecoder();let buf='';const seenImages=new Set();for(;;){const{value,done}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true});let nl;while((nl=buf.indexOf('\n'))>=0){const line=buf.slice(0,nl).trim();buf=buf.slice(nl+1);if(!line)continue;try{const ev=JSON.parse(line),text=summarizeAgentEvent(ev),raw=ev?.data?.data||ev?.data||{};if(ev.type==='run'&&raw.runID){s.runID=raw.runID;s.currentRunId=raw.runID}if(ev.type==='done'&&raw.sessionID)s.openCodeSession=raw.sessionID;const oc=raw.outcome||'';if(oc)s.state=oc;else if(ev.type==='done')s.state='completed';else if(ev.type==='error')s.state='failed';else if(ev.type==='cancelled')s.state='cancelled';else if(ev.type==='truncated')s.state='truncated';if(ev.type==='done'||ev.type==='error'||ev.type==='cancelled'||ev.type==='truncated'){s.busy=false;s.abort=null}if(text)addAgentEvent(id,agentEventKind(ev),text);if(ev.type==='recovered-images'){for(const im of (raw.images||[]))agentAddGeneratedImage(id,im)}for(const im of agentExtractImages(raw)){if(seenImages.has(im.url))continue;seenImages.add(im.url);agentAddGeneratedImage(id,im)}}catch{addAgentEvent(id,'assistant',line)}}}if(s.workspace===workspaceRoot){loadEditorTree(editorTreePath);loadSourceControl()}}catch(e){s.state='failed';addAgentEvent(id,'error',e.name==='AbortError'?'Agent stopped.':e.message)}finally{if(agentSessions[id]){agentSessions[id].abort=null;saveAgentSessions();if(agentSessions[id]&&agentSessions[id].busy){reconcileAgentRunState(id)}}if(id===activeAgentSessionId){renderAgentSession();loadAgentStatus()}}}
 
-// stopAgent performs a server-side, authenticated Stop for the active run. The
-// streaming request is left open; only if the cancellation request fails or
-// exceeds a short timeout does the client fall back to aborting the fetch.
+// stopAgent performs a server-side, authenticated Stop for the active run and
+// surfaces the distinct outcome: terminal stop, explicit rejection, accepted-
+// but-draining, or an unconfirmed (timeout/transport) result.
 async function stopAgent(){
   const s=agentActive();if(!s)return;
   const res=await stopAgentFor(s);
   if(res&&res.rejected)toast('Could not stop the running agent.',true);
   else if(res&&res.draining)toast('Stop accepted; the agent is still winding down.',true);
+  else if(res&&res.unconfirmed)toast('Could not confirm the stop; the agent is still running.',true);
   else toast('Agent stopped.');
 }
+// requestCancel sends the authenticated cancel request and reports whether it
+// was acknowledged, explicitly rejected, or unconfirmed (timeout/transport).
+const AGENT_CANCEL_TIMEOUT_MS=(typeof window!=='undefined'&&window.__AGENT_CANCEL_TIMEOUT_MS)||2000;
+const AGENT_STOP_SETTLE_MS=(typeof window!=='undefined'&&window.__AGENT_STOP_SETTLE_MS)||1500;
+async function requestCancel(runID){
+  let res;
+  try{
+    res=await Promise.race([
+      fetch('/api/agent/cancel',{method:'POST',headers:{'Content-Type':'application/json','X-Warden-CSRF':(typeof csrf!=='undefined'&&csrf)||''},body:JSON.stringify({runID})}),
+      new Promise((_,rej)=>setTimeout(()=>rej(Error('cancel timeout')),AGENT_CANCEL_TIMEOUT_MS))
+    ]);
+  }catch{return {unconfirmed:true}}
+  if(res&&res.ok)return {acknowledged:true};
+  return {rejected:true};
+}
+// stopAgentFor submits the server-side stop and waits for the run to reach a
+// durable terminal state via bounded reconciliation. It resolves to
+// {ok:true} on terminal, {ok:false,rejected:true} on explicit refusal,
+// {ok:false,draining:true} on acknowledged-but-draining, and
+// {ok:false,unconfirmed:true} when the cancel request timed out or failed and
+// the run is still running (never described as an explicit rejection).
 async function stopAgentFor(s){
   if(!s?.busy)return {ok:true};
   const abortFallback=()=>s.abort?.abort();
   if(!s.runID){abortFallback();return {ok:false,rejected:true}}
-  try{
-    await Promise.race([
-      api('/api/agent/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runID:s.runID})}),
-      new Promise((_,rej)=>setTimeout(()=>rej(Error('cancel timeout')),2000))
-    ]);
-    await new Promise(res=>setTimeout(res,1500));
+  const cancelResult=await requestCancel(s.runID);
+  if(cancelResult.rejected)return {ok:false,rejected:true};
+  const acknowledged=cancelResult.acknowledged===true;
+  await new Promise(res=>setTimeout(res,AGENT_STOP_SETTLE_MS));
+  if(s.busy){
+    await reconcileAgentRunState(s.id||activeAgentSessionId, AGENT_RECONCILE_STOP_WAIT_MS);
     if(s.busy){
-      await reconcileAgentRunState(s.id||activeAgentSessionId);
-      if(s.busy)return {ok:false,draining:true};
+      if(acknowledged)return {ok:false,draining:true};
+      return {ok:false,unconfirmed:true};
     }
-    return {ok:true};
-  }catch{return {ok:false,rejected:true}}
+  }
+  return {ok:true};
 }
 
 // reconcileAgentRunState polls the authoritative conversation state after a
@@ -706,15 +728,19 @@ async function stopAgentFor(s){
 // run is terminal, the session is removed, a newer run replaces it, or the
 // documented timeout is reached; concurrent polling is deduplicated.
 const agentReconcilePolls=new Map();
-const AGENT_RECONCILE_MAX_WAIT_MS=30000;
-async function reconcileAgentRunState(id){
+// AGENT_RECONCILE_MAX_WAIT_MS and AGENT_RECONCILE_STOP_WAIT_MS are overridable
+// through the window for tests.
+const AGENT_RECONCILE_MAX_WAIT_MS=(typeof window!=='undefined'&&window.__AGENT_RECONCILE_MAX_WAIT_MS)||30000;
+const AGENT_RECONCILE_STOP_WAIT_MS=(typeof window!=='undefined'&&window.__AGENT_RECONCILE_STOP_WAIT_MS)||5000;
+async function reconcileAgentRunState(id, maxWaitMs){
+  maxWaitMs=maxWaitMs||AGENT_RECONCILE_MAX_WAIT_MS;
   if(!agentSessions[id]||agentReconcilePolls.has(id))return;
   agentReconcilePolls.set(id,true);
   try{
     const start=Date.now();
     const delay=ms=>new Promise(r=>setTimeout(r,ms));
     const targetRunId=agentSessions[id].currentRunId||agentSessions[id].runID||'';
-    while(Date.now()-start<AGENT_RECONCILE_MAX_WAIT_MS){
+    while(Date.now()-start<maxWaitMs){
       const s=agentSessions[id];
       if(!s)return;
       try{

@@ -1246,3 +1246,41 @@ func TestWardenReplacementDoesNotRemoveClientAuthoredText(t *testing.T) {
 		t.Fatalf("assistant transcript = %+v should contain both client 'wor' and 'hello world'", assistant)
 	}
 }
+
+// TestWardenMultipleReplacementsSeparateRuns verifies two replacement recoveries
+// in separate runs each supersede only their own run's fragments.
+func TestWardenMultipleReplacementsSeparateRuns(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+
+	// Run 1: streams "lpha" (a suffix), fails, replaces with "alpha".
+	stdout1 := "{\"type\":\"text\",\"sessionID\":\"s1\",\"part\":{\"type\":\"text\",\"text\":\"lpha\"}}\n{\"type\":\"step_finish\",\"sessionID\":\"s1\",\"part\":{\"reason\":\"stop\"}}\n"
+	fake.invoke(t, stdout1, "", 1, `{"info":{"id":"s1"},"messages":[{"info":{"role":"assistant","finish":"stop"},"parts":[{"type":"text","text":"alpha"}]}]}`)
+	wardenRunRequestSession(t, a, sess, cookie, ws, "convY")
+
+	// Run 2: streams "eta" (a suffix), fails, replaces with "beta".
+	stdout2 := "{\"type\":\"text\",\"sessionID\":\"s2\",\"part\":{\"type\":\"text\",\"text\":\"eta\"}}\n{\"type\":\"step_finish\",\"sessionID\":\"s2\",\"part\":{\"reason\":\"stop\"}}\n"
+	fake.invoke(t, stdout2, "", 1, `{"info":{"id":"s2"},"messages":[{"info":{"role":"assistant","finish":"stop"},"parts":[{"type":"text","text":"beta"}]}]}`)
+	wardenRunRequestSession(t, a, sess, cookie, ws, "convY")
+
+	merged, err := a.loadConversationMerged(user.ID, "convY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assistant := []string{}
+	for _, ev := range merged {
+		if ev.Kind == "assistant" {
+			assistant = append(assistant, strings.TrimSpace(ev.Text))
+		}
+	}
+	want := []string{"alpha", "beta"}
+	if len(assistant) != len(want) {
+		t.Fatalf("assistant transcript = %+v want %+v", assistant, want)
+	}
+	for i := range want {
+		if assistant[i] != want[i] {
+			t.Fatalf("line %d = %q want %q (full: %+v)", i, assistant[i], want[i], assistant)
+		}
+	}
+}
