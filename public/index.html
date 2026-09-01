@@ -143,7 +143,10 @@
 		          <div class="editor-agent-head"><div><strong>Warden Agent</strong><span id="editor-agent-state">Ready</span></div><button id="editor-agent-collapse" title="Collapse coding agent">×</button></div>
 		          <button id="editor-agent-workspace" class="editor-agent-workspace" type="button" title="Choose agent workspace">Open a workspace before starting an agent task.</button>
 		          <div class="agent-sessionbar compact"><div id="editor-agent-session-tabs" class="agent-session-tabs"></div><div class="agent-new-wrap"><button id="editor-agent-new" class="agent-new-button" type="button">＋⌄</button><div id="editor-agent-session-menu" class="agent-session-menu" hidden></div></div></div>
+		          <div class="agent-body compact">
 		          <div id="editor-agent-feed" class="agent-feed editor-agent-feed"><div class="agent-empty"><strong>Give Warden a development task</strong><span>The same coding agent, beside your editor.</span></div></div>
+		          <button id="editorAgentNewActivity" class="agent-new-activity" hidden type="button">New activity ↓</button>
+		          </div>
 		          <div id="editor-agent-compose-resizer" class="agent-compose-resizer" title="Drag to resize prompt area"></div>
 		          <form id="editor-agent-form" class="agent-compose editor-agent-compose">
 		            <textarea id="editor-agent-prompt" placeholder="Implement, investigate, fix, test… · drop or paste images" spellcheck="true"></textarea>
@@ -160,7 +163,11 @@
 		          <div class="agent-head"><div><p class="eyebrow">Coding agent</p><h3>Warden Agent</h3><p>DeepSeek V4 Flash through OpenCode · runs inside the open Editor workspace.</p></div><div class="agent-state"><span id="agent-state-dot" class="status-dot"></span><span id="agent-state">Checking OpenCode…</span></div></div>
 		          <button id="agent-workspace" class="agent-workspace" type="button" title="Choose agent workspace">Choose or open a workspace before starting an agent task.</button>
 		          <div class="agent-sessionbar"><div id="agent-session-tabs" class="agent-session-tabs"></div><div class="agent-new-wrap"><button id="agent-new" class="agent-new-button" type="button">＋⌄</button><div id="agent-session-menu" class="agent-session-menu" hidden></div></div></div>
+		          <div class="agent-body">
 		          <div id="agent-feed" class="agent-feed"><div class="agent-empty"><strong>Give Warden a development task</strong><span>The agent can inspect and modify the workspace, run commands, Git and tests through OpenCode.</span></div></div>
+		          <button id="agentNewActivity" class="agent-new-activity" hidden type="button">New activity ↓</button>
+		          <aside id="agentTaskPanel" class="agent-task-panel" hidden><div class="agent-task-head"><span>Tasks</span><span id="agentTaskProgress" class="agent-task-progress"></span><button id="agentTaskToggle" class="agent-task-toggle" type="button" title="Hide tasks">×</button></div><div id="agentTaskList" class="agent-task-list"></div></aside>
+		          </div>
 		          <div id="agent-compose-resizer" class="agent-compose-resizer" title="Drag to resize prompt area"></div>
 		          <form id="agent-form" class="agent-compose">
 		            <textarea id="agent-prompt" placeholder="Implement, investigate, fix, test… · drop or paste images" spellcheck="true"></textarea>
