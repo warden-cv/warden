@@ -47,7 +47,7 @@ class Node {
 
 // Slice the agent UX region of the Warden script so top-level editor/boot
 // code does not run in the sandbox.
-const AGENT_START = 'function agentNearBottom';
+const AGENT_START = 'function safeAgentSession';
 const AGENT_END = 'function changeAgentProvider';
 const regionStart = SCRIPT.indexOf(AGENT_START);
 const regionEnd = SCRIPT.indexOf(AGENT_END, regionStart);
@@ -74,6 +74,7 @@ function makeContext(fetchImpl) {
     document,
     console,
     addEventListener: () => {},
+    requestAnimationFrame: (fn) => { try { fn(); } catch {} },
     innerWidth: 1280,
     innerHeight: 800,
     fetch: (url, opt = {}) => { fetchCalls.push({ url, ...opt }); return impl(url, opt); },
@@ -81,6 +82,12 @@ function makeContext(fetchImpl) {
     setTimeout,
     clearTimeout,
     agentSessions: {},
+    agentClosedSessions: [],
+    agentServerReady: false,
+    agentSaveTimers: new Map(),
+    agentSessionsStorageKey: () => 'warden.agentSessions.test',
+    agentSid: () => 'sid-'+Math.random().toString(36).slice(2),
+    agentSessionTitle: (s) => s?.title || s?.workspace || 'Agent',
     activeAgentSessionId: '',
     workspaceRoot: '/ws',
     agentProviders: [],
@@ -88,6 +95,7 @@ function makeContext(fetchImpl) {
     $: (sel) => el(sel),
     api: (url, opt) => ctx.fetch(url, opt).then((r) => r.json()),
     saveAgentSessions() {},
+    newAgentSession(w){if(w===undefined)w='';return {id:'n',workspace:w,events:[]}},
     renderAgentSession() {},
     renderAgentTabs() {},
     loadAgentStatus() {},
@@ -122,6 +130,7 @@ async function test(name, fn) {
   }
 }
 
+function jsonOk(v){return {ok:true,json:()=>Promise.resolve(v),headers:{get:()=>'application/json'}}}
 function feedNode(scrollTop, scrollHeight, clientHeight) {
   const f = new Node('div');
   f.scrollTop = scrollTop; f.scrollHeight = scrollHeight; f.clientHeight = clientHeight;
@@ -207,7 +216,54 @@ test('busy close keeps the tab when cancellation is rejected', async () => {
     return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
   });
   run(ctx, "agentSessions={a:{id:'a',state:'running',runID:'run-1',busy:true,abort:null,events:[],followBottom:true,unread:0}};activeAgentSessionId='a'");
-  const ok = await run(ctx, 'stopAgentFor(agentSessions["a"])');
-  if (ok !== false) throw new Error('stopAgentFor should return false on rejection');
+  const res = await run(ctx, 'stopAgentFor(agentSessions["a"])');
+  if (!res || res.rejected !== true) throw new Error('stopAgentFor should report rejection');
   if (run(ctx, "agentSessions['a']") === undefined) throw new Error('session was archived despite rejection');
+});
+
+test('real syncAgentConversations keeps spinner for running conversation', async () => {
+  const ctx = loadContext((url) => {
+    if (url === '/api/agent/conversations') return Promise.resolve(jsonOk([{ id: 'a', state: 'running', currentRunId: 'run-1', events: [] }]));
+    return Promise.resolve(jsonOk({}));
+  });
+  run(ctx, "agentSessions={};activeAgentSessionId='a';agentServerReady=true;workspaceRoot='/ws'");
+  await run(ctx, 'syncAgentConversations()');
+  if (!run(ctx, "agentSessions['a'] && agentSessions['a'].busy")) throw new Error('spinner lost after reload while run active');
+  if (run(ctx, "agentSessions['a'].currentRunId") !== 'run-1') throw new Error('currentRunId lost');
+});
+
+test('real syncAgentConversations clears spinner for terminal conversation', async () => {
+  const ctx = loadContext((url) => {
+    if (url === '/api/agent/conversations') return Promise.resolve(jsonOk([{ id: 'a', state: 'interrupted', currentRunId: 'run-1', events: [] }]));
+    return Promise.resolve(jsonOk({}));
+  });
+  run(ctx, "agentSessions={};activeAgentSessionId='a';agentServerReady=true;workspaceRoot='/ws'");
+  await run(ctx, 'syncAgentConversations()');
+  if (run(ctx, "agentSessions['a'] && agentSessions['a'].busy")) throw new Error('spinner not cleared for terminal conversation');
+});
+
+test('two running background tabs both show spinners', async () => {
+  const ctx = loadContext((url) => {
+    if (url === '/api/agent/conversations') return Promise.resolve(jsonOk([
+      { id: 'a', state: 'running', currentRunId: 'r1', events: [] },
+      { id: 'b', state: 'running', currentRunId: 'r2', events: [] },
+    ]));
+    return Promise.resolve(jsonOk({}));
+  });
+  run(ctx, "agentSessions={};activeAgentSessionId='a';agentServerReady=true;workspaceRoot='/ws'");
+  await run(ctx, 'syncAgentConversations()');
+  if (!run(ctx, "agentSessions['a'].busy") || !run(ctx, "agentSessions['b'].busy")) throw new Error('both running tabs should show spinners');
+});
+
+test('reconcileAgentRunState polls until terminal (running->running->completed)', async () => {
+  const states = ['running', 'running', 'completed'];
+  let i = 0;
+  const ctx = loadContext((url) => {
+    if (url === '/api/agent/conversations') return Promise.resolve(jsonOk([{ id: 'a', state: states[Math.min(i++, states.length - 1)], currentRunId: 'run-1', events: [] }]));
+    return Promise.resolve(jsonOk({}));
+  });
+  run(ctx, "agentSessions={a:{id:'a',state:'running',currentRunId:'run-1',busy:true,events:[],followBottom:true,unread:0}};activeAgentSessionId='a'");
+  await run(ctx, 'reconcileAgentRunState("a")');
+  if (run(ctx, "agentSessions['a'].busy")) throw new Error('spinner stuck after polling to terminal');
+  if (run(ctx, "agentSessions['a'].state") !== 'completed') throw new Error('state not updated after polling');
 });

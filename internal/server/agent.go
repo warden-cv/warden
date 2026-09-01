@@ -461,6 +461,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 					cancel()
 					break
 				}
+				streamedAssistant = strings.TrimSpace(streamedAssistant + "\n" + lineText)
 				seq++
 			}
 			if err := writeAgentEvent(w, flusher, "output", map[string]any{"text": string(line)}); err != nil {
@@ -546,19 +547,24 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 					// Reconcile against the assistant text already durably
 					// streamed: only the missing portion is persisted, and
 					// recovery is suppressed when the complete response is
-					// already present.
-					missing, suppressed := reconcileRecovered(streamedAssistant, recovered)
+					// already present. Replacement cases persist the full
+					// response under a replacement marker.
+					text, suppressed, replace := reconcileRecovered(streamedAssistant, recovered)
+					recoveryName := "recovered"
+					if replace {
+						recoveryName = "repl:" + runID
+					}
 					if suppressed {
 						recoveryResult = "ok_suppressed"
-					} else if missing == "" {
+					} else if text == "" {
 						recoveryResult = "ok_empty"
 					} else {
-						if err := a.persistAgentRunEvent(sess.AccountID, runID, clientSession, "assistant", sanitizeAgentDiagnostic(missing, key), "recovered", seq, time.Now().UnixMilli()); err != nil {
+						if err := a.persistAgentRunEvent(sess.AccountID, runID, clientSession, "assistant", sanitizeAgentDiagnostic(text, key), recoveryName, seq, time.Now().UnixMilli()); err != nil {
 							recoveryResult = "persist_failed"
 						} else {
 							seq++
 							recoveryResult = "ok"
-							if err := writeAgentEvent(w, flusher, "recovered", map[string]any{"text": sanitizeAgentDiagnostic(missing, key), "sessionID": sessionID, "recovered": true}); err != nil {
+							if err := writeAgentEvent(w, flusher, "recovered", map[string]any{"text": sanitizeAgentDiagnostic(text, key), "sessionID": sessionID, "recovered": true}); err != nil {
 								deliveryErr = err
 							}
 						}
@@ -603,12 +609,12 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	// details survive reload: name = "run:<runID>:<outcome>". Persistence is
 	// checked: a storage failure must never claim a durable completion.
 	if err := a.persistAgentRunEvent(sess.AccountID, runID, clientSession, terminalKind(outcome), summary, "run:"+runID+":"+string(outcome), seq, time.Now().UnixMilli()); err != nil {
-		a.storageFailure(runID, sess.AccountID, clientSession, sessionID, "terminal event", err, inputTokens, outputTokens, cost, w, flusher, key)
+		a.storageFailure(runID, sess.AccountID, clientSession, sessionID, "terminal event", err, inputTokens, outputTokens, cost, w, flusher, key, seq)
 		return
 	}
 	seq++
 	if err := a.finishDurableAgentRun(runID, sess.AccountID, clientSession, string(outcome), sessionID, summary, inputTokens, outputTokens, cost, diag); err != nil {
-		a.storageFailure(runID, sess.AccountID, clientSession, sessionID, "run-state", err, inputTokens, outputTokens, cost, w, flusher, key)
+		a.storageFailure(runID, sess.AccountID, clientSession, sessionID, "run-state", err, inputTokens, outputTokens, cost, w, flusher, key, seq)
 		return
 	}
 
@@ -671,7 +677,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := a.finishDurableAgentRun(runID, sess.AccountID, clientSession, string(outcome), sessionID, summary2, inputTokens, outputTokens, cost, diag2); err != nil {
-		a.storageFailure(runID, sess.AccountID, clientSession, sessionID, "post-delivery run-state", err, inputTokens, outputTokens, cost, w, flusher, key)
+		a.storageFailure(runID, sess.AccountID, clientSession, sessionID, "post-delivery run-state", err, inputTokens, outputTokens, cost, w, flusher, key, seq)
 	}
 	// Audit records the exact outcome rather than a generic success/error.
 	a.auditEvent(r, "agent_run_finish", "status="+string(outcome)+" workspace="+q.Workspace)
@@ -680,16 +686,23 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 // storageFailure handles a terminal persistence failure: it logs at ERROR with
 // the run ID, best-effort updates the durable run to a storage-failure outcome,
 // and emits a bounded client-facing failure if the stream is still writable.
-func (a *app) storageFailure(runID, accountID, clientSession, sessionID, stage string, err error, input, output uint64, cost float64, w http.ResponseWriter, f http.Flusher, key string) {
+func (a *app) storageFailure(runID, accountID, clientSession, sessionID, stage string, err error, input, output uint64, cost float64, w http.ResponseWriter, f http.Flusher, key string, seq int64) {
 	log.Printf("warden agent run %s: %s persistence failed: %v", runID, stage, err)
 	summary := "The agent result could not be stored durably."
 	d := diagnostics{
 		Outcome:       string(outcomeFailed),
 		Category:      "storage_failure",
 		Summary:       summary,
-		DeliveryError: "persistence failed: " + err.Error(),
+		DeliveryError: stage + ": persistence failed: " + err.Error(),
 	}
 	diag, _ := json.Marshal(d)
+	// Terminal-event supersession: append a sequenced storage-failure terminal
+	// marker so the merged transcript/UI treats it as the authoritative final
+	// outcome, superseding any earlier durable marker. The run row and
+	// diagnostics remain the fallback if this insert also fails.
+	if err := a.persistAgentRunEvent(accountID, runID, clientSession, "error", summary, "run:"+runID+":failed", seq+1, time.Now().UnixMilli()); err != nil {
+		log.Printf("warden agent run %s: storage-failure terminal marker insert failed: %v", runID, err)
+	}
 	if ferr := a.finishDurableAgentRun(runID, accountID, clientSession, string(outcomeFailed), sessionID, summary, input, output, cost, string(diag)); ferr != nil {
 		log.Printf("warden agent run %s: storage-failure finalization also failed: %v", runID, ferr)
 	}
@@ -838,33 +851,32 @@ func boundedTail(s string, n int) string {
 // text already durably streamed for the run, returning the missing portion to
 // persist and whether recovery should be suppressed entirely (the complete
 // response is already present). See Cortex equivalent for the exact policy.
-func reconcileRecovered(streamed, recovered string) (missing string, suppressed bool) {
+func reconcileRecovered(streamed, recovered string) (text string, suppressed, replace bool) {
 	s := strings.TrimSpace(streamed)
 	r := strings.TrimSpace(recovered)
 	if r == "" {
-		return "", true
+		return "", true, false
 	}
 	if s == "" {
-		return r, false
+		return r, false, false
 	}
-	if r == s {
-		return "", true
-	}
-	if strings.Contains(s, r) {
-		return "", true
+	if r == s || strings.Contains(s, r) {
+		return "", true, false
 	}
 	if strings.HasPrefix(r, s) {
-		return strings.TrimSpace(r[len(s):]), false
+		return strings.TrimSpace(r[len(s):]), false, false
 	}
+	// Streamed is a suffix of recovered: a missing prefix cannot be appended
+	// after the existing suffix; the full recovered response replaces it.
 	if strings.HasSuffix(r, s) {
-		return strings.TrimSpace(r[:len(r)-len(s)]), false
+		return r, false, true
 	}
 	for i := len(s); i > 0; i-- {
 		if strings.HasPrefix(r, s[len(s)-i:]) {
-			return strings.TrimSpace(r[i:]), false
+			return strings.TrimSpace(r[i:]), false, false
 		}
 	}
-	return r, false
+	return r, false, false
 }
 
 // sanitizeImageURL validates or rewrites an unsafe file URL before persistence.

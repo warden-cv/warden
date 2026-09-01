@@ -250,6 +250,86 @@ func mergeDurableEvents(server, client []durableAgentEvent) []durableAgentEvent 
 		}
 		return serverSig[durableEventSignature(out[i])] && !serverSig[durableEventSignature(out[j])]
 	})
+	// Terminal-event supersession: the latest durable terminal marker per run
+	// is authoritative; earlier markers are delivery history only.
+	return supersedeDurableTerminalMarkers(supersedeDurableAssistantPrefixes(out))
+}
+
+func durableRunMarkerRunID(name string) string {
+	if m := strings.SplitN(name, ":", 3); len(m) == 3 && m[0] == "run" && m[1] != "" {
+		return m[1]
+	}
+	return ""
+}
+
+func durableReplRunID(name string) string {
+	if strings.HasPrefix(name, "repl:") && len(name) > len("repl:") {
+		return name[len("repl:"):]
+	}
+	return ""
+}
+
+func supersedeDurableTerminalMarkers(events []durableAgentEvent) []durableAgentEvent {
+	last := map[string]int{}
+	for i, e := range events {
+		if id := durableRunMarkerRunID(e.Name); id != "" {
+			last[id] = i
+		}
+	}
+	if len(last) == 0 {
+		return events
+	}
+	drop := map[int]bool{}
+	for i, e := range events {
+		if id := durableRunMarkerRunID(e.Name); id != "" && i != last[id] {
+			drop[i] = true
+		}
+	}
+	out := make([]durableAgentEvent, 0, len(events))
+	for i, e := range events {
+		if !drop[i] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func supersedeDurableAssistantPrefixes(events []durableAgentEvent) []durableAgentEvent {
+	replacements := []durableAgentEvent{}
+	for _, e := range events {
+		if e.Kind == "assistant" && durableReplRunID(e.Name) != "" {
+			replacements = append(replacements, e)
+		}
+	}
+	if len(replacements) == 0 {
+		return events
+	}
+	drop := map[int]bool{}
+	for i, e := range events {
+		if e.Kind != "assistant" || durableReplRunID(e.Name) != "" {
+			continue
+		}
+		et := strings.TrimSpace(e.Text)
+		if et == "" {
+			continue
+		}
+		for _, r := range replacements {
+			rt := strings.TrimSpace(r.Text)
+			if rt != et && strings.Contains(rt, et) {
+				drop[i] = true
+				break
+			}
+		}
+	}
+	if len(drop) == 0 {
+		return events
+	}
+	out := make([]durableAgentEvent, 0, len(events))
+	for i, e := range events {
+		if !drop[i] {
+			out = append(out, e)
+		}
+	}
 	return out
 }
 

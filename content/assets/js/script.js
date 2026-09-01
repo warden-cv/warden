@@ -491,7 +491,7 @@ function loadAgentSessions(){agentSessions={};agentClosedSessions=[];activeAgent
 async function syncAgentConversations(){const legacy=[...Object.values(agentSessions),...agentClosedSessions].map(safeAgentSession),first=await api('/api/agent/conversations');let stored=first;if(!first.length&&legacy.length){await api('/api/agent/conversations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversations:legacy})});stored=await api('/api/agent/conversations')}agentSessions={};agentClosedSessions=[];for(const item of stored){item.abort=null;item.currentRunId=item.currentRunId||'';if(item.archivedAt){item.closedAt=item.archivedAt;agentClosedSessions.push(item)}else agentSessions[item.id]=item}for(const s of Object.values(agentSessions)){s.busy=(s.state==='running');if(s.followBottom===undefined)s.followBottom=true}if(!Object.keys(agentSessions).length)newAgentSession(workspaceRoot||'',false);if(!agentSessions[activeAgentSessionId])activeAgentSessionId=Object.keys(agentSessions)[0];agentServerReady=true;saveAgentSessions();renderAgentSession();loadAgentStatus()}
 function agentActive(){return agentSessions[activeAgentSessionId]}
 function newAgentSession(workspace='',render=true){const id=agentSid(),now=Date.now();agentSessions[id]={id,workspace,title:'',provider:agentActive()?.provider||'opencode',model:'',openCodeSession:'',state:'idle',createdAt:now,updatedAt:now,events:[],busy:false,abort:null,followBottom:true,unread:0};activeAgentSessionId=id;saveAgentSessions();if(render)renderAgentSession();return agentSessions[id]}
-async function closeAgentSession(id){const s=agentSessions[id];if(!s)return;if(s.busy&&!confirm('This agent is still working. Stop and close it?'))return;if(s.busy){const ok=await stopAgentFor(s);if(!ok){toast('Could not stop the running agent; the session stays open.',true);return}if(s.busy)await reconcileAgentRunState(id)}else{s.abort?.abort()}const now=Date.now();agentClosedSessions=[{...safeAgentSession(s),state:'idle',archivedAt:now,closedAt:now},...agentClosedSessions.filter(x=>x.id!==id)].slice(0,20);const fallback=s.workspace||workspaceRoot||'';delete agentSessions[id];if(!Object.keys(agentSessions).length)newAgentSession(fallback,false);if(activeAgentSessionId===id)activeAgentSessionId=Object.keys(agentSessions)[0];saveAgentSessions();renderAgentSession();loadAgentStatus()}
+async function closeAgentSession(id){const s=agentSessions[id];if(!s)return;if(s.busy&&!confirm('This agent is still working. Stop and close it?'))return;if(s.busy){const res=await stopAgentFor(s);if(res&&res.rejected){toast('Could not stop the running agent; the session stays open.',true);return}if(res&&res.draining){toast('Stop accepted; the agent is still winding down.',true);return}if(s.busy)await reconcileAgentRunState(id)}else{s.abort?.abort()}const now=Date.now();agentClosedSessions=[{...safeAgentSession(s),state:'idle',archivedAt:now,closedAt:now},...agentClosedSessions.filter(x=>x.id!==id)].slice(0,20);const fallback=s.workspace||workspaceRoot||'';delete agentSessions[id];if(!Object.keys(agentSessions).length)newAgentSession(fallback,false);if(activeAgentSessionId===id)activeAgentSessionId=Object.keys(agentSessions)[0];saveAgentSessions();renderAgentSession();loadAgentStatus()}
 function restoreAgentSession(id){const i=agentClosedSessions.findIndex(x=>x.id===id);if(i<0)return;const s=agentClosedSessions.splice(i,1)[0];agentSessions[id]={...s,archivedAt:0,busy:false,abort:null};delete agentSessions[id].closedAt;activeAgentSessionId=id;saveAgentSessions();hideAgentMenus();renderAgentSession();loadAgentStatus()}
 function newAgentSameWorkspace(){const s=agentActive();newAgentSession(s?.workspace||workspaceRoot||'');hideAgentMenus();loadAgentStatus()}
 function newAgentWorkspace(){newAgentSession('',true);hideAgentMenus();chooseAgentWorkspace()}
@@ -677,9 +677,9 @@ async function runAgent(prompt){const s=agentActive();if(!s||s.busy||!s.workspac
 // exceeds a short timeout does the client fall back to aborting the fetch.
 async function stopAgent(){const s=agentActive();if(!s)return;await stopAgentFor(s)}
 async function stopAgentFor(s){
-  if(!s?.busy)return true;
+  if(!s?.busy)return {ok:true};
   const abortFallback=()=>s.abort?.abort();
-  if(!s.runID){abortFallback();return false}
+  if(!s.runID){abortFallback();return {ok:false,rejected:true}}
   try{
     await Promise.race([
       api('/api/agent/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runID:s.runID})}),
@@ -688,29 +688,44 @@ async function stopAgentFor(s){
     await new Promise(res=>setTimeout(res,1500));
     if(s.busy){
       await reconcileAgentRunState(s.id||activeAgentSessionId);
-      if(s.busy){abortFallback();return false}
+      if(s.busy)return {ok:false,draining:true};
     }
-    return true;
-  }catch{abortFallback();return false}
+    return {ok:true};
+  }catch{return {ok:false,rejected:true}}
 }
 
-// reconcileAgentRunState re-fetches the authoritative conversation state after
-// a stream ends without a durable terminal event (disconnect/timeout) so the
-// running spinner reflects the server, not the vanished browser request.
+// reconcileAgentRunState polls the authoritative conversation state after a
+// stream ends without a durable terminal event (disconnect/timeout) so the
+// running spinner reflects the server. It polls with bounded backoff until the
+// run is terminal, the session is removed, a newer run replaces it, or the
+// documented timeout is reached; concurrent polling is deduplicated.
+const agentReconcilePolls=new Map();
+const AGENT_RECONCILE_MAX_WAIT_MS=30000;
 async function reconcileAgentRunState(id){
-  const s=agentSessions[id];if(!s)return;
+  if(!agentSessions[id]||agentReconcilePolls.has(id))return;
+  agentReconcilePolls.set(id,true);
   try{
-    const all=await api('/api/agent/conversations');
-    const rec=all.find(c=>c.id===id);
-    if(!rec)return;
-    const terminal=rec.state!=='running'&&rec.state!=='idle'&&rec.state!=='';
-    s.state=rec.state||s.state;
-    s.currentRunId=rec.currentRunId||'';
-    if(rec.state==='running'){s.busy=true}
-    else if(terminal){s.busy=false}
-    saveAgentSessions();
-    if(activeAgentSessionId===id)renderAgentSession();
-  }catch{}
+    const start=Date.now();
+    const delay=ms=>new Promise(r=>setTimeout(r,ms));
+    while(Date.now()-start<AGENT_RECONCILE_MAX_WAIT_MS){
+      const s=agentSessions[id];
+      if(!s)return;
+      try{
+        const all=await api('/api/agent/conversations');
+        const rec=all.find(c=>c.id===id);
+        if(rec){
+          const terminal=rec.state!=='running'&&rec.state!=='idle'&&rec.state!=='';
+          s.state=rec.state||s.state;
+          if(rec.currentRunId&&rec.currentRunId!==s.currentRunId&&s.currentRunId&&s.busy){s.currentRunId=rec.currentRunId;s.busy=false;saveAgentSessions();if(activeAgentSessionId===id)renderAgentSession();return}
+          s.currentRunId=rec.currentRunId||'';
+          if(rec.state==='running'){s.busy=true}
+          else if(terminal){s.busy=false;saveAgentSessions();if(activeAgentSessionId===id)renderAgentSession();return}
+        }
+      }catch{}
+      if(agentSessions[id]&&!agentSessions[id].busy)return;
+      await delay(Math.min(1500,Date.now()-start+250));
+    }
+  }finally{agentReconcilePolls.delete(id)}
 }
 
 // appendAgentTechnicalDetails rendered a lazy disclosure; it is superseded by

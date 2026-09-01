@@ -835,11 +835,14 @@ func TestWardenAgentPostDeliveryFinalizeFailureFailsClosed(t *testing.T) {
 	ws := agentWorkspace(t, a)
 	stdout := "{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n"
 	fake.invoke(t, stdout, "", 0, `{"info":{"id":"ses_x"},"messages":[]}`)
-	fail := true
+	// Call counter: call 1 is the pre-delivery run-state update (succeeds),
+	// call 2 is the post-delivery diagnostics update (fails), call 3 is the
+	// storage-failure best-effort finalize (succeeds).
+	calls := 0
 	a.failFinishAgentRun = func(runID string) error {
-		if fail {
-			fail = false
-			return errors.New("injected finalize failure")
+		calls++
+		if calls == 2 {
+			return errors.New("injected post-delivery finalize failure")
 		}
 		return nil
 	}
@@ -850,8 +853,62 @@ func TestWardenAgentPostDeliveryFinalizeFailureFailsClosed(t *testing.T) {
 			runID = id
 		}
 	}
+	// The ordinary terminal event must have been delivered before the failure.
+	var sawTerminal bool
+	for _, ev := range events {
+		if et, _ := ev["type"].(string); et == "done" {
+			sawTerminal = true
+		}
+	}
+	if !sawTerminal {
+		t.Fatal("ordinary terminal event was not delivered before post-delivery failure")
+	}
+	if calls != 3 {
+		t.Fatalf("finishDurableAgentRun called %d times, want 3", calls)
+	}
 	if state := wardenRunState(t, a, user.ID, runID); state != string(outcomeFailed) {
 		t.Fatalf("state = %q want failed after post-delivery failure", state)
+	}
+	d := wardenRunDiagnostics(t, a, user.ID, runID)
+	if d.Category != "storage_failure" {
+		t.Fatalf("diagnostics category = %q want storage_failure", d.Category)
+	}
+	if !strings.Contains(d.DeliveryError, "post-delivery run-state") {
+		t.Fatalf("delivery error should name post-delivery run-state: %q", d.DeliveryError)
+	}
+}
+
+func TestWardenAgentPreDeliveryFinalizeFailureFailsClosed(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	stdout := "{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n"
+	fake.invoke(t, stdout, "", 0, `{"info":{"id":"ses_x"},"messages":[]}`)
+	calls := 0
+	a.failFinishAgentRun = func(runID string) error {
+		calls++
+		if calls == 1 {
+			return errors.New("injected pre-delivery finalize failure")
+		}
+		return nil
+	}
+	events := wardenRunRequest(t, a, sess, cookie, ws)
+	var runID string
+	for _, ev := range events {
+		if id, _ := ev["data"].(map[string]any)["runID"].(string); id != "" {
+			runID = id
+		}
+	}
+	for _, ev := range events {
+		if et, _ := ev["type"].(string); et == "done" {
+			t.Fatal("terminal event should not be delivered after pre-delivery failure")
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("finishDurableAgentRun called %d times, want 2", calls)
+	}
+	if state := wardenRunState(t, a, user.ID, runID); state != string(outcomeFailed) {
+		t.Fatalf("state = %q want failed after pre-delivery failure", state)
 	}
 }
 
@@ -888,20 +945,20 @@ func TestWardenAgentUserPromptPersistFailureFailsClosed(t *testing.T) {
 func TestWardenReconcileRecoveredParity(t *testing.T) {
 	cases := []struct {
 		streamed, recovered, want string
-		suppressed                bool
+		suppressed, replace       bool
 	}{
-		{"hello world", "hello world", "", true},
-		{"hello world extra", "hello world", "", true},
-		{"hello world", "hello world more", "more", false},
-		{"world", "hello world", "hello", false},
-		{"prefix mid", "mid suffix", "suffix", false},
-		{"alpha", "beta", "beta", false},
-		{"alpha", "", "", true},
+		{"hello world", "hello world", "", true, false},
+		{"hello world extra", "hello world", "", true, false},
+		{"hello world", "hello world more", "more", false, false},
+		{"world", "hello world", "hello world", false, true},
+		{"prefix mid", "mid suffix", "suffix", false, false},
+		{"alpha", "beta", "beta", false, false},
+		{"alpha", "", "", true, false},
 	}
 	for _, tc := range cases {
-		missing, suppressed := reconcileRecovered(tc.streamed, tc.recovered)
-		if suppressed != tc.suppressed || strings.TrimSpace(missing) != tc.want {
-			t.Fatalf("reconcile(%q,%q) = %q,%v want %q,%v", tc.streamed, tc.recovered, missing, suppressed, tc.want, tc.suppressed)
+		text, suppressed, replace := reconcileRecovered(tc.streamed, tc.recovered)
+		if suppressed != tc.suppressed || replace != tc.replace || strings.TrimSpace(text) != tc.want {
+			t.Fatalf("reconcile(%q,%q) = %q,%v,%v want %q,%v,%v", tc.streamed, tc.recovered, text, suppressed, replace, tc.want, tc.suppressed, tc.replace)
 		}
 	}
 }
@@ -1002,4 +1059,106 @@ func TestWardenAgentNilContextDoneDoesNotLeak(t *testing.T) {
 		t.Fatal("run did not complete with nil Done() context")
 	}
 	_ = user
+}
+
+// TestWardenAgentTerminalMarkerSupersession verifies the reloaded merged
+// transcript shows only the storage-failure terminal marker after a
+// post-delivery finalize failure.
+func TestWardenAgentTerminalMarkerSupersession(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	stdout := "{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n"
+	fake.invoke(t, stdout, "", 0, `{"info":{"id":"ses_x"},"messages":[]}`)
+	calls := 0
+	a.failFinishAgentRun = func(runID string) error {
+		calls++
+		if calls == 2 {
+			return errors.New("injected post-delivery finalize failure")
+		}
+		return nil
+	}
+	events := wardenRunRequest(t, a, sess, cookie, ws)
+	var runID string
+	for _, ev := range events {
+		if id, _ := ev["data"].(map[string]any)["runID"].(string); id != "" {
+			runID = id
+		}
+	}
+	if runID == "" {
+		t.Fatal("no run id")
+	}
+	merged, err := a.loadConversationMerged(user.ID, "conv1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	markers := []durableAgentEvent{}
+	for _, ev := range merged {
+		if durableRunMarkerRunID(ev.Name) == runID {
+			markers = append(markers, ev)
+		}
+	}
+	if len(markers) != 1 {
+		t.Fatalf("expected one authoritative terminal marker, got %d: %+v", len(markers), markers)
+	}
+	if markers[0].Name != "run:"+runID+":failed" {
+		t.Fatalf("terminal marker = %q want run:%s:failed", markers[0].Name, runID)
+	}
+}
+
+// TestWardenReconcileTranscriptOrder reconstructs the final user-visible
+// transcript for overlap cases including non-JSON streamed output.
+func TestWardenReconcileTranscriptOrder(t *testing.T) {
+	cases := []struct {
+		name      string
+		stdout    string
+		export    string
+		wantOrder []string
+	}{
+		{
+			name:      "streamed prefix then append suffix",
+			stdout:    "{\"type\":\"text\",\"sessionID\":\"ses_x\",\"part\":{\"type\":\"text\",\"text\":\"hello\"}}\n",
+			export:    `{"info":{"id":"ses_x"},"messages":[{"info":{"role":"assistant","finish":"stop"},"parts":[{"type":"text","text":"hello world"}]}]}`,
+			wantOrder: []string{"hello", "world"},
+		},
+		{
+			name:      "streamed suffix then replacement",
+			stdout:    "world\n",
+			export:    `{"info":{"id":"ses_x"},"messages":[{"info":{"role":"assistant","finish":"stop"},"parts":[{"type":"text","text":"hello world"}]}]}`,
+			wantOrder: []string{"hello world"},
+		},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeOpenCode(t)
+			a, user, sess, cookie := wardenAgentTestApp(t, fake)
+			ws := agentWorkspace(t, a)
+			stdout := tc.stdout + "{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n"
+			fake.invoke(t, stdout, "", 1, tc.export)
+			body, _ := json.Marshal(map[string]any{"workspace": ws, "prompt": "test", "clientSession": fmt.Sprintf("conv%d", i), "provider": "opencode"})
+			req := httptest.NewRequest(http.MethodPost, "http://warden/api/agent/run", bytes.NewReader(body))
+			req.AddCookie(cookie)
+			req.Header.Set("X-Warden-CSRF", sess.CSRF)
+			rec := httptest.NewRecorder()
+			a.agentRun(rec, req)
+			merged, err := a.loadConversationMerged(user.ID, fmt.Sprintf("conv%d", i))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var lines []string
+			for _, ev := range merged {
+				if ev.Kind == "assistant" {
+					lines = append(lines, ev.Text)
+				}
+			}
+			if len(lines) != len(tc.wantOrder) {
+				t.Fatalf("transcript lines = %d want %d: %+v", len(lines), len(tc.wantOrder), lines)
+			}
+			for j, want := range tc.wantOrder {
+				if strings.TrimSpace(lines[j]) != want {
+					t.Fatalf("line %d = %q want %q (full: %+v)", j, lines[j], want, lines)
+				}
+			}
+		})
+	}
 }
