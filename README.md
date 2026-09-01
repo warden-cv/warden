@@ -58,6 +58,19 @@ The user unit is written to `~/.config/systemd/user/warden.service` and managed 
 
 `service install --system` (system-wide units) is a documented follow-up and is not yet supported; user mode is the default.
 
+### Persistence and lingering
+
+The installed service runs independently of the terminal that launched it. Closing that terminal does not stop the service; `warden service uninstall` (or `systemctl --user stop warden.service`) is how you stop it deliberately.
+
+The unit belongs to your OS user's systemd user manager, so it normally starts when that manager starts (your first login or boot, depending on the distribution). If Warden should keep running after you log out, or start at boot before any interactive login, the user manager itself must be allowed to run without a session — that is what *lingering* enables:
+
+```sh
+loginctl show-user "$USER" -p Linger
+loginctl enable-linger "$USER"
+```
+
+Warden never enables lingering automatically, because it changes what the host runs without a login session — enable it deliberately only when unattended operation is actually required. The recorded unit also contains the absolute executable path that was current at install time; moving or deleting that executable breaks the service until you reinstall.
+
 ### GitHub CLI authentication and the multi-user boundary
 
 Warden is multi-user and intentionally does **not** inherit the host account's GitHub CLI authentication for every account. Agent subprocesses isolate `XDG_CONFIG_HOME` for OpenCode, so `gh` finds no configuration by default — this is the desired default-deny behavior. To grant one account access to the host GitHub CLI deliberately, set that account's environment in **System → Access → Accounts → that account → Environment overrides**:
