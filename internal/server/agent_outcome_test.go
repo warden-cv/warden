@@ -113,7 +113,12 @@ func agentWorkspace(t *testing.T, a *app) string {
 
 func wardenRunRequest(t *testing.T, a *app, sess session, cookie *http.Cookie, workspace string) []map[string]any {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{"workspace": workspace, "prompt": "test", "clientSession": "conv1", "provider": "opencode"})
+	return wardenRunRequestSession(t, a, sess, cookie, workspace, "conv1")
+}
+
+func wardenRunRequestSession(t *testing.T, a *app, sess session, cookie *http.Cookie, workspace, clientSession string) []map[string]any {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"workspace": workspace, "prompt": "test", "clientSession": clientSession, "provider": "opencode"})
 	req := httptest.NewRequest(http.MethodPost, "http://warden/api/agent/run", bytes.NewReader(body))
 	req.AddCookie(cookie)
 	req.Header.Set("X-Warden-CSRF", sess.CSRF)
@@ -1160,5 +1165,84 @@ func TestWardenReconcileTranscriptOrder(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestWardenReplacementSupersessionIsRunScoped verifies a recovery replacement
+// only removes fragments from its own run, never from an earlier run in the
+// same conversation containing the same text.
+func TestWardenReplacementSupersessionIsRunScoped(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+
+	stdout1 := "{\"type\":\"text\",\"sessionID\":\"ses1\",\"part\":{\"type\":\"text\",\"text\":\"world\"}}\n{\"type\":\"step_finish\",\"sessionID\":\"ses1\",\"part\":{\"reason\":\"stop\"}}\n"
+	fake.invoke(t, stdout1, "", 0, `{"info":{"id":"ses1"},"messages":[]}`)
+	wardenRunRequestSession(t, a, sess, cookie, ws, "convX")
+
+	stdout2 := "world\n{\"type\":\"step_finish\",\"sessionID\":\"ses2\",\"part\":{\"reason\":\"stop\"}}\n"
+	export2 := `{"info":{"id":"ses2"},"messages":[{"info":{"role":"assistant","finish":"stop"},"parts":[{"type":"text","text":"hello world"}]}]}`
+	fake.invoke(t, stdout2, "", 1, export2)
+	wardenRunRequestSession(t, a, sess, cookie, ws, "convX")
+
+	merged, err := a.loadConversationMerged(user.ID, "convX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assistant := []string{}
+	for _, ev := range merged {
+		if ev.Kind == "assistant" {
+			assistant = append(assistant, strings.TrimSpace(ev.Text))
+		}
+	}
+	want := []string{"world", "hello world"}
+	if len(assistant) != len(want) {
+		t.Fatalf("assistant transcript = %+v want %+v", assistant, want)
+	}
+	for i := range want {
+		if assistant[i] != want[i] {
+			t.Fatalf("line %d = %q want %q (full: %+v)", i, assistant[i], want[i], assistant)
+		}
+	}
+}
+
+// TestWardenReplacementDoesNotRemoveClientAuthoredText verifies client-authored
+// assistant events are never dropped by a replacement supersession.
+func TestWardenReplacementDoesNotRemoveClientAuthoredText(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+
+	fake.invoke(t, "world\n{\"type\":\"step_finish\",\"sessionID\":\"s1\",\"part\":{\"reason\":\"stop\"}}\n", "", 1,
+		`{"info":{"id":"s1"},"messages":[{"info":{"role":"assistant","finish":"stop"},"parts":[{"type":"text","text":"hello world"}]}]}`)
+	wardenRunRequestSession(t, a, sess, cookie, ws, "convZ")
+
+	c := durableConversation{ID: "convZ", Workspace: ws, Events: []durableAgentEvent{
+		{Kind: "assistant", Text: "wor", CreatedAt: 1},
+	}}
+	if err := a.saveConversation(user.ID, &c); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := a.loadConversationMerged(user.ID, "convZ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assistant := []string{}
+	for _, ev := range merged {
+		if ev.Kind == "assistant" {
+			assistant = append(assistant, strings.TrimSpace(ev.Text))
+		}
+	}
+	foundWor, foundHello := false, false
+	for _, x := range assistant {
+		if x == "wor" {
+			foundWor = true
+		}
+		if x == "hello world" {
+			foundHello = true
+		}
+	}
+	if !foundWor || !foundHello {
+		t.Fatalf("assistant transcript = %+v should contain both client 'wor' and 'hello world'", assistant)
 	}
 }

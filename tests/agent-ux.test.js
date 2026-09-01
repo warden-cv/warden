@@ -73,6 +73,7 @@ function makeContext(fetchImpl) {
   const ctx = {
     document,
     console,
+    confirm: () => true,
     addEventListener: () => {},
     requestAnimationFrame: (fn) => { try { fn(); } catch {} },
     innerWidth: 1280,
@@ -99,8 +100,11 @@ function makeContext(fetchImpl) {
     renderAgentSession() {},
     renderAgentTabs() {},
     loadAgentStatus() {},
+    populateAgentProviders() {},
+    can: () => true,
     agentEventKind(ev) { const d = ev?.data || {}; const raw = d.data || d; const t = String(raw.type || d.type || ''); if (ev.type === 'error' || ev.type === 'done' || ev.type === 'cancelled') return 'error'; return t.includes('tool') ? 'tool' : 'assistant'; },
     agentEventNode(ev) { const row = new Node('div'); row._text = ev.text || ''; return row; },
+    toast: () => {},
   };
   ctx.window = ctx;
   ctx.globalThis = ctx;
@@ -119,16 +123,19 @@ function run(ctx, code, vars) {
   return vm.runInContext(code, ctx);
 }
 
-async function test(name, fn) {
-  try {
-    await fn();
-    console.log('ok - ' + name);
-  } catch (e) {
-    console.error('FAIL - ' + name);
-    console.error(e && e.stack || e);
-    process.exitCode = 1;
-  }
-}
+// Any asynchronous rejection after a test has been counted must still produce
+// a nonzero process result, never be silently masked.
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION: ' + (reason && reason.stack || reason));
+  process.exitCode = 1;
+});
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION: ' + (err && err.stack || err));
+  process.exitCode = 1;
+});
+
+const __tests = [];
+function test(name, fn) { __tests.push({ name, fn }); }
 
 function jsonOk(v){return {ok:true,json:()=>Promise.resolve(v),headers:{get:()=>'application/json'}}}
 function feedNode(scrollTop, scrollHeight, clientHeight) {
@@ -266,4 +273,60 @@ test('reconcileAgentRunState polls until terminal (running->running->completed)'
   await run(ctx, 'reconcileAgentRunState("a")');
   if (run(ctx, "agentSessions['a'].busy")) throw new Error('spinner stuck after polling to terminal');
   if (run(ctx, "agentSessions['a'].state") !== 'completed') throw new Error('state not updated after polling');
+});
+
+// Run all registered tests sequentially and print a final summary. A single
+// failure or unhandled rejection leaves exitCode nonzero.
+(async function runAll() {
+  let pass = 0, fail = 0;
+  for (const { name, fn } of __tests) {
+    try {
+      await fn();
+      console.log('ok - ' + name);
+      pass++;
+    } catch (e) {
+      console.error('FAIL - ' + name);
+      console.error(e && e.stack || e);
+      process.exitCode = 1;
+      fail++;
+    }
+  }
+  console.log(`\n${pass} passed, ${fail} failed, ${__tests.length} total`);
+  if (fail > 0) process.exitCode = 1;
+})();
+
+// Real closeAgentSession flows.
+test('closeAgentSession keeps tab when cancellation is rejected', async () => {
+  const ctx = loadContext((url) => {
+    if (url === '/api/agent/cancel') return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('not found') });
+    if (url === '/api/agent/conversations') return Promise.resolve(jsonOk([{ id: 'a', state: 'running', currentRunId: 'run-1', events: [] }]));
+    return Promise.resolve(jsonOk({}));
+  });
+  run(ctx, "agentSessions={a:{id:'a',workspace:'/w',state:'running',runID:'run-1',currentRunId:'run-1',busy:true,abort:null,events:[],followBottom:true,unread:0}};activeAgentSessionId='a'");
+  await run(ctx, 'closeAgentSession("a")');
+  if (run(ctx, "agentSessions['a']") === undefined) throw new Error('session archived despite rejected cancellation');
+});
+
+test('closeAgentSession keeps tab when stop accepted but still draining', async () => {
+  let n = 0;
+  const ctx = loadContext((url) => {
+    if (url === '/api/agent/cancel') return Promise.resolve(jsonOk({ cancelled: true }));
+    if (url === '/api/agent/conversations') return Promise.resolve(jsonOk([{ id: 'a', state: n++ < 2 ? 'running' : 'running', currentRunId: 'run-1', events: [] }]));
+    return Promise.resolve(jsonOk({}));
+  });
+  run(ctx, "agentSessions={a:{id:'a',workspace:'/w',state:'running',runID:'run-1',currentRunId:'run-1',busy:true,abort:null,events:[],followBottom:true,unread:0}};activeAgentSessionId='a'");
+  await run(ctx, 'stopAgentFor(agentSessions["a"]).then(()=>{})');
+  if (run(ctx, "agentSessions['a']") === undefined) throw new Error('draining stop should keep the tab');
+});
+
+test('closeAgentSession archives after terminal cancellation', async () => {
+  let n = 0;
+  const ctx = loadContext((url) => {
+    if (url === '/api/agent/cancel') return Promise.resolve(jsonOk({ cancelled: true }));
+    if (url === '/api/agent/conversations') return Promise.resolve(jsonOk([{ id: 'a', state: n++ === 0 ? 'running' : 'cancelled', currentRunId: 'run-1', events: [] }]));
+    return Promise.resolve(jsonOk({}));
+  });
+  run(ctx, "agentSessions={a:{id:'a',workspace:'/w',state:'running',runID:'run-1',currentRunId:'run-1',busy:true,abort:null,events:[],followBottom:true,unread:0}};activeAgentSessionId='a'");
+  await run(ctx, 'closeAgentSession("a")');
+  if (run(ctx, "agentSessions['a']") !== undefined) throw new Error('terminal cancellation should archive the session');
 });

@@ -675,7 +675,13 @@ async function runAgent(prompt){const s=agentActive();if(!s||s.busy||!s.workspac
 // stopAgent performs a server-side, authenticated Stop for the active run. The
 // streaming request is left open; only if the cancellation request fails or
 // exceeds a short timeout does the client fall back to aborting the fetch.
-async function stopAgent(){const s=agentActive();if(!s)return;await stopAgentFor(s)}
+async function stopAgent(){
+  const s=agentActive();if(!s)return;
+  const res=await stopAgentFor(s);
+  if(res&&res.rejected)toast('Could not stop the running agent.',true);
+  else if(res&&res.draining)toast('Stop accepted; the agent is still winding down.',true);
+  else toast('Agent stopped.');
+}
 async function stopAgentFor(s){
   if(!s?.busy)return {ok:true};
   const abortFallback=()=>s.abort?.abort();
@@ -707,6 +713,7 @@ async function reconcileAgentRunState(id){
   try{
     const start=Date.now();
     const delay=ms=>new Promise(r=>setTimeout(r,ms));
+    const targetRunId=agentSessions[id].currentRunId||agentSessions[id].runID||'';
     while(Date.now()-start<AGENT_RECONCILE_MAX_WAIT_MS){
       const s=agentSessions[id];
       if(!s)return;
@@ -714,12 +721,20 @@ async function reconcileAgentRunState(id){
         const all=await api('/api/agent/conversations');
         const rec=all.find(c=>c.id===id);
         if(rec){
-          const terminal=rec.state!=='running'&&rec.state!=='idle'&&rec.state!=='';
+          const authoritativeRunId=rec.currentRunId||'';
+          const authoritativeRunning=rec.state==='running';
+          const authoritativeTerminal=rec.state!=='running'&&rec.state!=='idle'&&rec.state!=='';
           s.state=rec.state||s.state;
-          if(rec.currentRunId&&rec.currentRunId!==s.currentRunId&&s.currentRunId&&s.busy){s.currentRunId=rec.currentRunId;s.busy=false;saveAgentSessions();if(activeAgentSessionId===id)renderAgentSession();return}
-          s.currentRunId=rec.currentRunId||'';
-          if(rec.state==='running'){s.busy=true}
-          else if(terminal){s.busy=false;saveAgentSessions();if(activeAgentSessionId===id)renderAgentSession();return}
+          if(authoritativeRunId&&authoritativeRunId!==targetRunId){
+            s.currentRunId=authoritativeRunId;
+            if(authoritativeRunning){s.busy=true;saveAgentSessions();if(activeAgentSessionId===id)renderAgentSession();return}
+            if(authoritativeTerminal){s.busy=false;saveAgentSessions();if(activeAgentSessionId===id)renderAgentSession();return}
+            await delay(1000);
+            continue;
+          }
+          s.currentRunId=authoritativeRunId||s.currentRunId;
+          if(authoritativeRunning){s.busy=true}
+          else if(authoritativeTerminal){s.busy=false;saveAgentSessions();if(activeAgentSessionId===id)renderAgentSession();return}
         }
       }catch{}
       if(agentSessions[id]&&!agentSessions[id].busy)return;

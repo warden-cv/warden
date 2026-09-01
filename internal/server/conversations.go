@@ -15,6 +15,11 @@ type durableAgentEvent struct {
 	Text      string `json:"text"`
 	Name      string `json:"name,omitempty"`
 	CreatedAt int64  `json:"createdAt,omitempty"`
+	// RunID is a private server-only field carrying the owning run for
+	// server-owned events. It is excluded from JSON and used internally for
+	// run-scoped supersession so a replacement never removes assistant content
+	// from an unrelated run.
+	RunID string `json:"-"`
 }
 
 type durableConversation struct {
@@ -295,10 +300,16 @@ func supersedeDurableTerminalMarkers(events []durableAgentEvent) []durableAgentE
 }
 
 func supersedeDurableAssistantPrefixes(events []durableAgentEvent) []durableAgentEvent {
-	replacements := []durableAgentEvent{}
+	type replacement struct {
+		text string
+		run  string
+	}
+	replacements := []replacement{}
 	for _, e := range events {
-		if e.Kind == "assistant" && durableReplRunID(e.Name) != "" {
-			replacements = append(replacements, e)
+		if e.Kind == "assistant" {
+			if id := durableReplRunID(e.Name); id != "" {
+				replacements = append(replacements, replacement{text: strings.TrimSpace(e.Text), run: id})
+			}
 		}
 	}
 	if len(replacements) == 0 {
@@ -306,7 +317,8 @@ func supersedeDurableAssistantPrefixes(events []durableAgentEvent) []durableAgen
 	}
 	drop := map[int]bool{}
 	for i, e := range events {
-		if e.Kind != "assistant" || durableReplRunID(e.Name) != "" {
+		if e.Kind != "assistant" || durableReplRunID(e.Name) != "" || e.RunID == "" {
+			// Skip replacements and client-authored events (no run identity).
 			continue
 		}
 		et := strings.TrimSpace(e.Text)
@@ -314,8 +326,7 @@ func supersedeDurableAssistantPrefixes(events []durableAgentEvent) []durableAgen
 			continue
 		}
 		for _, r := range replacements {
-			rt := strings.TrimSpace(r.Text)
-			if rt != et && strings.Contains(rt, et) {
+			if r.run == e.RunID && r.text != et && strings.Contains(r.text, et) {
 				drop[i] = true
 				break
 			}
@@ -394,7 +405,7 @@ func (a *app) persistAgentRunEvent(accountID, runID, conversationID, kind, text,
 
 // loadAgentRunEvents returns the server-owned events for a conversation.
 func (a *app) loadAgentRunEvents(accountID, conversationID string) ([]durableAgentEvent, error) {
-	rows, err := a.db.Query(`SELECT e.kind,e.text,e.name,e.created_at
+	rows, err := a.db.Query(`SELECT e.kind,e.text,e.name,e.created_at,e.run_id
 		FROM agent_run_events e
 		WHERE e.account_id=? AND e.conversation_id=? ORDER BY e.created_at, e.sequence`, accountID, conversationID)
 	if err != nil {
@@ -404,7 +415,7 @@ func (a *app) loadAgentRunEvents(accountID, conversationID string) ([]durableAge
 	events := []durableAgentEvent{}
 	for rows.Next() {
 		var event durableAgentEvent
-		if err := rows.Scan(&event.Kind, &event.Text, &event.Name, &event.CreatedAt); err != nil {
+		if err := rows.Scan(&event.Kind, &event.Text, &event.Name, &event.CreatedAt, &event.RunID); err != nil {
 			return nil, err
 		}
 		events = append(events, event)
