@@ -175,3 +175,39 @@ test('unread cleared when switching', async () => {
   run(ctx, "agentSessions['b'].unread=0;activeAgentSessionId='b';");
   if (run(ctx, "agentSessions['b'].unread") !== 0) throw new Error('unread not cleared');
 });
+test('reload while a run remains active keeps the spinner', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',state:'running',currentRunId:'run-1',busy:true,events:[],followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, "(function(){const s=agentSessions['a'];s.busy=(s.state==='running');})()");
+  if (!run(ctx, "agentSessions['a'].busy")) throw new Error('spinner lost after reload while run active');
+  if (run(ctx, "agentSessions['a'].currentRunId") !== 'run-1') throw new Error('currentRunId lost');
+});
+
+test('terminal state received normally clears the spinner', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',state:'running',currentRunId:'run-1',busy:true,events:[],followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, "(function(){const s=agentSessions['a'];s.state='completed';s.busy=false;})()");
+  if (run(ctx, "agentSessions['a'].busy")) throw new Error('spinner not cleared on terminal outcome');
+});
+
+test('reconcile clears spinner for interrupted state after disconnect', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',state:'running',currentRunId:'run-1',busy:true,events:[],followBottom:true,unread:0}};activeAgentSessionId='a'");
+  const rec = { id: 'a', state: 'interrupted', currentRunId: 'run-1' };
+  // Redirect api to return the authoritative record.
+  run(ctx, 'window.__rec=REC;api=async()=>[window.__rec]', { REC: rec });
+  await run(ctx, 'reconcileAgentRunState("a")');
+  if (run(ctx, "agentSessions['a'].busy")) throw new Error('spinner not cleared after interrupted reconciliation');
+});
+
+test('busy close keeps the tab when cancellation is rejected', async () => {
+  let rejected = false;
+  const ctx = loadContext((url, opt) => {
+    if (url === '/api/agent/cancel') { rejected = true; return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('not found') }); }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+  });
+  run(ctx, "agentSessions={a:{id:'a',state:'running',runID:'run-1',busy:true,abort:null,events:[],followBottom:true,unread:0}};activeAgentSessionId='a'");
+  const ok = await run(ctx, 'stopAgentFor(agentSessions["a"])');
+  if (ok !== false) throw new Error('stopAgentFor should return false on rejection');
+  if (run(ctx, "agentSessions['a']") === undefined) throw new Error('session was archived despite rejection');
+});

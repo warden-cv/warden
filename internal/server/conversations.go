@@ -25,6 +25,7 @@ type durableConversation struct {
 	Model           string              `json:"model,omitempty"`
 	OpenCodeSession string              `json:"openCodeSession,omitempty"`
 	State           string              `json:"state,omitempty"`
+	CurrentRunID    string              `json:"currentRunId,omitempty"`
 	CreatedAt       int64               `json:"createdAt"`
 	UpdatedAt       int64               `json:"updatedAt"`
 	ArchivedAt      int64               `json:"archivedAt,omitempty"`
@@ -166,7 +167,7 @@ func (a *app) saveConversation(accountID string, c *durableConversation) error {
 }
 
 func (a *app) loadConversations(accountID string) ([]durableConversation, error) {
-	rows, err := a.db.Query(`SELECT id,title,workspace,provider,model,opencode_session_id,state,created_at,updated_at,archived_at
+	rows, err := a.db.Query(`SELECT id,title,workspace,provider,model,opencode_session_id,state,current_run_id,created_at,updated_at,archived_at
 		FROM conversations WHERE account_id=? ORDER BY updated_at DESC`, accountID)
 	if err != nil {
 		return nil, err
@@ -176,7 +177,7 @@ func (a *app) loadConversations(accountID string) ([]durableConversation, error)
 	for rows.Next() {
 		var c durableConversation
 		var archived sql.NullInt64
-		if err := rows.Scan(&c.ID, &c.Title, &c.Workspace, &c.Provider, &c.Model, &c.OpenCodeSession, &c.State, &c.CreatedAt, &c.UpdatedAt, &archived); err != nil {
+		if err := rows.Scan(&c.ID, &c.Title, &c.Workspace, &c.Provider, &c.Model, &c.OpenCodeSession, &c.State, &c.CurrentRunID, &c.CreatedAt, &c.UpdatedAt, &archived); err != nil {
 			return nil, err
 		}
 		if archived.Valid {
