@@ -279,20 +279,21 @@ func (a *app) startDurableAgentRun(id, accountID, conversationID, prompt, worksp
 	return tx.Commit()
 }
 
-func (a *app) finishDurableAgentRun(id, accountID, conversationID, state, sessionID, message string, input, output uint64, cost float64, diag string) {
+func (a *app) finishDurableAgentRun(id, accountID, conversationID, state, sessionID, message string, input, output uint64, cost float64, diag string) error {
 	now := time.Now().UnixMilli()
 	tx, err := a.db.Begin()
 	if err != nil {
-		return
+		return err
 	}
 	defer tx.Rollback()
 	if _, err = tx.Exec("UPDATE agent_runs SET state=?,finished_at=?,error=?,input_tokens=?,output_tokens=?,estimated_cost_usd=?,diagnostics=? WHERE id=? AND account_id=?", state, now, message, input, output, cost, diag, id, accountID); err != nil {
-		return
+		return err
 	}
 	_, err = tx.Exec(`UPDATE conversations SET state=?,opencode_session_id=CASE WHEN ?='' THEN opencode_session_id ELSE ? END,updated_at=? WHERE account_id=? AND id=? AND current_run_id=?`, state, sessionID, sessionID, now, accountID, conversationID, id)
-	if err == nil {
-		_ = tx.Commit()
+	if err != nil {
+		return err
 	}
+	return tx.Commit()
 }
 
 // persistAgentRunEvent records one server-owned run event before it is

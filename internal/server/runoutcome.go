@@ -2,6 +2,7 @@ package server
 
 import (
 	"io"
+	"net/url"
 	"strings"
 	"sync"
 )
@@ -18,6 +19,9 @@ const (
 	causeRequestCanceled runCause = "request_cancelled"
 	causeOutputLimit     runCause = "output_limit"
 	causeServiceShutdown runCause = "service_shutdown"
+	// causeProviderInsufficientBalance is a derived provider-failure cause,
+	// distinct from any local termination cause.
+	causeProviderInsufficientBalance runCause = "provider_insufficient_balance"
 )
 
 // runOutcome is the terminal classification persisted for a run. It mirrors
@@ -40,18 +44,49 @@ type runState struct {
 	seq      uint64
 	errSeq   uint64
 	causeSeq uint64
-	sealed   bool
+	// providerErrSeq records the sequence at which an authoritative main-session
+	// provider failure was observed, separate from the local cause machine.
+	providerErrSeq uint64
+	sealed         bool
 }
 
 // runStateSnapshot is a consistent view of the machine used by the classifier.
 type runStateSnapshot struct {
-	cause    runCause
-	errSeq   uint64
-	causeSeq uint64
-	sealed   bool
+	cause          runCause
+	errSeq         uint64
+	causeSeq       uint64
+	providerErrSeq uint64
+	sealed         bool
 }
 
 func newRunState() *runState { return &runState{} }
+
+// recordProviderFailureAt promotes a candidate provider failure captured
+// earlier to the recorded provider sequence, preserving chronological order.
+func (s *runState) recordProviderFailureAt(seq uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if seq > 0 && s.providerErrSeq == 0 {
+		s.providerErrSeq = seq
+	}
+}
+
+// nextSeq allocates the next observation sequence without recording semantics.
+func (s *runState) nextSeq() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seq++
+	return s.seq
+}
+
+// recordErrorAt promotes a candidate error captured earlier, preserving order.
+func (s *runState) recordErrorAt(seq uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if seq > 0 && s.errSeq == 0 {
+		s.errSeq = seq
+	}
+}
 
 // recordCause accepts a cause only when the transition is legal and the run
 // has not been sealed.
@@ -108,7 +143,7 @@ func (s *runState) seal() {
 func (s *runState) snapshot() runStateSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return runStateSnapshot{cause: s.cause, errSeq: s.errSeq, causeSeq: s.causeSeq, sealed: s.sealed}
+	return runStateSnapshot{cause: s.cause, errSeq: s.errSeq, causeSeq: s.causeSeq, providerErrSeq: s.providerErrSeq, sealed: s.sealed}
 }
 
 // exitStatus describes the raw process termination facts.
@@ -119,8 +154,16 @@ type exitStatus struct {
 	signal   string
 }
 
-// classifyRun applies the authoritative outcome precedence.
-func classifyRun(state runStateSnapshot, stdoutError bool, validStop bool, exit exitStatus) runOutcome {
+// classifyRun applies the authoritative outcome precedence. Provider failures
+// follow chronological order: a main-session provider failure before an
+// accepted local cause produces failed; a local cause accepted earlier keeps
+// its local outcome.
+func classifyRun(state runStateSnapshot, stdoutError bool, validStop bool, exit exitStatus, providerCause runCause) runOutcome {
+	if providerCause != "" {
+		if state.cause == causeNone || (state.causeSeq > 0 && state.providerErrSeq < state.causeSeq) {
+			return outcomeFailed
+		}
+	}
 	if stdoutError && (state.cause == causeNone || (state.errSeq > 0 && state.causeSeq > 0 && state.errSeq < state.causeSeq)) {
 		return outcomeFailed
 	}
@@ -254,4 +297,76 @@ type diagnostics struct {
 	TerminalEventDeliver bool     `json:"terminalEventDelivered,omitempty"`
 	DeliveryError        string   `json:"deliveryError,omitempty"`
 	OpenCodeVersion      string   `json:"opencodeVersion,omitempty"`
+	Provider             string   `json:"provider,omitempty"`
+	Model                string   `json:"model,omitempty"`
+	ProviderCause        string   `json:"providerCause,omitempty"`
+	BillingURL           string   `json:"billingUrl,omitempty"`
+}
+
+// classifyProviderError recognizes a provider insufficient-balance failure
+// from narrow structured provider evidence. See Cortex equivalent for the
+// exact accepted evidence.
+func classifyProviderError(msg, code string, statusCode int) bool {
+	lower := strings.ToLower(strings.TrimSpace(msg))
+	codeLower := strings.ToLower(strings.TrimSpace(code))
+	switch codeLower {
+	case "insufficient_balance", "insufficient balance", "account_balance_insufficient", "billing_insufficient_balance":
+		return true
+	}
+	if statusCode == 402 {
+		return true
+	}
+	return strings.Contains(lower, "insufficient balance")
+}
+
+// sanitizeBillingURL validates a provider-supplied billing URL strictly:
+// https, exact hostname opencode.ai, no userinfo, no port, no query/fragment,
+// and a /workspace/... path.
+func sanitizeBillingURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > 512 {
+		return ""
+	}
+	for _, r := range raw {
+		if r < 0x20 || r == 0x7f {
+			return ""
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if u.Scheme != "https" || u.Host == "" || u.User != nil || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
+		return ""
+	}
+	if u.Hostname() != "opencode.ai" {
+		return ""
+	}
+	if u.Path == "" || !strings.HasPrefix(u.Path, "/workspace/") {
+		return ""
+	}
+	return u.String()
+}
+
+// extractBillingURL pulls a candidate https billing URL out of a provider
+// error message for later validation.
+func extractBillingURL(msg string) string {
+	i := strings.Index(msg, "https://")
+	if i < 0 {
+		return ""
+	}
+	rest := msg[i:]
+	end := len(rest)
+	for j, r := range rest {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != ':' && r != '/' && r != '.' && r != '-' && r != '_' && r != '?' && r != '=' && r != '&' {
+			end = j
+			break
+		}
+	}
+	return rest[:end]
+}
+
+// insufficientBalanceMessage returns the concise, transcript-safe message.
+func insufficientBalanceMessage(billingURL string) (string, bool) {
+	return "The provider could not run this request because the account has insufficient credit. Add credit or choose another configured provider, then try again.", billingURL != ""
 }

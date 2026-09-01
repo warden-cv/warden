@@ -187,7 +187,7 @@ func TestWardenClassifyRunParity(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := classifyRun(tc.state, tc.stdoutError, tc.validStop, tc.exit); got != tc.want {
+			if got := classifyRun(tc.state, tc.stdoutError, tc.validStop, tc.exit, causeNone); got != tc.want {
 				t.Fatalf("classifyRun = %q want %q", got, tc.want)
 			}
 		})
@@ -635,5 +635,106 @@ func TestWardenMigrationAddsRunEventsAndColumns(t *testing.T) {
 	}
 	if colCount != 1 {
 		t.Fatal("conversations.current_run_id missing after migration")
+	}
+}
+
+// --- provider insufficient-balance (Warden parity) ---
+
+func TestWardenClassifyProviderErrorParity(t *testing.T) {
+	cases := []struct {
+		msg    string
+		code   string
+		status int
+		want   bool
+	}{
+		{"AI_APICallError: Insufficient balance. Manage your billing here: https://opencode.ai/workspace/x/billing", "", 0, true},
+		{"Insufficient balance", "", 0, true},
+		{"", "insufficient_balance", 0, true},
+		{"", "", 402, true},
+		{"Payment required", "", 0, false},
+		{"402 Payment Required", "", 0, false},
+		{"rate limit reached", "", 429, false},
+		{"quota exceeded", "", 0, false},
+		{"API key invalid", "", 401, false},
+	}
+	for _, tc := range cases {
+		if got := classifyProviderError(tc.msg, tc.code, tc.status); got != tc.want {
+			t.Fatalf("classifyProviderError(%q,%q,%d) = %v want %v", tc.msg, tc.code, tc.status, got, tc.want)
+		}
+	}
+}
+
+func TestWardenSanitizeBillingURLParity(t *testing.T) {
+	ok := "https://opencode.ai/workspace/abc/billing"
+	if got := sanitizeBillingURL(ok); got != ok {
+		t.Fatalf("valid URL = %q", got)
+	}
+	for _, u := range []string{
+		"http://opencode.ai/workspace/x/billing",
+		"https://www.opencode.ai/workspace/x/billing",
+		"https://opencode.ai.evil.com/workspace/x",
+		"https://user:pass@opencode.ai/workspace/x",
+		"https://opencode.ai:8443/workspace/x",
+		"https://opencode.ai/",
+		"javascript:alert(1)",
+		"https://opencode.ai/workspace/x?next=https://evil.com",
+	} {
+		if got := sanitizeBillingURL(u); got != "" {
+			t.Fatalf("rejected URL %q accepted as %q", u, got)
+		}
+	}
+}
+
+func TestWardenAgentInsufficientBalanceAccountScoped(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	msg := "AI_APICallError: Insufficient balance. Manage your billing here: https://opencode.ai/workspace/abc/billing"
+	stdout := "{\"type\":\"error\",\"sessionID\":\"ses_x\",\"error\":{\"name\":\"AI_APICallError\",\"data\":{\"message\":\"" + msg + "\"}}}\n"
+	fake.invoke(t, stdout, "", 1, `{"info":{"id":"ses_x"},"messages":[]}`)
+	events := wardenRunRequest(t, a, sess, cookie, ws)
+	var runID string
+	var terminal map[string]any
+	for _, ev := range events {
+		if id, _ := ev["data"].(map[string]any)["runID"].(string); id != "" {
+			runID = id
+		}
+		if t, _ := ev["type"].(string); t == "error" {
+			terminal = ev["data"].(map[string]any)
+		}
+	}
+	if state := wardenRunState(t, a, user.ID, runID); state != string(outcomeFailed) {
+		t.Fatalf("state = %q want failed", state)
+	}
+	d := wardenRunDiagnostics(t, a, user.ID, runID)
+	if d.ProviderCause != string(causeProviderInsufficientBalance) {
+		t.Fatalf("providerCause = %q", d.ProviderCause)
+	}
+	if d.BillingURL != "https://opencode.ai/workspace/abc/billing" {
+		t.Fatalf("billingUrl = %q", d.BillingURL)
+	}
+	if terminal == nil || terminal["cause"] != string(causeProviderInsufficientBalance) {
+		t.Fatalf("terminal payload missing cause: %+v", terminal)
+	}
+	if terminal == nil || terminal["billingUrl"] != "https://opencode.ai/workspace/abc/billing" {
+		t.Fatalf("terminal payload missing billingUrl: %+v", terminal)
+	}
+}
+
+func TestWardenAgentSubagentBillingDoesNotClassifyMain(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	stdout := "{\"type\":\"error\",\"sessionID\":\"ses_sub\",\"error\":{\"data\":{\"message\":\"Insufficient balance\"}}}\n{\"type\":\"step_finish\",\"sessionID\":\"ses_main\",\"part\":{\"reason\":\"stop\"}}\n"
+	fake.invoke(t, stdout, "", 0, `{"info":{"id":"ses_main"},"messages":[]}`)
+	events := wardenRunRequest(t, a, sess, cookie, ws)
+	var runID string
+	for _, ev := range events {
+		if id, _ := ev["data"].(map[string]any)["runID"].(string); id != "" {
+			runID = id
+		}
+	}
+	if state := wardenRunState(t, a, user.ID, runID); state != string(outcomeCompleted) {
+		t.Fatalf("subagent billing state = %q want completed", state)
 	}
 }
