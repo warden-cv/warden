@@ -1433,25 +1433,6 @@ func agentEnvValue(env []string, key string) string {
 	return ""
 }
 
-func ioReadAllLimit(r interface{ Read([]byte) (int, error) }, max int64) ([]byte, error) {
-	var out strings.Builder
-	buf := make([]byte, 4096)
-	for int64(out.Len()) < max {
-		n, e := r.Read(buf)
-		if n > 0 {
-			remain := int(max - int64(out.Len()))
-			if n > remain {
-				n = remain
-			}
-			out.Write(buf[:n])
-		}
-		if e != nil {
-			return []byte(out.String()), nil
-		}
-	}
-	return []byte(out.String()), errors.New("limit reached")
-}
-
 func collectAgentUsage(v any, input, output *uint64, cost *float64) {
 	if xs, ok := v.([]any); ok {
 		for _, x := range xs {

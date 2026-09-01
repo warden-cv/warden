@@ -476,10 +476,32 @@ Deferred work:
 Reviewer:
 ```
 
+```text
+Checkpoint: BH18
+Date:
+Warden commit: this checkpoint commit
+Website source commit:
+Generated website commit:
+Focused evidence: sealed cancellation-cause machine, draining stderr tail, WARN production logging,
+explicit outcome states, account-scoped Stop protocol, server-owned agent_run_events,
+bounded recovery under its own context, restart interrupted sweep, provider output-limit parity
+Full gates: Go test, race, vet, build, frontend, Nift and repository gates passed
+Battle Tested update:
+Other documentation updated: HARDENING-CHECKPOINTS.md
+Findings repaired: INFO stderr shown as the failure message; exit code/signal discarded; recovery
+skipped after non-zero exit; conversation state overwritten by stale client saves; missing restart
+sweep; missing provider byte/event limits; absent server-side Stop protocol
+Retained risks: Windows direct-child cancellation; model output truth; exact late-error cause still
+requires real OpenCode dogfooding under the improved diagnostics
+Deferred work: none
+Reviewer:
+```
+
 ## Campaign status
 
 | Checkpoint | Status | Evidence |
 | --- | --- | --- |
+| BH18 | Complete | Agent outcome machine, Stop protocol, server-owned run events, restart and output-limit parity |
 | BH00 | Complete | Route registry and threat-model baseline |
 | BH01 | Complete | Bounded API bodies, encoding rejection and response headers |
 | BH02 | Complete | Bounded sessions and identity-state revalidation |
