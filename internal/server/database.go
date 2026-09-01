@@ -289,6 +289,26 @@ var databaseMigrations = []databaseMigration{
 		name:    "image attachment names",
 		sql:     `ALTER TABLE conversation_events ADD COLUMN name TEXT NOT NULL DEFAULT '';`,
 	},
+	{
+		version: 9,
+		name:    "server-owned agent run events and outcomes",
+		sql: `CREATE TABLE agent_run_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			account_id TEXT NOT NULL,
+			run_id TEXT NOT NULL,
+			conversation_id TEXT NOT NULL,
+			sequence INTEGER NOT NULL,
+			kind TEXT NOT NULL,
+			text TEXT NOT NULL,
+			name TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			UNIQUE(account_id,run_id,sequence),
+			FOREIGN KEY(account_id,conversation_id) REFERENCES conversations(account_id,id) ON DELETE CASCADE
+		);
+		CREATE INDEX agent_run_events_run_idx ON agent_run_events(account_id,run_id,sequence);
+		ALTER TABLE conversations ADD COLUMN current_run_id TEXT NOT NULL DEFAULT '';
+		ALTER TABLE agent_runs ADD COLUMN diagnostics TEXT NOT NULL DEFAULT '';`,
+	},
 }
 
 func openDatabase(configDir string) (*sql.DB, error) {

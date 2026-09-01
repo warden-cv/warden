@@ -600,7 +600,7 @@ function renderAgentMarkdown(row,text){
 }
 function isAgentToolEventText(t){const lines=String(t??'').split('\n');let h=lines[0]||'';if(/^Provider-reported tool event\s*$/.test(h))h=lines[1]||'';return /^↳ [A-Za-z0-9_.:-]+ · [A-Za-z0-9_.-]+$/.test(h)}
 function renderAgentToolEvent(row,text){const lines=String(text??'').split('\n');let h=lines[0]||'',bodyLines=lines.slice(1);if(/^Provider-reported tool event\s*$/.test(h)){h=lines[1]||'';bodyLines=lines.slice(2)}const m=h.match(/^↳ ([A-Za-z0-9_.:-]+) · ([A-Za-z0-9_.-]+)$/);if(!m){row.textContent=text;return}const head=document.createElement('div');head.className='agent-tool-head';const arrow=document.createElement('span');arrow.className='agent-tool-arrow';arrow.textContent='↳ ';const tool=document.createElement('span');tool.className='agent-tool-name';tool.textContent=m[1];const dot=document.createElement('span');dot.className='agent-tool-separator';dot.textContent=' · ';const status=document.createElement('span');status.className='agent-tool-status '+m[2];status.textContent=m[2];head.append(arrow,tool,dot,status);row.append(head);if(bodyLines.length){const body=document.createElement('div');body.className='agent-tool-body';body.textContent=bodyLines.join('\n');row.append(body)}}
-function agentEventKind(ev){const d=ev?.data||{},raw=d.data||d,t=String(raw.type||d.type||'');if(ev.type==='error'||ev.type==='diagnostic')return'error';if(ev.type==='done')return'done';return t.includes('tool')?'tool':'assistant'}
+function agentEventKind(ev){const d=ev?.data||{},raw=d.data||d,t=String(raw.type||d.type||'');if(ev.type==='error'||ev.type==='diagnostic'||ev.type==='cancelled')return'error';if(ev.type==='done')return'done';return t.includes('tool')?'tool':'assistant'}
 function agentEventNode(ev){const row=document.createElement('div');row.className='agent-event '+ev.kind;row.dataset.kind=ev.kind;if(ev.kind==='tool'||(ev.kind==='assistant'&&isAgentToolEventText(ev.text)))renderAgentToolEvent(row,ev.text);else if(ev.kind==='assistant')renderAgentMarkdown(row,ev.text);else if(ev.kind==='image'){const fig=document.createElement('figure');fig.className='agent-image-attach';const img=document.createElement('img');img.src=ev.text;img.alt=ev.name||'attached image';img.title=ev.name||'';fig.append(img);if(ev.name){const cap=document.createElement('figcaption');cap.textContent=ev.name;fig.append(cap)}row.append(fig)}else row.textContent=ev.text;return row}
 function renderAgentFeed(target){const box=$(target),s=agentActive();if(!box||!s)return;box.innerHTML='';if(!s.events.length){box.innerHTML='<div class="agent-empty"><strong>Give Warden a development task</strong><span>The agent can inspect and modify the selected workspace, run commands, Git and tests through OpenCode.</span></div>';return}for(const ev of s.events)box.append(agentEventNode(ev));box.scrollTop=box.scrollHeight}
 function addAgentEvent(id,kind,text,name=''){const clean=String(text??'').trim();if(!clean)return;const s=agentSessions[id];if(!s)return;s.events.push({kind,text:clean,name,createdAt:Date.now()});s.updatedAt=Date.now();if(s.events.length>500)s.events=s.events.slice(-500);saveAgentSessions();if(id===activeAgentSessionId){for(const target of['#agent-feed','#editor-agent-feed']){const box=$(target);if(!box)continue;box.querySelector('.agent-empty')?.remove();box.append(agentEventNode({kind,text:clean,name}));box.scrollTop=box.scrollHeight}}}
@@ -611,7 +611,7 @@ async function loadAgentStatus(){if(!can('agent.run'))return;const s=agentActive
 async function copyAgentSession(){const s=agentActive();if(!s||!s.events.length){toast('Nothing to copy','warn');return}const labels={user:'You',assistant:'Agent',tool:'Tool',error:'Error',done:'Status'},text=s.events.filter(x=>x.kind!=='image').map(x=>`${labels[x.kind]||'Agent'}:\n${x.text}`).join('\n\n');try{await navigator.clipboard.writeText(text);toast('Agent session copied')}catch{toast('Could not copy agent session','error')}}
 function clippedAgentText(v,max=2400){const s=String(v??'').trim();return s.length>max?s.slice(0,max)+'\n…':s}
 function summarizeAgentTool(raw){const part=raw.part||raw,state=part.state||{},tool=part.tool||raw.tool||raw.name||'tool',status=state.status||'';const input=state.input||part.input||{},lines=[`↳ ${tool}${status?' · '+status:''}`];if(tool==='bash'&&input.command)lines.push(`$ ${input.command}`);else if(input.filePath||input.path)lines.push(String(input.filePath||input.path));else if(input.description)lines.push(String(input.description));const err=state.error||raw.error;if(err)lines.push('ERROR: '+clippedAgentText(typeof err==='string'?err:(err.message||JSON.stringify(err))));else if(state.output)lines.push(clippedAgentText(state.output));return lines.join('\n')}
-function summarizeAgentEvent(ev){const d=ev?.data||{},raw=d.data||d,type=(d.type||raw.type||'').toString();if(ev.type==='error')return raw.message||'Agent failed';if(ev.type==='diagnostic')return raw.message||'';if(ev.type==='recovered')return raw.text||'';if(ev.type==='done'){const i=raw.inputTokens||0,o=raw.outputTokens||0;return i||o?`Done · ${i} input · ${o} output tokens`:'Done'}if(ev.type==='output')return raw.text||'';if(type.includes('tool'))return summarizeAgentTool(raw);const text=raw.part?.text||raw.text||raw.content||raw.message?.content;if(typeof text==='string')return text;if(Array.isArray(text))return text.map(x=>x?.text||'').filter(Boolean).join('\n');return''}
+function summarizeAgentEvent(ev){const d=ev?.data||{},raw=d.data||d,type=(d.type||raw.type||'').toString();if(ev.type==='error')return raw.message||'Agent failed';if(ev.type==='diagnostic')return raw.message||'';if(ev.type==='cancelled')return raw.message||'Agent stopped.';if(ev.type==='truncated')return raw.message||'Provider output was truncated.';if(ev.type==='recovered')return raw.text||'';if(ev.type==='done'){const i=raw.inputTokens||0,o=raw.outputTokens||0;return i||o?`Done · ${i} input · ${o} output tokens`:'Done'}if(ev.type==='output')return raw.text||'';if(type.includes('tool'))return summarizeAgentTool(raw);const text=raw.part?.text||raw.text||raw.content||raw.message?.content;if(typeof text==='string')return text;if(Array.isArray(text))return text.map(x=>x?.text||'').filter(Boolean).join('\n');return''}
 function agentReadDataURL(file){return new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=()=>rej(fr.error);fr.readAsDataURL(file)})}
 function agentThumbnail(dataUrl){return new Promise((res,rej)=>{const img=new Image();img.onload=()=>{const max=512;let w=img.width,h=img.height;if(w>max||h>max){const r=Math.min(max/w,max/h);w=Math.round(w*r);h=Math.round(h*r)}const c=document.createElement('canvas');c.width=w;c.height=h;const ctx=c.getContext('2d');ctx.fillStyle='#111312';ctx.fillRect(0,0,w,h);ctx.drawImage(img,0,0,w,h);res(c.toDataURL('image/jpeg',.8))};img.onerror=()=>rej(new Error('Could not read image'));img.src=dataUrl})}
 function agentAddImage(file){
@@ -666,7 +666,57 @@ async function agentAddGeneratedImage(id,im){
   }catch{return}
   addAgentEvent(id,'image',url,im.name||'Generated image')
 }
-async function runAgent(prompt){const s=agentActive();if(!s||s.busy||!s.workspace)return;const id=s.id;s.busy=true;s.state='running';s.abort=new AbortController();s.model=agentProviders.find(p=>p.id===(s.provider||'opencode'))?.model||s.model||'';if(!s.title)s.title=prompt.split(/\s+/).slice(0,5).join(' ');const images=agentAttachments.map(a=>({name:a.name,data:a.dataUrl}));for(const a of agentAttachments)addAgentEvent(id,'image',a.thumb,a.name);addAgentEvent(id,'user',prompt);agentAttachments=[];agentRenderAttachments();renderAgentSession();if(id===activeAgentSessionId){$('#agent-state').textContent='Working…';$('#editor-agent-state').textContent='Working…'}try{const r=await fetch('/api/agent/run',{method:'POST',headers:{'Content-Type':'application/json','X-Warden-CSRF':csrf},body:JSON.stringify({workspace:s.workspace,prompt,session:s.openCodeSession||'',clientSession:id,provider:s.provider||'opencode',images}),signal:s.abort.signal});if(!r.ok)throw Error((await r.text()).trim()||r.statusText);const reader=r.body.getReader(),dec=new TextDecoder();let buf='';const seenImages=new Set();for(;;){const{value,done}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true});let nl;while((nl=buf.indexOf('\n'))>=0){const line=buf.slice(0,nl).trim();buf=buf.slice(nl+1);if(!line)continue;try{const ev=JSON.parse(line),text=summarizeAgentEvent(ev),raw=ev?.data?.data||ev?.data||{};if(ev.type==='done'&&raw.sessionID)s.openCodeSession=raw.sessionID;if(text)addAgentEvent(id,agentEventKind(ev),text);if(ev.type==='recovered-images'){for(const im of (raw.images||[]))agentAddGeneratedImage(id,im)}for(const im of agentExtractImages(raw)){if(seenImages.has(im.url))continue;seenImages.add(im.url);agentAddGeneratedImage(id,im)}}catch{addAgentEvent(id,'assistant',line)}}}if(s.workspace===workspaceRoot){loadEditorTree(editorTreePath);loadSourceControl()}}catch(e){s.state='failed';addAgentEvent(id,'error',e.name==='AbortError'?'Agent stopped.':e.message)}finally{if(agentSessions[id]){agentSessions[id].busy=false;agentSessions[id].state=agentSessions[id].state==='failed'?'failed':'completed';agentSessions[id].abort=null;saveAgentSessions()}if(id===activeAgentSessionId){renderAgentSession();loadAgentStatus()}}}
+async function runAgent(prompt){const s=agentActive();if(!s||s.busy||!s.workspace)return;const id=s.id;s.busy=true;s.state='running';s.runID='';s.abort=new AbortController();s.model=agentProviders.find(p=>p.id===(s.provider||'opencode'))?.model||s.model||'';if(!s.title)s.title=prompt.split(/\s+/).slice(0,5).join(' ');const images=agentAttachments.map(a=>({name:a.name,data:a.dataUrl}));for(const a of agentAttachments)addAgentEvent(id,'image',a.thumb,a.name);addAgentEvent(id,'user',prompt);agentAttachments=[];agentRenderAttachments();renderAgentSession();if(id===activeAgentSessionId){$('#agent-state').textContent='Working…';$('#editor-agent-state').textContent='Working…'}try{const r=await fetch('/api/agent/run',{method:'POST',headers:{'Content-Type':'application/json','X-Warden-CSRF':csrf},body:JSON.stringify({workspace:s.workspace,prompt,session:s.openCodeSession||'',clientSession:id,provider:s.provider||'opencode',images}),signal:s.abort.signal});if(!r.ok)throw Error((await r.text()).trim()||r.statusText);const reader=r.body.getReader(),dec=new TextDecoder();let buf='';const seenImages=new Set();for(;;){const{value,done}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true});let nl;while((nl=buf.indexOf('\n'))>=0){const line=buf.slice(0,nl).trim();buf=buf.slice(nl+1);if(!line)continue;try{const ev=JSON.parse(line),text=summarizeAgentEvent(ev),raw=ev?.data?.data||ev?.data||{};if(ev.type==='run'&&raw.runID)s.runID=raw.runID;if(ev.type==='done'&&raw.sessionID)s.openCodeSession=raw.sessionID;if(ev.type==='done')s.state='completed';else if(ev.type==='error')s.state='failed';else if(ev.type==='cancelled')s.state='cancelled';else if(ev.type==='truncated')s.state='truncated';if(ev.type==='error'||ev.type==='cancelled'||ev.type==='truncated')appendAgentTechnicalDetails(s.runID);if(text)addAgentEvent(id,agentEventKind(ev),text);if(ev.type==='recovered-images'){for(const im of (raw.images||[]))agentAddGeneratedImage(id,im)}for(const im of agentExtractImages(raw)){if(seenImages.has(im.url))continue;seenImages.add(im.url);agentAddGeneratedImage(id,im)}}catch{addAgentEvent(id,'assistant',line)}}}if(s.workspace===workspaceRoot){loadEditorTree(editorTreePath);loadSourceControl()}}catch(e){s.state='failed';addAgentEvent(id,'error',e.name==='AbortError'?'Agent stopped.':e.message)}finally{if(agentSessions[id]){agentSessions[id].busy=false;agentSessions[id].abort=null;saveAgentSessions()}if(id===activeAgentSessionId){renderAgentSession();loadAgentStatus()}}}
+
+// stopAgent performs a server-side, authenticated Stop for the active run. The
+// streaming request is left open; only if the cancellation request fails or
+// exceeds a short timeout does the client fall back to aborting the fetch.
+async function stopAgent(){
+  const s=agentActive();if(!s?.busy)return;
+  const abortFallback=()=>s.abort?.abort();
+  if(!s.runID)return abortFallback();
+  try{
+    await Promise.race([
+      api('/api/agent/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runID:s.runID})}),
+      new Promise((_,rej)=>setTimeout(()=>rej(Error('cancel timeout')),2000))
+    ]);
+    await new Promise(res=>setTimeout(res,1500));
+    if(s.busy)abortFallback();
+  }catch{abortFallback()}
+}
+
+// appendAgentTechnicalDetails renders a lazy, owner-authorized disclosure that
+// fetches the bounded run diagnostics on demand.
+function appendAgentTechnicalDetails(runID){
+  if(!runID||!activeAgentSessionId)return;
+  const s=agentSessions[activeAgentSessionId];
+  const feed=$('#agent-feed');
+  if(!feed)return;
+  const wrap=document.createElement('details');
+  wrap.className='agent-event tech-details';
+  const sum=document.createElement('summary');
+  sum.textContent='Technical details';
+  const body=document.createElement('div');
+  body.className='tech-body';
+  wrap.append(sum,body);
+  wrap.addEventListener('toggle',async()=>{
+    if(!wrap.open||body.dataset.loaded)return;
+    body.dataset.loaded='1';
+    try{
+      const d=await api('/api/agent/run-diagnostics?runID='+encodeURIComponent(runID));
+      const parts=[];
+      if(d.category)parts.push('Category: '+d.category);
+      if(d.exitCode)parts.push('Exit code: '+d.exitCode);
+      if(d.signal)parts.push('Signal: '+d.signal);
+      if(d.stderrTruncated)parts.push('stderr truncated');
+      if(d.errors&&d.errors.length)parts.push('Errors:\n'+d.errors.join('\n'));
+      if(d.stderrTail)parts.push('stderr tail:\n'+d.stderrTail);
+      body.textContent=parts.join('\n')||'No additional details.';
+    }catch(e){body.textContent='Could not load details: '+e.message}
+  });
+  feed.append(wrap);
+  feed.scrollTop=feed.scrollHeight
+}
 function changeAgentProvider(value){const s=agentActive();if(!s)return;s.provider=value;s.openCodeSession='';saveAgentSessions();populateAgentProviders();loadAgentStatus()}
 $('#agent-workspace')?.addEventListener('click',openAgentWorkspacePicker);
 $('#editor-agent-workspace')?.addEventListener('click',openAgentWorkspacePicker);
@@ -682,7 +732,7 @@ $('#editor-agent-compose-resizer')?.addEventListener('dblclick',()=>applyAgentCo
 restoreAgentComposerHeights();
 $('#agent-form')?.addEventListener('submit',e=>{e.preventDefault();const p=$('#agent-prompt').value.trim();if(!p)return;$('#agent-prompt').value='';runAgent(p)});
 $('#agent-prompt')?.addEventListener('keydown',e=>{if(e.key!=='Enter'||e.shiftKey||e.isComposing)return;e.preventDefault();const p=e.currentTarget.value.trim();if(!p)return;e.currentTarget.value='';runAgent(p)});
-$('#agent-stop')?.addEventListener('click',()=>agentActive()?.abort?.abort());
+$('#agent-stop')?.addEventListener('click',()=>stopAgent());
 $('#agent-copy-session')?.addEventListener('click',copyAgentSession);
 $('#agent-provider')?.addEventListener('change',e=>changeAgentProvider(e.currentTarget.value));
 $('#editor-agent-provider')?.addEventListener('change',e=>changeAgentProvider(e.currentTarget.value));
@@ -706,6 +756,6 @@ const savedAgentWidth=Number(localStorage.getItem(editorAgentWidthKey));requestA
 addEventListener('resize',()=>{const current=parseFloat(getComputedStyle($('.editor-workbench')).getPropertyValue('--editor-agent-width'))||360;applyEditorAgentWidth(current)});addEventListener('resize',()=>{applyAgentComposerHeight($('#agent-form'),$('#agent-form')?.getBoundingClientRect().height||132);applyAgentComposerHeight($('#editor-agent-form'),$('#editor-agent-form')?.getBoundingClientRect().height||118)});
 $('#editor-agent-form')?.addEventListener('submit',e=>{e.preventDefault();const p=$('#editor-agent-prompt').value.trim();if(!p)return;$('#editor-agent-prompt').value='';runAgent(p)});
 $('#editor-agent-prompt')?.addEventListener('keydown',e=>{if(e.key!=='Enter'||e.shiftKey||e.isComposing)return;e.preventDefault();const p=e.currentTarget.value.trim();if(!p)return;e.currentTarget.value='';runAgent(p)});
-$('#editor-agent-stop')?.addEventListener('click',()=>agentActive()?.abort?.abort());
+$('#editor-agent-stop')?.addEventListener('click',()=>stopAgent());
 $('#editor-agent-copy-session')?.addEventListener('click',copyAgentSession);
 })();

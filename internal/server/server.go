@@ -38,6 +38,16 @@ type app struct {
 	totpMu      sync.Mutex
 	totpPending map[string]totpEnrollment
 	oauth       *oauthStateStore
+	runMu       sync.Mutex
+	activeRuns  map[string]*activeRun
+}
+
+// activeRun tracks a live OpenCode process and its synchronized cancellation
+// cause machine. Runs are keyed by run ID and scoped to the owning account.
+type activeRun struct {
+	accountID string
+	cancel    context.CancelFunc
+	state     *runState
 }
 
 func Run(cfg Config) error {
@@ -71,8 +81,11 @@ func Run(cfg Config) error {
 		return e
 	}
 	defer auditFile.Close()
-	a := &app{cfg: cfg, db: db, accounts: accounts, secrets: secrets, aiUsage: aiUsage, files: f, totpPending: map[string]totpEnrollment{}, oauth: newOAuthStateStore(), audit: log.New(auditFile, "", log.LstdFlags|log.LUTC), config: store, setupToken: token(24)}
+	a := &app{cfg: cfg, db: db, accounts: accounts, secrets: secrets, aiUsage: aiUsage, files: f, totpPending: map[string]totpEnrollment{}, oauth: newOAuthStateStore(), audit: log.New(auditFile, "", log.LstdFlags|log.LUTC), config: store, setupToken: token(24), activeRuns: map[string]*activeRun{}}
 	a.auth = newAuth(accounts, cfg.SecureCookies, cfg.ConfigDir)
+	// A process restart cannot preserve a child process. Resolve durable state
+	// before serving so clients never see a permanently running phantom.
+	a.markStaleRunsInterrupted()
 	if err := a.migrateLegacyState(); err != nil {
 		return fmt.Errorf("legacy state migration: %w", err)
 	}
@@ -96,6 +109,7 @@ func Run(cfg Config) error {
 	}
 	srv := &http.Server{Addr: cfg.Listen, Handler: securityHeaders(httpBoundary(proxyTrust(cfg.TrustProxy, mux))), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	log.Printf("Warden %s listening on http://%s (root %s)", cfg.Version, cfg.Listen, f.root)
+	defer a.stopActiveRuns()
 	return srv.ListenAndServe()
 }
 func (a *app) setupStatus(w http.ResponseWriter, r *http.Request) {
@@ -506,3 +520,25 @@ func isLoopbackClient(r *http.Request) bool {
 }
 
 var _ = filepath.Separator
+
+// markStaleRunsInterrupted converts any durable running run left by a previous
+// process into interrupted, matching Cortex's restart contract.
+func (a *app) markStaleRunsInterrupted() {
+	now := time.Now().UnixMilli()
+	_, _ = a.db.Exec("UPDATE agent_runs SET state='interrupted',finished_at=?,error='Warden restarted while the run was active' WHERE state='running'", now)
+	_, _ = a.db.Exec("UPDATE conversations SET state='interrupted',updated_at=? WHERE state='running'", now)
+}
+
+// stopActiveRuns records a service-shutdown cause for every live run and
+// cancels it so active runs classify as interrupted rather than unexplained
+// signals. It is invoked during server shutdown.
+func (a *app) stopActiveRuns() {
+	a.runMu.Lock()
+	defer a.runMu.Unlock()
+	for _, run := range a.activeRuns {
+		run.state.recordCause(causeServiceShutdown)
+		if run.cancel != nil {
+			run.cancel()
+		}
+	}
+}

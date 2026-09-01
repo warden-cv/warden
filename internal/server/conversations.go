@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -127,9 +128,6 @@ func (a *app) saveConversation(accountID string, c *durableConversation) error {
 	if c.Provider == "" {
 		c.Provider = "opencode"
 	}
-	if c.State == "" {
-		c.State = "idle"
-	}
 	c.UpdatedAt = now
 	var archived any
 	if c.ArchivedAt > 0 {
@@ -140,11 +138,14 @@ func (a *app) saveConversation(accountID string, c *durableConversation) error {
 		return err
 	}
 	defer tx.Rollback()
+	// The client never controls conversation state. Only the runner writes
+	// running and terminal transitions; a stale or manipulated browser save
+	// preserves the server's current state.
 	_, err = tx.Exec(`INSERT INTO conversations(account_id,id,title,workspace,provider,model,opencode_session_id,state,created_at,updated_at,archived_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id,id) DO UPDATE SET title=excluded.title,
 		workspace=excluded.workspace,provider=excluded.provider,model=excluded.model,
-		opencode_session_id=excluded.opencode_session_id,state=excluded.state,updated_at=excluded.updated_at,archived_at=excluded.archived_at`,
-		accountID, c.ID, strings.TrimSpace(c.Title), c.Workspace, c.Provider, c.Model, c.OpenCodeSession, c.State, c.CreatedAt, c.UpdatedAt, archived)
+		opencode_session_id=excluded.opencode_session_id,state=conversations.state,updated_at=excluded.updated_at,archived_at=excluded.archived_at`,
+		accountID, c.ID, strings.TrimSpace(c.Title), c.Workspace, c.Provider, c.Model, c.OpenCodeSession, "idle", c.CreatedAt, c.UpdatedAt, archived)
 	if err != nil {
 		return err
 	}
@@ -183,7 +184,7 @@ func (a *app) loadConversations(accountID string) ([]durableConversation, error)
 		if archived.Valid {
 			c.ArchivedAt = archived.Int64
 		}
-		events, err := a.loadConversationEvents(accountID, c.ID)
+		events, err := a.loadConversationMerged(accountID, c.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -210,6 +211,49 @@ func (a *app) loadConversationEvents(accountID, conversationID string) ([]durabl
 	return events, rows.Err()
 }
 
+// loadConversationMerged returns the transcript as the union of server-owned
+// run events and client-authored events, deduplicated by signature.
+func (a *app) loadConversationMerged(accountID, conversationID string) ([]durableAgentEvent, error) {
+	server, err := a.loadAgentRunEvents(accountID, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	client, err := a.loadConversationEvents(accountID, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	return mergeDurableEvents(server, client), nil
+}
+
+func durableEventSignature(e durableAgentEvent) string {
+	return e.Kind + "\x00" + e.Text + "\x00" + e.Name
+}
+
+func mergeDurableEvents(server, client []durableAgentEvent) []durableAgentEvent {
+	available := map[string]int{}
+	serverSig := map[string]bool{}
+	for _, e := range server {
+		available[durableEventSignature(e)]++
+		serverSig[durableEventSignature(e)] = true
+	}
+	out := append([]durableAgentEvent{}, server...)
+	for _, e := range client {
+		sig := durableEventSignature(e)
+		if available[sig] > 0 {
+			available[sig]--
+			continue
+		}
+		out = append(out, e)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAt != out[j].CreatedAt {
+			return out[i].CreatedAt < out[j].CreatedAt
+		}
+		return serverSig[durableEventSignature(out[i])] && !serverSig[durableEventSignature(out[j])]
+	})
+	return out
+}
+
 func (a *app) startDurableAgentRun(id, accountID, conversationID, prompt, workspace, provider, model string) error {
 	now := time.Now().UnixMilli()
 	tx, err := a.db.Begin()
@@ -217,9 +261,16 @@ func (a *app) startDurableAgentRun(id, accountID, conversationID, prompt, worksp
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`INSERT INTO conversations(account_id,id,title,workspace,provider,model,state,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,'running',?,?) ON CONFLICT(account_id,id) DO UPDATE SET workspace=excluded.workspace,
-		provider=excluded.provider,model=excluded.model,state='running',updated_at=excluded.updated_at`, accountID, conversationID, "", workspace, provider, model, now, now); err != nil {
+	var running int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM agent_runs WHERE account_id=? AND conversation_id=? AND state='running'", accountID, conversationID).Scan(&running); err != nil {
+		return err
+	}
+	if running > 0 {
+		return errors.New("agent is already running for this conversation")
+	}
+	if _, err = tx.Exec(`INSERT INTO conversations(account_id,id,title,workspace,provider,model,state,created_at,updated_at,current_run_id)
+		VALUES(?,?,?,?,?,?,'running',?,?,?) ON CONFLICT(account_id,id) DO UPDATE SET workspace=excluded.workspace,
+		provider=excluded.provider,model=excluded.model,state='running',current_run_id=excluded.current_run_id,updated_at=excluded.updated_at`, accountID, conversationID, "", workspace, provider, model, now, now, id); err != nil {
 		return err
 	}
 	if _, err = tx.Exec("INSERT INTO agent_runs(id,account_id,conversation_id,state,prompt,started_at) VALUES(?,?,?,'running',?,?)", id, accountID, conversationID, prompt, now); err != nil {
@@ -228,18 +279,45 @@ func (a *app) startDurableAgentRun(id, accountID, conversationID, prompt, worksp
 	return tx.Commit()
 }
 
-func (a *app) finishDurableAgentRun(id, accountID, conversationID, state, sessionID, message string, input, output uint64, cost float64) {
+func (a *app) finishDurableAgentRun(id, accountID, conversationID, state, sessionID, message string, input, output uint64, cost float64, diag string) {
 	now := time.Now().UnixMilli()
 	tx, err := a.db.Begin()
 	if err != nil {
 		return
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec("UPDATE agent_runs SET state=?,finished_at=?,error=?,input_tokens=?,output_tokens=?,estimated_cost_usd=? WHERE id=? AND account_id=?", state, now, message, input, output, cost, id, accountID); err != nil {
+	if _, err = tx.Exec("UPDATE agent_runs SET state=?,finished_at=?,error=?,input_tokens=?,output_tokens=?,estimated_cost_usd=?,diagnostics=? WHERE id=? AND account_id=?", state, now, message, input, output, cost, diag, id, accountID); err != nil {
 		return
 	}
-	_, err = tx.Exec(`UPDATE conversations SET state=?,opencode_session_id=CASE WHEN ?='' THEN opencode_session_id ELSE ? END,updated_at=? WHERE account_id=? AND id=?`, state, sessionID, sessionID, now, accountID, conversationID)
+	_, err = tx.Exec(`UPDATE conversations SET state=?,opencode_session_id=CASE WHEN ?='' THEN opencode_session_id ELSE ? END,updated_at=? WHERE account_id=? AND id=? AND current_run_id=?`, state, sessionID, sessionID, now, accountID, conversationID, id)
 	if err == nil {
 		_ = tx.Commit()
 	}
+}
+
+// persistAgentRunEvent records one server-owned run event before it is
+// attempted for delivery.
+func (a *app) persistAgentRunEvent(accountID, runID, conversationID, kind, text, name string, sequence, createdAt int64) error {
+	_, err := a.db.Exec(`INSERT INTO agent_run_events(account_id,run_id,conversation_id,sequence,kind,text,name,created_at) VALUES(?,?,?,?,?,?,?,?)`, accountID, runID, conversationID, sequence, kind, text, name, createdAt)
+	return err
+}
+
+// loadAgentRunEvents returns the server-owned events for a conversation.
+func (a *app) loadAgentRunEvents(accountID, conversationID string) ([]durableAgentEvent, error) {
+	rows, err := a.db.Query(`SELECT e.kind,e.text,e.name,e.created_at
+		FROM agent_run_events e
+		WHERE e.account_id=? AND e.conversation_id=? ORDER BY e.created_at, e.sequence`, accountID, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	events := []durableAgentEvent{}
+	for rows.Next() {
+		var event durableAgentEvent
+		if err := rows.Scan(&event.Kind, &event.Text, &event.Name, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
 }

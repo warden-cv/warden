@@ -29,6 +29,7 @@ func (a *app) apiRoutes() []registeredRoute {
 		public("/api/oauth/google/start", a.googleStart), public("/api/oauth/google/callback", a.googleCallback),
 		session("/api/security", a.security), session("/api/ai", a.aiSettings),
 		capability("/api/agent/status", "agent.run", a.agentStatus), capability("/api/agent/run", "agent.run", a.agentRun),
+		capability("/api/agent/cancel", "agent.run", a.agentCancel), capability("/api/agent/run-diagnostics", "agent.run", a.agentRunDiagnostics),
 		capability("/api/agent/image", "agent.run", a.agentImage), capability("/api/agent/models", "ai.use", a.agentModels),
 		capability("/api/agent/conversations", "agent.run", a.conversationsAPI), capability("/api/agent/conversation", "agent.run", a.conversationAPI),
 		session("/api/logout", a.logout), public("/api/session", a.session),

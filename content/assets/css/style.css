@@ -765,3 +765,4 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 .skip-link:focus{transform:translateY(0)}
 :where(button,a,input,select,textarea,summary,[tabindex]):focus-visible{outline:2px solid #80d89a;outline-offset:2px}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}
+.tech-details{width:min(930px,95%);margin-top:2px;padding:6px 12px;border:1px dashed var(--line2);border-radius:7px;background:#141715;color:var(--muted);font:12px/1.5 var(--mono)}.tech-details summary{cursor:pointer;color:var(--muted)}.tech-details[open] summary{margin-bottom:6px}.tech-body{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;color:var(--muted)}
