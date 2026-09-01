@@ -116,11 +116,9 @@ func (a *app) saveConversation(accountID string, c *durableConversation) error {
 	if len(c.Title) > 500 || len(c.Workspace) > 4096 || len(c.Events) > 2000 || len(c.OpenCodeSession) > 256 {
 		return errors.New("conversation exceeds storage limits")
 	}
-	if c.Workspace != "" {
-		if _, err := a.files.resolve(c.Workspace, false); err != nil {
-			return errors.New("invalid conversation workspace")
-		}
-	}
+	// The workspace value is preserved verbatim: a historical or temporarily
+	// unavailable path must never block saving conversation history. Strict
+	// workspace resolution belongs at execution/browsing time, not at save.
 	now := time.Now().UnixMilli()
 	if c.CreatedAt <= 0 {
 		c.CreatedAt = now

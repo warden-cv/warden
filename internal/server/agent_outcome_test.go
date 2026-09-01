@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeOpenCode writes a deterministic fake `opencode` executable into a temp
@@ -439,7 +440,7 @@ func TestWardenAgentCancelRecordsUserStopAndStopsRun(t *testing.T) {
 	a.db = testDB(t, a)
 	ctx, cancel := context.WithCancel(context.Background())
 	a.runMu.Lock()
-	a.activeRuns["run1"] = &activeRun{accountID: user.ID, cancel: cancel, state: newRunState()}
+	a.activeRuns["run1"] = newActiveRun(user.ID, cancel)
 	a.runMu.Unlock()
 	defer func() { a.runMu.Lock(); delete(a.activeRuns, "run1"); a.runMu.Unlock() }()
 
@@ -473,7 +474,7 @@ func TestWardenAgentCancelCrossAccountDenied(t *testing.T) {
 	a.db = testDB(t, a)
 	_, cancel := context.WithCancel(context.Background())
 	a.runMu.Lock()
-	a.activeRuns["run1"] = &activeRun{accountID: "someone-else", cancel: cancel, state: newRunState()}
+	a.activeRuns["run1"] = newActiveRun("someone-else", cancel)
 	a.runMu.Unlock()
 	defer func() { a.runMu.Lock(); delete(a.activeRuns, "run1"); a.runMu.Unlock() }()
 
@@ -736,5 +737,53 @@ func TestWardenAgentSubagentBillingDoesNotClassifyMain(t *testing.T) {
 	}
 	if state := wardenRunState(t, a, user.ID, runID); state != string(outcomeCompleted) {
 		t.Fatalf("subagent billing state = %q want completed", state)
+	}
+}
+
+// TestWardenConversationSavePreservesVerbatimWorkspace verifies a historical or
+// temporarily unavailable workspace never blocks saving conversation history.
+func TestWardenConversationSavePreservesVerbatimWorkspace(t *testing.T) {
+	a, user, _, _ := permissionTestApp(t)
+	a.activeRuns = map[string]*activeRun{}
+	a.files = testFiles(t, a)
+	a.db = testDB(t, a)
+	c := durableConversation{ID: "conv1", Workspace: "/does/not/exist/anywhere", State: "idle", Events: nil}
+	if err := a.saveConversation(user.ID, &c); err != nil {
+		t.Fatalf("save with unavailable workspace failed: %v", err)
+	}
+	var ws string
+	if err := a.db.QueryRow("SELECT workspace FROM conversations WHERE account_id=? AND id='conv1'", user.ID).Scan(&ws); err != nil {
+		t.Fatal(err)
+	}
+	if ws != "/does/not/exist/anywhere" {
+		t.Fatalf("workspace not preserved verbatim: %q", ws)
+	}
+}
+
+// TestWardenShutdownWaitsForPersistence verifies stopActiveRuns waits for the
+// handler's persisted terminal state with a bounded timeout.
+func TestWardenShutdownWaitsForPersistence(t *testing.T) {
+	a, user, _, _ := permissionTestApp(t)
+	a.activeRuns = map[string]*activeRun{}
+	a.files = testFiles(t, a)
+	a.db = testDB(t, a)
+	ctx, cancel := context.WithCancel(context.Background())
+	run := newActiveRun(user.ID, cancel)
+	a.runMu.Lock()
+	a.activeRuns["run1"] = run
+	a.runMu.Unlock()
+	defer func() { a.runMu.Lock(); delete(a.activeRuns, "run1"); a.runMu.Unlock() }()
+	go func() {
+		<-ctx.Done()
+		time.Sleep(30 * time.Millisecond)
+		run.finished()
+	}()
+	start := time.Now()
+	a.stopActiveRuns()
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("stopActiveRuns blocked too long: %v", elapsed)
+	}
+	if snap := run.state.snapshot(); snap.cause != causeServiceShutdown {
+		t.Fatalf("cause = %q want service_shutdown", snap.cause)
 	}
 }

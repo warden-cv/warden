@@ -237,7 +237,8 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	runID := token(18)
-	run := &activeRun{accountID: sess.AccountID, cancel: cancel, state: newRunState()}
+	run := newActiveRun(sess.AccountID, cancel)
+	defer run.finished()
 
 	// Durable creation precedes process start so an untracked OpenCode process
 	// is never launched if persistence fails. Once the durable row exists,

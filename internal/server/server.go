@@ -48,6 +48,17 @@ type activeRun struct {
 	accountID string
 	cancel    context.CancelFunc
 	state     *runState
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+func newActiveRun(accountID string, cancel context.CancelFunc) *activeRun {
+	return &activeRun{accountID: accountID, cancel: cancel, state: newRunState(), done: make(chan struct{})}
+}
+
+// finished marks the run handler's persistence complete exactly once.
+func (r *activeRun) finished() {
+	r.closeOnce.Do(func() { close(r.done) })
 }
 
 func Run(cfg Config) error {
@@ -531,14 +542,26 @@ func (a *app) markStaleRunsInterrupted() {
 
 // stopActiveRuns records a service-shutdown cause for every live run and
 // cancels it so active runs classify as interrupted rather than unexplained
-// signals. It is invoked during server shutdown.
+// signals. It is invoked during server shutdown and waits a bounded period for
+// handlers to persist their interrupted terminal state before the database is
+// closed. If the timeout expires, the run is left recoverably stale and the
+// restart sweep reconciles it.
 func (a *app) stopActiveRuns() {
 	a.runMu.Lock()
-	defer a.runMu.Unlock()
+	runs := make([]*activeRun, 0, len(a.activeRuns))
 	for _, run := range a.activeRuns {
 		run.state.recordCause(causeServiceShutdown)
 		if run.cancel != nil {
 			run.cancel()
+		}
+		runs = append(runs, run)
+	}
+	a.runMu.Unlock()
+	deadline := time.Now().Add(5 * time.Second)
+	for _, run := range runs {
+		select {
+		case <-run.done:
+		case <-time.After(time.Until(deadline)):
 		}
 	}
 }
