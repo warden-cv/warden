@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -786,4 +787,219 @@ func TestWardenShutdownWaitsForPersistence(t *testing.T) {
 	if snap := run.state.snapshot(); snap.cause != causeServiceShutdown {
 		t.Fatalf("cause = %q want service_shutdown", snap.cause)
 	}
+}
+
+// --- fault-injection: terminal persistence must fail closed (Warden parity) ---
+
+func TestWardenAgentTerminalEventInsertFailureFailsClosed(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	stdout := "{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n"
+	fake.invoke(t, stdout, "", 0, `{"info":{"id":"ses_x"},"messages":[]}`)
+	a.failAgentRunEvent = func(runID, kind string) error {
+		switch kind {
+		case "done", "error", "cancelled", "truncated":
+			return errors.New("injected terminal insert failure")
+		}
+		return nil
+	}
+	events := wardenRunRequest(t, a, sess, cookie, ws)
+	var runID string
+	var terminal map[string]any
+	for _, ev := range events {
+		if id, _ := ev["data"].(map[string]any)["runID"].(string); id != "" {
+			runID = id
+		}
+		if et, _ := ev["type"].(string); et == "error" {
+			terminal = ev["data"].(map[string]any)
+		}
+	}
+	if runID == "" {
+		t.Fatal("no run id")
+	}
+	if state := wardenRunState(t, a, user.ID, runID); state != string(outcomeFailed) {
+		t.Fatalf("state = %q want failed (storage failure)", state)
+	}
+	if terminal == nil || terminal["outcome"] != string(outcomeFailed) {
+		t.Fatalf("terminal event missing failure outcome: %+v", terminal)
+	}
+	if msg, _ := terminal["message"].(string); !strings.Contains(msg, "stored durably") {
+		t.Fatalf("terminal message should be bounded storage failure: %q", msg)
+	}
+}
+
+func TestWardenAgentPostDeliveryFinalizeFailureFailsClosed(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	stdout := "{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n"
+	fake.invoke(t, stdout, "", 0, `{"info":{"id":"ses_x"},"messages":[]}`)
+	fail := true
+	a.failFinishAgentRun = func(runID string) error {
+		if fail {
+			fail = false
+			return errors.New("injected finalize failure")
+		}
+		return nil
+	}
+	events := wardenRunRequest(t, a, sess, cookie, ws)
+	var runID string
+	for _, ev := range events {
+		if id, _ := ev["data"].(map[string]any)["runID"].(string); id != "" {
+			runID = id
+		}
+	}
+	if state := wardenRunState(t, a, user.ID, runID); state != string(outcomeFailed) {
+		t.Fatalf("state = %q want failed after post-delivery failure", state)
+	}
+}
+
+func TestWardenAgentUserPromptPersistFailureFailsClosed(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	a.failAgentRunEvent = func(runID, kind string) error {
+		if kind == "user" {
+			return errors.New("injected user prompt failure")
+		}
+		return nil
+	}
+	body, _ := json.Marshal(map[string]any{"workspace": ws, "prompt": "test", "clientSession": "conv1", "provider": "opencode"})
+	req := httptest.NewRequest(http.MethodPost, "http://warden/api/agent/run", bytes.NewReader(body))
+	req.AddCookie(cookie)
+	req.Header.Set("X-Warden-CSRF", sess.CSRF)
+	rec := httptest.NewRecorder()
+	a.agentRun(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d want 500", rec.Code)
+	}
+	var state string
+	if err := a.db.QueryRow("SELECT state FROM agent_runs WHERE conversation_id='conv1' AND account_id=?", user.ID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != string(outcomeFailed) {
+		t.Fatalf("state = %q want failed", state)
+	}
+}
+
+// --- recovery reconciliation parity ---
+
+func TestWardenReconcileRecoveredParity(t *testing.T) {
+	cases := []struct {
+		streamed, recovered, want string
+		suppressed                bool
+	}{
+		{"hello world", "hello world", "", true},
+		{"hello world extra", "hello world", "", true},
+		{"hello world", "hello world more", "more", false},
+		{"world", "hello world", "hello", false},
+		{"prefix mid", "mid suffix", "suffix", false},
+		{"alpha", "beta", "beta", false},
+		{"alpha", "", "", true},
+	}
+	for _, tc := range cases {
+		missing, suppressed := reconcileRecovered(tc.streamed, tc.recovered)
+		if suppressed != tc.suppressed || strings.TrimSpace(missing) != tc.want {
+			t.Fatalf("reconcile(%q,%q) = %q,%v want %q,%v", tc.streamed, tc.recovered, missing, suppressed, tc.want, tc.suppressed)
+		}
+	}
+}
+
+func TestWardenAgentRecoverySuppressedWhenCompleteStreamed(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	stdout := "{\"type\":\"text\",\"sessionID\":\"ses_x\",\"part\":{\"type\":\"text\",\"text\":\"final answer\"}}\n{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n"
+	export := `{"info":{"id":"ses_x"},"messages":[{"info":{"role":"assistant","finish":"stop"},"parts":[{"type":"text","text":"final answer"}]}]}`
+	fake.invoke(t, stdout, "", 1, export)
+	events := wardenRunRequest(t, a, sess, cookie, ws)
+	for _, ev := range events {
+		if et, _ := ev["type"].(string); et == "recovered" {
+			t.Fatalf("recovery not suppressed: %+v", ev)
+		}
+	}
+	var runID string
+	for _, ev := range events {
+		if id, _ := ev["data"].(map[string]any)["runID"].(string); id != "" {
+			runID = id
+		}
+	}
+	d := wardenRunDiagnostics(t, a, user.ID, runID)
+	if d.RecoveryResult != "ok_suppressed" {
+		t.Fatalf("recovery result = %q want ok_suppressed", d.RecoveryResult)
+	}
+}
+
+// --- per-session main-session correlation parity ---
+
+func TestWardenAgentSubagentErrorThenMainBillingError(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	stdout := "{\"type\":\"error\",\"sessionID\":\"ses_sub\",\"error\":{\"data\":{\"message\":\"generic subagent failure\"}}}\n" +
+		"{\"type\":\"step_finish\",\"sessionID\":\"ses_main\",\"part\":{\"reason\":\"stop\"}}\n" +
+		"{\"type\":\"error\",\"sessionID\":\"ses_main\",\"error\":{\"data\":{\"message\":\"Insufficient balance\"}}}\n"
+	fake.invoke(t, stdout, "", 1, `{"info":{"id":"ses_main"},"messages":[]}`)
+	events := wardenRunRequest(t, a, sess, cookie, ws)
+	var runID string
+	for _, ev := range events {
+		if id, _ := ev["data"].(map[string]any)["runID"].(string); id != "" {
+			runID = id
+		}
+	}
+	d := wardenRunDiagnostics(t, a, user.ID, runID)
+	if d.ProviderCause != string(causeProviderInsufficientBalance) {
+		t.Fatalf("main billing error not classified: %q", d.ProviderCause)
+	}
+}
+
+func TestWardenAgentMainStopThenSubagentError(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	stdout := "{\"type\":\"step_finish\",\"sessionID\":\"ses_main\",\"part\":{\"reason\":\"stop\"}}\n" +
+		"{\"type\":\"error\",\"sessionID\":\"ses_sub\",\"error\":{\"data\":{\"message\":\"Insufficient balance\"}}}\n"
+	fake.invoke(t, stdout, "", 0, `{"info":{"id":"ses_main"},"messages":[]}`)
+	events := wardenRunRequest(t, a, sess, cookie, ws)
+	var runID string
+	for _, ev := range events {
+		if id, _ := ev["data"].(map[string]any)["runID"].(string); id != "" {
+			runID = id
+		}
+	}
+	if state := wardenRunState(t, a, user.ID, runID); state != string(outcomeCompleted) {
+		t.Fatalf("main stop then subagent error state = %q want completed", state)
+	}
+}
+
+// --- nil request-context Done() (Warden parity) ---
+
+func TestWardenAgentNilContextDoneDoesNotLeak(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	stdout := "{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n"
+	fake.invoke(t, stdout, "", 0, `{"info":{"id":"ses_x"},"messages":[]}`)
+	body, _ := json.Marshal(map[string]any{"workspace": ws, "prompt": "test", "clientSession": "conv1", "provider": "opencode"})
+	req := httptest.NewRequest(http.MethodPost, "http://warden/api/agent/run", bytes.NewReader(body))
+	req.AddCookie(cookie)
+	req.Header.Set("X-Warden-CSRF", sess.CSRF)
+	req = req.WithContext(context.Background())
+	rec := httptest.NewRecorder()
+	a.agentRun(rec, req)
+	sc := bufio.NewScanner(rec.Body)
+	sawDone := false
+	for sc.Scan() {
+		var ev map[string]any
+		if json.Unmarshal([]byte(sc.Text()), &ev) == nil {
+			if ev["type"] == "done" {
+				sawDone = true
+			}
+		}
+	}
+	if !sawDone {
+		t.Fatal("run did not complete with nil Done() context")
+	}
+	_ = user
 }

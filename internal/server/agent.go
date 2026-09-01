@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -59,6 +60,21 @@ type agentRunRequest struct {
 type imageUpload struct {
 	Name string `json:"name"`
 	Data string `json:"data"`
+}
+
+// sessionEvidence collects per-session activity, terminal and error evidence
+// during the stdout stream so the authoritative main session can be resolved
+// after the loop.
+type sessionEvidence struct {
+	firstSeen     uint64
+	hasActivity   bool
+	lastReason    string
+	stopObs       uint64
+	firstErrSeq   uint64
+	errMsg        string
+	errCode       string
+	errStatus     int
+	errBillingURL string
 }
 
 func (a *app) agentStatus(w http.ResponseWriter, r *http.Request) {
@@ -256,7 +272,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	// sequence zero, before the process starts; provider events begin at one.
 	seq := int64(0)
 	if err := a.persistAgentRunEvent(sess.AccountID, runID, clientSession, "user", q.Prompt, "", seq, time.Now().UnixMilli()); err != nil {
-		a.finishDurableAgentRun(runID, sess.AccountID, clientSession, "failed", "", "persist user prompt: "+err.Error(), 0, 0, 0, "")
+		a.finishRunChecked(runID, sess.AccountID, clientSession, "failed", "persist user prompt: "+err.Error(), 0, 0, 0, "")
 		http.Error(w, "persist user prompt: "+err.Error(), 500)
 		return
 	}
@@ -273,7 +289,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		imageDir, imageFiles, err = writeImageAttachments(q.Images)
 		if err != nil {
 			run.state.recordCause(causeRequestCanceled)
-			a.finishDurableAgentRun(runID, sess.AccountID, clientSession, "failed", "", "invalid image: "+err.Error(), 0, 0, 0, "")
+			a.finishRunChecked(runID, sess.AccountID, clientSession, "failed", "invalid image: "+err.Error(), 0, 0, 0, "")
 			http.Error(w, "invalid image: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -288,14 +304,14 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		run.state.recordCause(causeRequestCanceled)
-		a.finishDurableAgentRun(runID, sess.AccountID, clientSession, "failed", "", "stdout pipe: "+err.Error(), 0, 0, 0, "")
+		a.finishRunChecked(runID, sess.AccountID, clientSession, "failed", "stdout pipe: "+err.Error(), 0, 0, 0, "")
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		run.state.recordCause(causeRequestCanceled)
-		a.finishDurableAgentRun(runID, sess.AccountID, clientSession, "failed", "", "stderr pipe: "+err.Error(), 0, 0, 0, "")
+		a.finishRunChecked(runID, sess.AccountID, clientSession, "failed", "stderr pipe: "+err.Error(), 0, 0, 0, "")
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -306,7 +322,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		run.state.recordCause(causeRequestCanceled)
-		a.finishDurableAgentRun(runID, sess.AccountID, clientSession, "failed", "", "streaming unavailable", 0, 0, 0, "")
+		a.finishRunChecked(runID, sess.AccountID, clientSession, "failed", "streaming unavailable", 0, 0, 0, "")
 		http.Error(w, "streaming unavailable", 500)
 		return
 	}
@@ -314,7 +330,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	if err := cmd.Start(); err != nil {
 		run.state.seal()
 		diag, summary := a.runDiagnostics(outcomeFailed, run.state.snapshot(), "", false, processExitStatus(cmd), nil, nil, "", false, 0, true, nil, map[string]string{"result": "not_attempted"}, causeNone, "", providerID, model)
-		a.finishDurableAgentRun(runID, sess.AccountID, clientSession, "failed", "", summary, 0, 0, 0, diag)
+		a.finishRunChecked(runID, sess.AccountID, clientSession, "failed", summary, 0, 0, 0, diag)
 		_ = writeAgentEvent(w, flusher, "error", map[string]any{"message": summary, "outcome": string(outcomeFailed)})
 		a.auditEvent(r, "agent_run_finish", "status=failed workspace="+q.Workspace)
 		return
@@ -327,26 +343,28 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record request/browser disconnection as a cancellation cause.
-	requestDone := r.Context().Done()
-	go func() {
-		<-requestDone
-		run.state.recordCause(causeRequestCanceled)
-		cancel()
-	}()
+	// Guard against a nil Done() channel (background contexts in tests or
+	// internal callers), where receiving would block forever.
+	if requestDone := r.Context().Done(); requestDone != nil {
+		go func() {
+			<-requestDone
+			run.state.recordCause(causeRequestCanceled)
+			cancel()
+		}()
+	}
 
 	tail := captureTail(stderr, 64<<10)
 	var inputTokens, outputTokens uint64
 	var cost float64
-	activitySessionID := ""
-	lastStopReason := ""
+	sessionID := ""
+	// Per-session evidence collected during the stream and resolved after the
+	// loop so the authoritative main session is not assumed from the first
+	// session seen.
+	sessions := map[string]*sessionEvidence{}
 	validStop := false
-	// Candidate main-session error evidence resolved after the loop.
-	var firstErrorSeq uint64
-	firstErrorSession := ""
-	var firstErrorMsg string
-	firstErrorCode := ""
-	firstErrorStatus := 0
-	var firstErrorBillingURL string
+	// streamedAssistant accumulates the assistant text durably persisted for
+	// the run, used by recovery reconciliation to avoid duplicating content.
+	streamedAssistant := ""
 	persistFailed := false
 	var persistErr string
 	var stdoutScanErr error
@@ -354,6 +372,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	scan := bufio.NewScanner(stdout)
 	scan.Buffer(make([]byte, 64<<10), maxProviderLine)
 	streamBytes, streamEvents := 0, 0
+	obs := uint64(0)
 	for scan.Scan() {
 		line := append([]byte(nil), scan.Bytes()...)
 		streamBytes += len(line)
@@ -366,29 +385,43 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		}
 		var raw map[string]any
 		if json.Unmarshal(line, &raw) == nil {
+			obs++
 			collectAgentUsage(raw, &inputTokens, &outputTokens, &cost)
 			typ, _ := raw["type"].(string)
-			// Activity events establish the target main session.
+			id, _ := raw["sessionID"].(string)
+			if !validAgentSessionID(id) {
+				id = ""
+			}
+			// Activity and step_finish terminal evidence are recorded per
+			// session.
 			if typ == "step_start" || typ == "step_finish" || typ == "text" || typ == "tool_use" || typ == "reasoning" {
-				if id, _ := raw["sessionID"].(string); validAgentSessionID(id) && activitySessionID == "" {
-					activitySessionID = id
+				if id != "" {
+					ev := sessions[id]
+					if ev == nil {
+						ev = &sessionEvidence{firstSeen: obs}
+						sessions[id] = ev
+					}
+					ev.hasActivity = true
+					if typ == "step_finish" {
+						if reason, _ := raw["part"].(map[string]any)["reason"].(string); reason != "" {
+							ev.lastReason = reason
+							ev.stopObs = obs
+						}
+					}
 				}
 			}
-			// Capture the first main-candidate error with its chronological seq.
-			if typ == "error" && firstErrorSession == "" {
-				firstErrorSeq = run.state.nextSeq()
-				firstErrorSession, _ = raw["sessionID"].(string)
-				firstErrorMsg = sanitizeAgentDiagnostic(errorEventText(raw), key)
-				firstErrorCode, firstErrorStatus = providerErrorMeta(raw)
-				firstErrorBillingURL = sanitizeBillingURL(extractBillingURL(firstErrorMsg))
-			}
-			// Completion evidence must belong to the target main session.
-			if typ == "step_finish" {
-				if id, _ := raw["sessionID"].(string); id == activitySessionID && activitySessionID != "" {
-					if reason, _ := raw["part"].(map[string]any)["reason"].(string); reason != "" {
-						lastStopReason = reason
-						validStop = lastStopReason == "stop"
-					}
+			// Capture the first error per session with its chronological seq.
+			if typ == "error" && id != "" {
+				ev := sessions[id]
+				if ev == nil {
+					ev = &sessionEvidence{firstSeen: obs}
+					sessions[id] = ev
+				}
+				if ev.firstErrSeq == 0 {
+					ev.firstErrSeq = run.state.nextSeq()
+					ev.errMsg = sanitizeAgentDiagnostic(errorEventText(raw), key)
+					ev.errCode, ev.errStatus = providerErrorMeta(raw)
+					ev.errBillingURL = sanitizeBillingURL(extractBillingURL(ev.errMsg))
 				}
 			}
 			kind, text, name := normalizedEvent(raw)
@@ -398,6 +431,9 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 					persistErr = err.Error()
 					cancel()
 					break
+				}
+				if kind == "assistant" {
+					streamedAssistant = strings.TrimSpace(streamedAssistant + "\n" + text)
 				}
 				seq++
 			}
@@ -438,27 +474,44 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 			cancel()
 		}
 	}
-	// Resolve the target main session: activity is authoritative; fall back to
-	// the first error's session for a prompt-start failure.
-	mainSessionID := activitySessionID
-	if mainSessionID == "" {
-		mainSessionID = firstErrorSession
+	// Resolve the authoritative main session from per-session evidence: latest
+	// terminal stop, else most active, else first-error prompt-start.
+	mainSessionID := ""
+	var mainEv *sessionEvidence
+	for sid, ev := range sessions {
+		if ev == nil {
+			continue
+		}
+		if ev.lastReason == "stop" {
+			if mainEv == nil || ev.stopObs > mainEv.stopObs {
+				mainSessionID, mainEv = sid, ev
+			}
+			continue
+		}
+		if mainEv == nil {
+			mainSessionID, mainEv = sid, ev
+		} else if mainEv.lastReason != "stop" && ev.hasActivity && ev.firstSeen > mainEv.firstSeen {
+			mainSessionID, mainEv = sid, ev
+		}
 	}
-	sessionID := mainSessionID
-	// Promote the candidate error only if it belongs to the main session.
+	sessionID = mainSessionID
+	// Promote the main session's error evidence only.
 	var stdoutErrMsg string
 	stdoutErr := false
 	var providerCause runCause
 	var billingURL string
-	if firstErrorSession != "" && (mainSessionID == "" || firstErrorSession == mainSessionID) {
+	if mainEv != nil && mainEv.firstErrSeq != 0 {
 		stdoutErr = true
-		run.state.recordErrorAt(firstErrorSeq)
-		stdoutErrMsg = firstErrorMsg
-		if classifyProviderError(firstErrorMsg, firstErrorCode, firstErrorStatus) {
+		run.state.recordErrorAt(mainEv.firstErrSeq)
+		stdoutErrMsg = mainEv.errMsg
+		if classifyProviderError(mainEv.errMsg, mainEv.errCode, mainEv.errStatus) {
 			providerCause = causeProviderInsufficientBalance
-			run.state.recordProviderFailureAt(firstErrorSeq)
-			billingURL = firstErrorBillingURL
+			run.state.recordProviderFailureAt(mainEv.firstErrSeq)
+			billingURL = mainEv.errBillingURL
 		}
+	}
+	if mainEv != nil {
+		validStop = mainEv.lastReason == "stop"
 	}
 	waitErr := cmd.Wait()
 	run.state.seal()
@@ -490,18 +543,25 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 					recoveryResult = "failed"
 				} else {
 					recovered = strings.TrimSpace(recovered)
-					if recovered != "" {
-						if err := a.persistAgentRunEvent(sess.AccountID, runID, clientSession, "assistant", sanitizeAgentDiagnostic(recovered, key), "recovered", seq, time.Now().UnixMilli()); err != nil {
+					// Reconcile against the assistant text already durably
+					// streamed: only the missing portion is persisted, and
+					// recovery is suppressed when the complete response is
+					// already present.
+					missing, suppressed := reconcileRecovered(streamedAssistant, recovered)
+					if suppressed {
+						recoveryResult = "ok_suppressed"
+					} else if missing == "" {
+						recoveryResult = "ok_empty"
+					} else {
+						if err := a.persistAgentRunEvent(sess.AccountID, runID, clientSession, "assistant", sanitizeAgentDiagnostic(missing, key), "recovered", seq, time.Now().UnixMilli()); err != nil {
 							recoveryResult = "persist_failed"
 						} else {
 							seq++
 							recoveryResult = "ok"
-							if err := writeAgentEvent(w, flusher, "recovered", map[string]any{"text": sanitizeAgentDiagnostic(recovered, key), "sessionID": sessionID, "recovered": true}); err != nil {
+							if err := writeAgentEvent(w, flusher, "recovered", map[string]any{"text": sanitizeAgentDiagnostic(missing, key), "sessionID": sessionID, "recovered": true}); err != nil {
 								deliveryErr = err
 							}
 						}
-					} else {
-						recoveryResult = "ok_empty"
 					}
 					for _, im := range images {
 						url := sanitizeImageURL(im["url"])
@@ -540,10 +600,17 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	stderrErrors, stderrWarnings := parsedStderr(sanitizeAgentDiagnostic(stderrText, key))
 	diag, summary := a.runDiagnostics(outcome, snap, stdoutErrMsg, validStop, exit, stderrErrors, stderrWarnings, sanitizeAgentDiagnostic(stderrText, key), stderrTrunc, seq, false, stdoutScanErr, map[string]string{"result": recoveryResult}, providerCause, billingURL, providerID, model)
 	// The terminal event carries the run identity and outcome so technical
-	// details survive reload: name = "run:<runID>:<outcome>".
-	_ = a.persistAgentRunEvent(sess.AccountID, runID, clientSession, terminalKind(outcome), summary, "run:"+runID+":"+string(outcome), seq, time.Now().UnixMilli())
+	// details survive reload: name = "run:<runID>:<outcome>". Persistence is
+	// checked: a storage failure must never claim a durable completion.
+	if err := a.persistAgentRunEvent(sess.AccountID, runID, clientSession, terminalKind(outcome), summary, "run:"+runID+":"+string(outcome), seq, time.Now().UnixMilli()); err != nil {
+		a.storageFailure(runID, sess.AccountID, clientSession, sessionID, "terminal event", err, inputTokens, outputTokens, cost, w, flusher, key)
+		return
+	}
 	seq++
-	finishErr := a.finishDurableAgentRun(runID, sess.AccountID, clientSession, string(outcome), sessionID, summary, inputTokens, outputTokens, cost, diag)
+	if err := a.finishDurableAgentRun(runID, sess.AccountID, clientSession, string(outcome), sessionID, summary, inputTokens, outputTokens, cost, diag); err != nil {
+		a.storageFailure(runID, sess.AccountID, clientSession, sessionID, "run-state", err, inputTokens, outputTokens, cost, w, flusher, key)
+		return
+	}
 
 	// Terminal delivery is attempted only when the stream is still writable;
 	// the delivery outcome is captured from the actual write result.
@@ -603,10 +670,32 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 			diag2 = string(b)
 		}
 	}
-	_ = a.finishDurableAgentRun(runID, sess.AccountID, clientSession, string(outcome), sessionID, summary2, inputTokens, outputTokens, cost, diag2)
-	_ = finishErr
+	if err := a.finishDurableAgentRun(runID, sess.AccountID, clientSession, string(outcome), sessionID, summary2, inputTokens, outputTokens, cost, diag2); err != nil {
+		a.storageFailure(runID, sess.AccountID, clientSession, sessionID, "post-delivery run-state", err, inputTokens, outputTokens, cost, w, flusher, key)
+	}
 	// Audit records the exact outcome rather than a generic success/error.
 	a.auditEvent(r, "agent_run_finish", "status="+string(outcome)+" workspace="+q.Workspace)
+}
+
+// storageFailure handles a terminal persistence failure: it logs at ERROR with
+// the run ID, best-effort updates the durable run to a storage-failure outcome,
+// and emits a bounded client-facing failure if the stream is still writable.
+func (a *app) storageFailure(runID, accountID, clientSession, sessionID, stage string, err error, input, output uint64, cost float64, w http.ResponseWriter, f http.Flusher, key string) {
+	log.Printf("warden agent run %s: %s persistence failed: %v", runID, stage, err)
+	summary := "The agent result could not be stored durably."
+	d := diagnostics{
+		Outcome:       string(outcomeFailed),
+		Category:      "storage_failure",
+		Summary:       summary,
+		DeliveryError: "persistence failed: " + err.Error(),
+	}
+	diag, _ := json.Marshal(d)
+	if ferr := a.finishDurableAgentRun(runID, accountID, clientSession, string(outcomeFailed), sessionID, summary, input, output, cost, string(diag)); ferr != nil {
+		log.Printf("warden agent run %s: storage-failure finalization also failed: %v", runID, ferr)
+	}
+	if w != nil && f != nil {
+		_ = writeAgentEvent(w, f, "error", map[string]any{"message": summary, "outcome": string(outcomeFailed), "runId": runID})
+	}
 }
 
 // runDiagnostics builds the bounded, redacted diagnostic record and the
@@ -743,6 +832,39 @@ func boundedTail(s string, n int) string {
 		s = s[len(s)-n:]
 	}
 	return s
+}
+
+// reconcileRecovered compares recovered assistant text against the assistant
+// text already durably streamed for the run, returning the missing portion to
+// persist and whether recovery should be suppressed entirely (the complete
+// response is already present). See Cortex equivalent for the exact policy.
+func reconcileRecovered(streamed, recovered string) (missing string, suppressed bool) {
+	s := strings.TrimSpace(streamed)
+	r := strings.TrimSpace(recovered)
+	if r == "" {
+		return "", true
+	}
+	if s == "" {
+		return r, false
+	}
+	if r == s {
+		return "", true
+	}
+	if strings.Contains(s, r) {
+		return "", true
+	}
+	if strings.HasPrefix(r, s) {
+		return strings.TrimSpace(r[len(s):]), false
+	}
+	if strings.HasSuffix(r, s) {
+		return strings.TrimSpace(r[:len(r)-len(s)]), false
+	}
+	for i := len(s); i > 0; i-- {
+		if strings.HasPrefix(r, s[len(s)-i:]) {
+			return strings.TrimSpace(r[i:]), false
+		}
+	}
+	return r, false
 }
 
 // sanitizeImageURL validates or rewrites an unsafe file URL before persistence.
@@ -911,12 +1033,12 @@ func providerErrorMeta(raw map[string]any) (code string, statusCode int) {
 	return code, statusCode
 }
 
-// recordPersistenceFailure finalizes a run as failed when a server-owned event
-// could not be persisted, so the run never claims a durable completion.
-func (a *app) recordPersistenceFailure(runID, accountID, clientSession string, err error) {
-	msg := "agent transcript persistence failed: " + err.Error()
-	_ = a.persistAgentRunEvent(accountID, runID, clientSession, "error", msg, "", 1<<30, time.Now().UnixMilli())
-	a.finishDurableAgentRun(runID, accountID, clientSession, "failed", "", msg, 0, 0, 0, "")
+// finishRunChecked finalizes an early-failed run and logs at ERROR if that
+// finalization itself fails, so a storage failure is never silently dropped.
+func (a *app) finishRunChecked(runID, accountID, clientSession, state, message string, input, output uint64, cost float64, diag string) {
+	if err := a.finishDurableAgentRun(runID, accountID, clientSession, state, "", message, input, output, cost, diag); err != nil {
+		log.Printf("warden agent run %s: finalize failed: %v", runID, err)
+	}
 }
 
 // agentCancel performs an authenticated, account-scoped Stop for a live run.

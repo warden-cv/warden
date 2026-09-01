@@ -278,6 +278,11 @@ func (a *app) startDurableAgentRun(id, accountID, conversationID, prompt, worksp
 }
 
 func (a *app) finishDurableAgentRun(id, accountID, conversationID, state, sessionID, message string, input, output uint64, cost float64, diag string) error {
+	if a.failFinishAgentRun != nil {
+		if err := a.failFinishAgentRun(id); err != nil {
+			return err
+		}
+	}
 	now := time.Now().UnixMilli()
 	tx, err := a.db.Begin()
 	if err != nil {
@@ -297,6 +302,11 @@ func (a *app) finishDurableAgentRun(id, accountID, conversationID, state, sessio
 // persistAgentRunEvent records one server-owned run event before it is
 // attempted for delivery.
 func (a *app) persistAgentRunEvent(accountID, runID, conversationID, kind, text, name string, sequence, createdAt int64) error {
+	if a.failAgentRunEvent != nil {
+		if err := a.failAgentRunEvent(runID, kind); err != nil {
+			return err
+		}
+	}
 	_, err := a.db.Exec(`INSERT INTO agent_run_events(account_id,run_id,conversation_id,sequence,kind,text,name,created_at) VALUES(?,?,?,?,?,?,?,?)`, accountID, runID, conversationID, sequence, kind, text, name, createdAt)
 	return err
 }
