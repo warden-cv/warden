@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -400,6 +401,17 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 				}
 				seq++
 			}
+			// A valid todowrite snapshot is persisted as its own authoritative
+			// task event so the task panel restores after reload.
+			if tasks := taskSnapshot(raw); tasks != "" {
+				if err := a.persistAgentRunEvent(sess.AccountID, runID, clientSession, "task", tasks, "", seq, time.Now().UnixMilli()); err != nil {
+					persistFailed = true
+					persistErr = err.Error()
+					cancel()
+					break
+				}
+				seq++
+			}
 			rewriteAgentImageURLs(raw, clientSession)
 			if err := writeAgentEvent(w, flusher, "opencode", sanitizeAgentProviderValue(raw, key, 0)); err != nil {
 				deliveryErr = err
@@ -753,6 +765,75 @@ func sanitizeImageURL(u string) string {
 		return ""
 	}
 	return "file://" + p
+}
+
+// taskSnapshot extracts and validates a todowrite task list from a tool_use
+// event, returning a normalized JSON string (kind "task") or "" when the
+// payload is not a trusted structured todowrite snapshot.
+func taskSnapshot(raw map[string]any) string {
+	part, _ := raw["part"].(map[string]any)
+	tool, _ := part["tool"].(string)
+	if tool != "todowrite" {
+		return ""
+	}
+	state, _ := part["state"].(map[string]any)
+	input, _ := state["input"].(map[string]any)
+	items, ok := input["todos"].([]any)
+	if !ok {
+		return ""
+	}
+	if len(items) > 100 {
+		items = items[:100]
+	}
+	out := make([]map[string]string, 0, len(items))
+	for _, it := range items {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		content, _ := m["content"].(string)
+		content = strings.TrimSpace(content)
+		if content == "" || len(content) > 500 {
+			continue
+		}
+		status := normalizeTaskStatus(fmt.Sprint(m["status"]))
+		priority := normalizeTaskPriority(fmt.Sprint(m["priority"]))
+		out = append(out, map[string]string{"content": content, "status": status, "priority": priority})
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func normalizeTaskStatus(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "completed", "done":
+		return "completed"
+	case "in_progress", "in-progress", "running":
+		return "in_progress"
+	case "pending", "":
+		return "pending"
+	default:
+		return "pending"
+	}
+}
+
+func normalizeTaskPriority(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "high":
+		return "high"
+	case "medium", "normal":
+		return "medium"
+	case "low":
+		return "low"
+	default:
+		return "medium"
+	}
 }
 
 // normalizedEvent maps an OpenCode stdout event to the server-owned
