@@ -480,6 +480,95 @@ test('real syncAgentConversations preserves warning state after reload', async (
   if (!kinds.includes('warning')) throw new Error('warning kind missing on reload: ' + kinds);
 });
 
+// Live task pipeline: the real stream-consumption function opens both the main
+// and the embedded-editor task panels before terminal completion or reload.
+test('streamed task event opens both agent task panels immediately', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  const ev = { type: 'task', data: { snapshot: '[{"content":"alpha","status":"in_progress","priority":"high"},{"content":"beta","status":"pending","priority":"low"}]' } };
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: ev });
+  if (run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('main task panel did not open');
+  if (run(ctx, "$('#editorAgentTaskPanel').hidden")) throw new Error('editor task panel did not open');
+  const rows = run(ctx, "$('#agentTaskList').children.length");
+  const erows = run(ctx, "$('#editorAgentTaskList').children.length");
+  if (rows !== 2 || erows !== 2) throw new Error('task rows = ' + rows + '/' + erows);
+});
+
+// Updating the todo list replaces the displayed snapshot (no accumulation).
+test('a later todowrite snapshot replaces the displayed list', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"one","status":"pending","priority":"high"},{"content":"two","status":"completed","priority":"low"},{"content":"three","status":"pending","priority":"medium"}]' } } });
+  const rows = run(ctx, "$('#agentTaskList').children.length");
+  if (rows !== 3) throw new Error('replacement rows = ' + rows);
+});
+
+// A valid empty snapshot clears and hides both panels.
+test('valid empty todos snapshot clears and hides both panels', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
+  if (run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('panel should be open before clear');
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[]' } } });
+  if (!run(ctx, "$('#agentTaskPanel').hidden") || !run(ctx, "$('#editorAgentTaskPanel').hidden")) throw new Error('panels not hidden after clear');
+  if (run(ctx, "$('#agentTaskList').children.length") !== 0) throw new Error('task list not cleared');
+});
+
+// Malformed snapshot text never opens the panel.
+test('malformed task payload is ignored', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: 'not-json' } } });
+  if (!run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('malformed payload opened the panel');
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '{"a":1}' } } });
+  if (!run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('non-array payload opened the panel');
+});
+
+// Task events are excluded from transcript rendering on both agent surfaces.
+test('task events never render as transcript rows', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
+  if (run(ctx, "$('#agent-feed').children.length") !== 0) throw new Error('task event leaked into the main feed');
+  if (run(ctx, "$('#editor-agent-feed').children.length") !== 0) throw new Error('task event leaked into the editor feed');
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'opencode', data: { type: 'text', part: { type: 'text', text: 'hello' } } } });
+  const mainRows = run(ctx, "$('#agent-feed').children.length");
+  const edRows = run(ctx, "$('#editor-agent-feed').children.length");
+  if (mainRows !== 1 || edRows !== 1) throw new Error('transcript rows = ' + mainRows + '/' + edRows);
+  const hasTaskRow = run(ctx, "[...$('#agent-feed').children].some(c=>String(c.className).includes('agent-event task'))");
+  if (hasTaskRow) throw new Error('a task row was rendered in the main feed');
+});
+
+// Reload restores the latest non-empty snapshot without rendering JSON rows.
+test('reload restores task snapshot without feed JSON rows', async () => {
+  const ctx = loadContext((url) => {
+    if (url === '/api/agent/conversations') return Promise.resolve(jsonOk([{ id: 'a', state: 'completed', currentRunId: 'run-1', events: [
+      { kind: 'assistant', text: 'answer', name: '' },
+      { kind: 'task', text: '[{"content":"alpha","status":"in_progress","priority":"high"}]', name: '' },
+    ] }]));
+    return Promise.resolve(jsonOk({}));
+  });
+  run(ctx, "agentSessions={};activeAgentSessionId='a';agentServerReady=true;workspaceRoot='/ws'");
+  await run(ctx, 'syncAgentConversations()');
+  if (run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('task panel not restored on reload');
+  if (run(ctx, "$('#agentTaskList').children.length") !== 1) throw new Error('restored task rows != 1');
+  const feedRows = run(ctx, "$('#agent-feed').children.length");
+  if (feedRows !== 1) throw new Error('feed rows = ' + feedRows);
+  const hasTaskRow = run(ctx, "[...$('#agent-feed').children].some(c=>String(c.className).includes('agent-event task'))");
+  if (hasTaskRow) throw new Error('a task row was rendered after reload');
+});
+
+// Background-session task updates must not create a second unread transcript item.
+test('background task snapshot does not increment unread', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:false,followBottom:true,unread:0},b:{id:'b',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, 'consumeAgentStreamEvent("b", agentSessions["b"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
+  if (run(ctx, "agentSessions['b'].unread") !== 0) throw new Error('task snapshot incremented unread');
+  run(ctx, 'consumeAgentStreamEvent("b", agentSessions["b"], EV, new Set())', { EV: { type: 'opencode', data: { type: 'text', part: { type: 'text', text: 'real activity' } } } });
+  if (run(ctx, "agentSessions['b'].unread") !== 1) throw new Error('real activity should increment unread');
+});
+
 // Run all registered tests sequentially and print a final summary. A single
 // failure or unhandled rejection leaves exitCode nonzero.
 (async function runAll() {

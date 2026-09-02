@@ -1455,3 +1455,88 @@ func TestWardenMultipleReplacementsSeparateRuns(t *testing.T) {
 		}
 	}
 }
+
+// TestWardenTaskSnapshotValidation covers todowrite snapshot normalization,
+// including the authoritative empty-array clear marker.
+func TestWardenTaskSnapshotValidation(t *testing.T) {
+	valid := map[string]any{"type": "tool_use", "part": map[string]any{
+		"tool": "todowrite",
+		"state": map[string]any{"input": map[string]any{"todos": []any{
+			map[string]any{"content": "first", "status": "pending", "priority": "high"},
+			map[string]any{"content": "second", "status": "in_progress", "priority": "low"},
+		}}},
+	}}
+	snap := taskSnapshot(valid)
+	if snap == "" {
+		t.Fatal("valid todowrite snapshot not extracted")
+	}
+	var todos []map[string]string
+	if err := json.Unmarshal([]byte(snap), &todos); err != nil {
+		t.Fatal(err)
+	}
+	if len(todos) != 2 || todos[0]["status"] != "pending" || todos[1]["status"] != "in_progress" {
+		t.Fatalf("todos = %+v", todos)
+	}
+	// Non-todowrite tool: no snapshot.
+	other := map[string]any{"type": "tool_use", "part": map[string]any{"tool": "bash", "state": map[string]any{"input": map[string]any{"command": "ls"}}}}
+	if got := taskSnapshot(other); got != "" {
+		t.Fatal("non-todowrite produced a task snapshot")
+	}
+	// Malformed (todos not an array) returns empty.
+	malformed := map[string]any{"type": "tool_use", "part": map[string]any{"tool": "todowrite", "state": map[string]any{"input": map[string]any{"todos": "nope"}}}}
+	if got := taskSnapshot(malformed); got != "" {
+		t.Fatal("malformed todowrite produced a snapshot")
+	}
+	// A valid empty todos array is an authoritative clear operation.
+	empty := map[string]any{"type": "tool_use", "part": map[string]any{"tool": "todowrite", "state": map[string]any{"input": map[string]any{"todos": []any{}}}}}
+	if got := taskSnapshot(empty); got != "[]" {
+		t.Fatalf("valid empty todos = %q want []", got)
+	}
+}
+
+// TestWardenAgentTodowriteStreamsTaskSnapshotAndToolEvent verifies the live
+// task pipeline: a todowrite tool_use is persisted exactly once as a durable
+// task snapshot, streamed as a normalized server-owned task event, and the
+// ordinary tool event is still forwarded to the transcript.
+func TestWardenAgentTodowriteStreamsTaskSnapshotAndToolEvent(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	todowrite := "{\"type\":\"tool_use\",\"sessionID\":\"ses_x\",\"part\":{\"tool\":\"todowrite\",\"state\":{\"status\":\"completed\",\"input\":{\"todos\":[{\"content\":\"alpha\",\"status\":\"in_progress\",\"priority\":\"high\"},{\"content\":\"beta\",\"status\":\"pending\",\"priority\":\"low\"}]}}}}\n"
+	stdout := todowrite + "{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n"
+	fake.invoke(t, stdout, "", 0, `{"info":{"id":"ses_x"},"messages":[]}`)
+	events := wardenRunRequest(t, a, sess, cookie, ws)
+	taskEvents := 0
+	toolStreamed := false
+	for _, ev := range events {
+		switch ev["type"] {
+		case "task":
+			taskEvents++
+		case "opencode":
+			d, _ := ev["data"].(map[string]any)
+			p, _ := d["part"].(map[string]any)
+			if p["tool"] == "todowrite" {
+				toolStreamed = true
+			}
+		}
+	}
+	if taskEvents != 1 {
+		t.Fatalf("streamed task events = %d want 1", taskEvents)
+	}
+	if !toolStreamed {
+		t.Fatal("ordinary todowrite tool event not streamed")
+	}
+	merged, err := a.loadConversationMerged(user.ID, "conv1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskCount := 0
+	for _, ev := range merged {
+		if ev.Kind == "task" {
+			taskCount++
+		}
+	}
+	if taskCount != 1 {
+		t.Fatalf("durable task snapshots = %d want 1", taskCount)
+	}
+}
