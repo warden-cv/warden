@@ -66,10 +66,14 @@ type imageUpload struct {
 // during the stdout stream so the authoritative main session can be resolved
 // after the loop.
 type sessionEvidence struct {
-	firstSeen     uint64
-	hasActivity   bool
-	lastReason    string
-	stopObs       uint64
+	firstSeen   uint64
+	hasActivity bool
+	lastReason  string
+	stopObs     uint64
+	// stopSeq captures the valid-completion observation in the same runState
+	// sequence used by firstErrSeq, so the error-vs-completion ordering is
+	// comparable after the main session is resolved.
+	stopSeq       uint64
 	firstErrSeq   uint64
 	errMsg        string
 	errCode       string
@@ -406,6 +410,10 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 						if reason, _ := raw["part"].(map[string]any)["reason"].(string); reason != "" {
 							ev.lastReason = reason
 							ev.stopObs = obs
+							// Valid-completion evidence is captured in the same
+							// observation sequence as errors so the classifier
+							// can order error-before-stop vs error-after-stop.
+							ev.stopSeq = run.state.nextSeq()
 						}
 					}
 				}
@@ -424,8 +432,12 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 					ev.errBillingURL = sanitizeBillingURL(extractBillingURL(ev.errMsg))
 				}
 			}
+			// Persist normalized server-owned events before delivery so a
+			// disconnect cannot lose the transcript. Error events are excluded
+			// here: their session is resolved only after the stream ends, and a
+			// post-completion error must never survive as a raw Error block.
 			kind, text, name := normalizedEvent(raw)
-			if kind != "" {
+			if kind != "" && kind != "error" {
 				if err := a.persistAgentRunEvent(sess.AccountID, runID, clientSession, kind, sanitizeAgentDiagnostic(text, key), name, seq, time.Now().UnixMilli()); err != nil {
 					persistFailed = true
 					persistErr = err.Error()
@@ -501,14 +513,23 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	stdoutErr := false
 	var providerCause runCause
 	var billingURL string
-	if mainEv != nil && mainEv.firstErrSeq != 0 {
-		stdoutErr = true
-		run.state.recordErrorAt(mainEv.firstErrSeq)
-		stdoutErrMsg = mainEv.errMsg
-		if classifyProviderError(mainEv.errMsg, mainEv.errCode, mainEv.errStatus) {
-			providerCause = causeProviderInsufficientBalance
-			run.state.recordProviderFailureAt(mainEv.firstErrSeq)
-			billingURL = mainEv.errBillingURL
+	postCompletionErr := false
+	if mainEv != nil {
+		if mainEv.stopSeq != 0 {
+			run.state.recordStopAt(mainEv.stopSeq)
+		}
+		if mainEv.firstErrSeq != 0 {
+			stdoutErr = true
+			run.state.recordErrorAt(mainEv.firstErrSeq)
+			stdoutErrMsg = mainEv.errMsg
+			if classifyProviderError(mainEv.errMsg, mainEv.errCode, mainEv.errStatus) {
+				providerCause = causeProviderInsufficientBalance
+				run.state.recordProviderFailureAt(mainEv.firstErrSeq)
+				billingURL = mainEv.errBillingURL
+			}
+			// An error observed after the main session's step_finish is
+			// post-completion evidence: it is not failure of the answer.
+			postCompletionErr = mainEv.stopSeq != 0 && mainEv.firstErrSeq > mainEv.stopSeq
 		}
 	}
 	if mainEv != nil {
@@ -528,6 +549,22 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 	if persistFailed {
 		outcome = outcomeFailed
 		stdoutErrMsg = "agent transcript persistence failed: " + persistErr
+	}
+	// Persist a pre-completion main-session error as a transcript error event.
+	// A post-completion error is retained only as a diagnostic warning and must
+	// not survive as a separate raw Error block beside the final warning.
+	if stdoutErr && !postCompletionErr && stdoutErrMsg != "" {
+		if err := a.persistAgentRunEvent(sess.AccountID, runID, clientSession, "error", sanitizeAgentDiagnostic(stdoutErrMsg, key), "", seq, time.Now().UnixMilli()); err != nil {
+			persistFailed = true
+			persistErr = err.Error()
+			if !truncated {
+				cancel()
+			}
+			outcome = outcomeFailed
+			stdoutErrMsg = "agent transcript persistence failed: " + persistErr
+		} else {
+			seq++
+		}
 	}
 
 	// Recovery reconciles with persisted content: it only runs for genuine
@@ -646,7 +683,9 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 		switch outcome {
 		case outcomeCompleted:
 			termErr = writeAgentEvent(w, flusher, "done", payload)
-		case outcomeCompletedWError, outcomeFailed:
+		case outcomeCompletedWError:
+			termErr = writeAgentEvent(w, flusher, "warning", payload)
+		case outcomeFailed:
 			termErr = writeAgentEvent(w, flusher, "error", payload)
 		case outcomeCancelled:
 			termErr = writeAgentEvent(w, flusher, "cancelled", payload)
@@ -755,6 +794,12 @@ func (a *app) runDiagnostics(outcome runOutcome, snap runStateSnapshot, stdoutEr
 	} else if outcome == outcomeCompletedWError {
 		d.Category = "opencode_exit"
 		d.Summary = "OpenCode exited with status " + strconv.Itoa(exit.exitCode) + " after completing."
+		// A post-completion stdout error is honest process evidence: it is
+		// retained as a warning in technical diagnostics and never shown as the
+		// failure text of the produced answer.
+		if stdoutErrMsg != "" {
+			d.Warnings = append([]string{stdoutErrMsg}, d.Warnings...)
+		}
 	} else if outcome == outcomeFailed {
 		d.Category = "opencode_exit"
 		d.Summary = "OpenCode exited with status " + strconv.Itoa(exit.exitCode) + "."
@@ -800,7 +845,9 @@ func terminalKind(outcome runOutcome) string {
 	switch outcome {
 	case outcomeCompleted:
 		return "done"
-	case outcomeCompletedWError, outcomeFailed:
+	case outcomeCompletedWError:
+		return "warning"
+	case outcomeFailed:
 		return "error"
 	case outcomeCancelled, outcomeInterrupted:
 		return "cancelled"

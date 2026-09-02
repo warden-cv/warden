@@ -165,7 +165,7 @@ func wardenRunDiagnostics(t *testing.T, a *app, accountID, runID string) diagnos
 
 func wardenTerminalEvent(events []map[string]any) string {
 	for _, ev := range events {
-		if t, _ := ev["type"].(string); t == "done" || t == "error" || t == "cancelled" || t == "truncated" {
+		if t, _ := ev["type"].(string); t == "done" || t == "error" || t == "warning" || t == "cancelled" || t == "truncated" {
 			return t
 		}
 	}
@@ -287,7 +287,7 @@ func TestWardenAgentStdoutErrorForcesFailure(t *testing.T) {
 	fake := newFakeOpenCode(t)
 	a, user, sess, cookie := wardenAgentTestApp(t, fake)
 	ws := agentWorkspace(t, a)
-	stdout := "{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n{\"type\":\"error\",\"sessionID\":\"ses_x\",\"error\":{\"name\":\"ProviderError\",\"data\":{\"message\":\"stream failed\"}}}\n"
+	stdout := "{\"type\":\"error\",\"sessionID\":\"ses_x\",\"error\":{\"name\":\"ProviderError\",\"data\":{\"message\":\"stream failed\"}}}\n{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n"
 	fake.invoke(t, stdout, "", 1, `{"info":{"id":"ses_x"},"messages":[]}`)
 	events := wardenRunRequest(t, a, sess, cookie, ws)
 	var runID string
@@ -298,6 +298,102 @@ func TestWardenAgentStdoutErrorForcesFailure(t *testing.T) {
 	}
 	if state := wardenRunState(t, a, user.ID, runID); state != string(outcomeFailed) {
 		t.Fatalf("state = %q want failed", state)
+	}
+}
+
+// TestWardenAgentPostStopErrorIsNotFailure verifies a valid main-session
+// step_finish followed by a later wrapper error is post-completion evidence:
+// the answer is completed with a warning, delivered as a distinct warning event,
+// and the raw error never survives as a separate Error block in the transcript.
+func TestWardenAgentPostStopErrorIsNotFailure(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	stdout := "{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n{\"type\":\"error\",\"sessionID\":\"ses_x\",\"error\":{\"name\":\"LifecycleError\",\"data\":{\"message\":\"level=INFO message=exiting loop\\nlevel=INFO message=disposing instance\"}}}\n"
+	fake.invoke(t, stdout, "", 1, `{"info":{"id":"ses_x"},"messages":[]}`)
+	events := wardenRunRequest(t, a, sess, cookie, ws)
+	if got := wardenTerminalEvent(events); got != "warning" {
+		t.Fatalf("terminal event = %q want warning", got)
+	}
+	var runID string
+	for _, ev := range events {
+		if id, _ := ev["data"].(map[string]any)["runID"].(string); id != "" {
+			runID = id
+		}
+	}
+	if state := wardenRunState(t, a, user.ID, runID); state != string(outcomeCompletedWError) {
+		t.Fatalf("state = %q want completed_with_process_error", state)
+	}
+	merged, err := a.loadConversationMerged(user.ID, "conv1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range merged {
+		if ev.Kind == "error" {
+			t.Fatalf("post-completion error survived as a raw Error block: %+v", ev)
+		}
+	}
+	d := wardenRunDiagnostics(t, a, user.ID, runID)
+	if d.Outcome != string(outcomeCompletedWError) {
+		t.Fatalf("diagnostics outcome = %q", d.Outcome)
+	}
+	if len(d.Warnings) == 0 || !strings.Contains(strings.Join(d.Warnings, " "), "exiting loop") {
+		t.Fatalf("post-completion error not retained as a warning: %+v", d.Warnings)
+	}
+}
+
+// TestWardenAgentExit1NoValidStopFails verifies a nonzero exit without valid
+// completion evidence is a genuine failure, never a warning.
+func TestWardenAgentExit1NoValidStopFails(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	stdout := "{\"type\":\"text\",\"sessionID\":\"ses_x\",\"part\":{\"type\":\"text\",\"text\":\"partial\"}}\n"
+	fake.invoke(t, stdout, "", 1, `{"info":{"id":"ses_x"},"messages":[]}`)
+	events := wardenRunRequest(t, a, sess, cookie, ws)
+	var runID string
+	for _, ev := range events {
+		if id, _ := ev["data"].(map[string]any)["runID"].(string); id != "" {
+			runID = id
+		}
+	}
+	if state := wardenRunState(t, a, user.ID, runID); state != string(outcomeFailed) {
+		t.Fatalf("exit 1 without valid stop state = %q want failed", state)
+	}
+}
+
+// TestWardenAgentWarningSurvivesReload verifies a completed_with_process_error
+// terminal event is persisted as a warning and survives the conversation
+// reload path without degrading into a generic Error block or failed state.
+func TestWardenAgentWarningSurvivesReload(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	stdout := "{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n{\"type\":\"error\",\"sessionID\":\"ses_x\",\"error\":{\"name\":\"LifecycleError\",\"data\":{\"message\":\"level=INFO message=exiting loop\"}}}\n"
+	fake.invoke(t, stdout, "", 1, `{"info":{"id":"ses_x"},"messages":[]}`)
+	wardenRunRequest(t, a, sess, cookie, ws)
+	var state string
+	if err := a.db.QueryRow("SELECT state FROM conversations WHERE id=? AND account_id=?", "conv1", user.ID).Scan(&state); err != nil {
+		t.Fatalf("read conversation state: %v", err)
+	}
+	if state != string(outcomeCompletedWError) {
+		t.Fatalf("reload state = %q want completed_with_process_error", state)
+	}
+	merged, err := a.loadConversationMerged(user.ID, "conv1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundWarning := false
+	for _, ev := range merged {
+		if ev.Kind == "error" {
+			t.Fatalf("warning run reloaded as a raw Error block: %+v", ev)
+		}
+		if ev.Kind == "warning" {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Fatal("warning terminal event missing after reload")
 	}
 }
 

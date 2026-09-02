@@ -445,6 +445,41 @@ test('stopAgent cancel timeout followed by running is unconfirmed not rejected',
   if (!msgs.some((m) => m.includes('Could not confirm the stop'))) throw new Error('unconfirmed toast = ' + JSON.stringify(msgs));
 });
 
+// Warning vs failure: a completed_with_process_error terminal event maps to a
+// distinct warning kind and summary, never the generic error kind.
+test('warning SSE terminal event maps to warning kind and summary', async () => {
+  const ctx = loadContext();
+  const ev = { type: 'warning', data: { outcome: 'completed_with_process_error', message: 'OpenCode exited with status 1 after completing.' } };
+  if (run(ctx, 'agentEventKind(EV)', { EV: ev }) !== 'warning') throw new Error('warning kind not mapped');
+  const sum = run(ctx, 'summarizeAgentEvent(EV)', { EV: ev });
+  if (!sum.includes('exit')) throw new Error('warning summary missing: ' + sum);
+});
+
+// Warning vs failure: agentEventNode renders warning and error distinctly.
+test('agentEventNode renders warning and error with distinct classes', async () => {
+  const ctx = loadContext();
+  const w = run(ctx, 'agentEventNode({kind:"warning",text:"W",name:"run:r1:completed_with_process_error"})');
+  const e = run(ctx, 'agentEventNode({kind:"error",text:"E",name:"run:r1:failed"})');
+  if (!String(w.className).includes('agent-event warning')) throw new Error('warning class missing: ' + w.className);
+  if (!String(e.className).includes('agent-event error')) throw new Error('error class missing');
+  if (w.className === e.className) throw new Error('warning and error must render differently');
+});
+
+// Warning survives conversation reload without degrading into an Error block.
+test('real syncAgentConversations preserves warning state after reload', async () => {
+  const ctx = loadContext((url) => {
+    if (url === '/api/agent/conversations') return Promise.resolve(jsonOk([{ id: 'a', state: 'completed_with_process_error', currentRunId: 'run-1', events: [{ kind: 'warning', text: 'OpenCode exited with status 1 after completing.', name: 'run:run-1:completed_with_process_error' }] }]));
+    return Promise.resolve(jsonOk({}));
+  });
+  run(ctx, "agentSessions={};activeAgentSessionId='a';agentServerReady=true;workspaceRoot='/ws'");
+  await run(ctx, 'syncAgentConversations()');
+  if (run(ctx, "agentSessions['a'].state") !== 'completed_with_process_error') throw new Error('warning state lost on reload');
+  if (run(ctx, "agentSessions['a'].busy")) throw new Error('spinner not cleared on reload');
+  const kinds = run(ctx, "agentSessions['a'].events.map(e=>e.kind).join(',')");
+  if (kinds.includes('error')) throw new Error('warning degraded to error on reload: ' + kinds);
+  if (!kinds.includes('warning')) throw new Error('warning kind missing on reload: ' + kinds);
+});
+
 // Run all registered tests sequentially and print a final summary. A single
 // failure or unhandled rejection leaves exitCode nonzero.
 (async function runAll() {

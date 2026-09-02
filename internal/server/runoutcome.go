@@ -44,6 +44,12 @@ type runState struct {
 	seq      uint64
 	errSeq   uint64
 	causeSeq uint64
+	// stopSeq records the sequence at which the main session's valid completion
+	// evidence (a step_finish with reason "stop") was observed, drawn from the
+	// same observation sequence as errSeq so the classifier can establish
+	// whether an error occurred before or after completion. Zero means no valid
+	// completion evidence was seen.
+	stopSeq uint64
 	// providerErrSeq records the sequence at which an authoritative main-session
 	// provider failure was observed, separate from the local cause machine.
 	providerErrSeq uint64
@@ -55,6 +61,7 @@ type runStateSnapshot struct {
 	cause          runCause
 	errSeq         uint64
 	causeSeq       uint64
+	stopSeq        uint64
 	providerErrSeq uint64
 	sealed         bool
 }
@@ -85,6 +92,17 @@ func (s *runState) recordErrorAt(seq uint64) {
 	defer s.mu.Unlock()
 	if seq > 0 && s.errSeq == 0 {
 		s.errSeq = seq
+	}
+}
+
+// recordStopAt promotes a candidate valid-completion (step_finish "stop")
+// observation captured earlier to the recorded stop sequence, preserving its
+// chronological position relative to errors.
+func (s *runState) recordStopAt(seq uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if seq > 0 && s.stopSeq == 0 {
+		s.stopSeq = seq
 	}
 }
 
@@ -143,7 +161,7 @@ func (s *runState) seal() {
 func (s *runState) snapshot() runStateSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return runStateSnapshot{cause: s.cause, errSeq: s.errSeq, causeSeq: s.causeSeq, providerErrSeq: s.providerErrSeq, sealed: s.sealed}
+	return runStateSnapshot{cause: s.cause, errSeq: s.errSeq, causeSeq: s.causeSeq, stopSeq: s.stopSeq, providerErrSeq: s.providerErrSeq, sealed: s.sealed}
 }
 
 // exitStatus describes the raw process termination facts.
@@ -154,18 +172,29 @@ type exitStatus struct {
 	signal   string
 }
 
-// classifyRun applies the authoritative outcome precedence. Provider failures
-// follow chronological order: a main-session provider failure before an
-// accepted local cause produces failed; a local cause accepted earlier keeps
-// its local outcome.
+// classifyRun applies the authoritative outcome precedence. Error and
+// completion evidence share one observation sequence (runState.seq): a
+// main-session error observed before valid completion (or with no valid
+// completion at all) is a genuine failure, while an error observed after the
+// main-session step_finish is post-completion evidence and never fails the
+// produced answer. Provider failures follow chronological order: a main-session
+// provider failure before an accepted local cause produces failed; a local
+// cause accepted earlier keeps its local outcome.
 func classifyRun(state runStateSnapshot, stdoutError bool, validStop bool, exit exitStatus, providerCause runCause) runOutcome {
 	if providerCause != "" {
-		if state.cause == causeNone || (state.causeSeq > 0 && state.providerErrSeq < state.causeSeq) {
-			return outcomeFailed
+		if state.stopSeq == 0 || state.providerErrSeq < state.stopSeq {
+			if state.cause == causeNone || (state.causeSeq > 0 && state.providerErrSeq < state.causeSeq) {
+				return outcomeFailed
+			}
 		}
 	}
-	if stdoutError && (state.cause == causeNone || (state.errSeq > 0 && state.causeSeq > 0 && state.errSeq < state.causeSeq)) {
-		return outcomeFailed
+	if stdoutError {
+		beforeStop := state.stopSeq == 0 || (state.errSeq > 0 && state.errSeq < state.stopSeq)
+		if beforeStop {
+			if state.cause == causeNone || (state.errSeq > 0 && state.causeSeq > 0 && state.errSeq < state.causeSeq) {
+				return outcomeFailed
+			}
+		}
 	}
 	switch state.cause {
 	case causeOutputLimit:
@@ -178,13 +207,13 @@ func classifyRun(state runStateSnapshot, stdoutError bool, validStop bool, exit 
 	if exit.signaled {
 		return outcomeFailed
 	}
-	if exit.exited && exit.exitCode != 0 && validStop && !stdoutError {
+	if exit.exited && exit.exitCode != 0 && validStop {
 		return outcomeCompletedWError
 	}
 	if exit.exited && exit.exitCode != 0 {
 		return outcomeFailed
 	}
-	if exit.exited && exit.exitCode == 0 && validStop && !stdoutError {
+	if exit.exited && exit.exitCode == 0 && validStop {
 		return outcomeCompleted
 	}
 	if exit.exited && exit.exitCode == 0 {
