@@ -86,7 +86,7 @@ function makeContext(fetchImpl) {
     agentClosedSessions: [],
     agentServerReady: false,
     agentSaveTimers: new Map(),
-    agentSessionsStorageKey: () => 'warden.agentSessions.test',
+    agentSessionsStorageKey: () => 'warden.agentSessions.test.' + (ctx.window && ctx.window.currentAccountId ? ctx.window.currentAccountId : 'anonymous'),
     agentSid: () => 'sid-'+Math.random().toString(36).slice(2),
     agentSessionTitle: (s) => s?.title || s?.workspace || 'Agent',
     activeAgentSessionId: '',
@@ -631,6 +631,74 @@ test('synchronization preserves collapsed task panel', async () => {
   if (run(ctx, "agentSessions['a'].tasksCollapsed") !== true) throw new Error('collapsed flag lost on sync');
   run(ctx, 'renderAgentSession()');
   if (!run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('sync reopened a collapsed panel');
+});
+
+// Switching to an empty session clears both Warden task surfaces and reopen
+// badges; switching back restores the previous session's correct state.
+test('switching to empty session clears stale task panels on both surfaces', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0},b:{id:'b',events:[],busy:false,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
+  if (run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('main panel should be visible for A');
+  run(ctx, "activeAgentSessionId='b';renderAgentSession()");
+  if (!run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('A main panel remained on empty session B');
+  if (!run(ctx, "$('#editorAgentTaskPanel').hidden")) throw new Error('A editor panel remained on empty session B');
+  if (!run(ctx, "$('#agentTaskReopen').hidden")) throw new Error('A reopen badge remained on empty session B');
+  run(ctx, "activeAgentSessionId='a';renderAgentSession()");
+  if (run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('switching back to A did not restore its main panel');
+  if (run(ctx, "$('#editorAgentTaskPanel').hidden")) throw new Error('switching back to A did not restore its editor panel');
+});
+
+// Switching to an empty session clears a collapsed task panel's reopen badges.
+test('switching to empty session clears collapsed reopen badges on both surfaces', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0},b:{id:'b',events:[],busy:false,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
+  run(ctx, 'setAgentTasksCollapsed(true)');
+  if (run(ctx, "$('#agentTaskReopen').hidden") || run(ctx, "$('#editorAgentTaskReopen').hidden")) throw new Error('reopen badges should be visible for collapsed A');
+  run(ctx, "activeAgentSessionId='b';renderAgentSession()");
+  if (!run(ctx, "$('#agentTaskReopen').hidden") || !run(ctx, "$('#editorAgentTaskReopen').hidden")) throw new Error('A reopen badges remained on empty session B');
+  run(ctx, "activeAgentSessionId='a';renderAgentSession()");
+  if (run(ctx, "$('#agentTaskReopen').hidden")) throw new Error('switching back to A did not restore its reopen badge');
+});
+
+// Collapsed preference survives a reload (persist + reconstruct).
+test('collapsed task panel survives reload', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
+  run(ctx, 'setAgentTasksCollapsed(true)');
+  const stored = ctx.localStorage.getItem('warden.agentSessions.test.anonymous');
+  if (!stored || !stored.includes('tasksCollapsed')) throw new Error('tasksCollapsed not persisted locally');
+  run(ctx, 'loadAgentSessions()');
+  if (run(ctx, "agentSessions['a'].tasksCollapsed") !== true) throw new Error('collapsed not restored on reload');
+  run(ctx, 'renderAgentSession()');
+  if (!run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('collapsed panel reopened after reload');
+});
+
+// Reopening persists and survives reload too.
+test('reopened task panel survives reload', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
+  run(ctx, 'setAgentTasksCollapsed(true)');
+  run(ctx, 'setAgentTasksCollapsed(false)');
+  const stored = ctx.localStorage.getItem('warden.agentSessions.test.anonymous');
+  if (!stored || !stored.includes('"tasksCollapsed":false')) throw new Error('reopen not persisted');
+  run(ctx, 'loadAgentSessions()');
+  if (run(ctx, "agentSessions['a'].tasksCollapsed") !== false) throw new Error('open state not restored on reload');
+  run(ctx, 'renderAgentSession()');
+  if (run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('reopened panel hidden after reload');
+});
+
+// Warden task preferences do not cross account/session storage boundaries.
+test('task preferences are scoped to the account storage key', async () => {
+  const ctx = loadContext();
+  run(ctx, "currentAccountId='accA';agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
+  run(ctx, 'setAgentTasksCollapsed(true)');
+  if (!(run(ctx, "localStorage.getItem('warden.agentSessions.test.accA') || ''") ).includes('tasksCollapsed')) throw new Error('account key not written');
+  if ((run(ctx, "localStorage.getItem('warden.agentSessions.test.accB') || ''") ).includes('tasksCollapsed')) throw new Error('preference leaked across account boundary');
 });
 
 // Run all registered tests sequentially and print a final summary. A single
