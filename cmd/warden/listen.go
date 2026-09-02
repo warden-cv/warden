@@ -77,27 +77,46 @@ func resolveHostPort(hostFlag, portFlag string, hostSet, portSet bool) (host, po
 }
 
 // resolveListener computes the effective HTTP listen address from the CLI
-// flags and environment. The legacy single-address form (--listen flag or
-// WARDEN_LISTEN environment) is preserved for compatibility and cannot be
-// combined with --host/--port. IPv6 hosts are bracketed via net.JoinHostPort.
+// flags and environment with the contract CLI > environment > default.
+//
+//   - explicit --listen wins and cannot be combined with explicit --host/--port;
+//   - explicit --host and/or --port override the legacy WARDEN_LISTEN variable;
+//   - with only environment variables, legacy WARDEN_LISTEN conflicts with
+//     WARDEN_HOST/WARDEN_PORT rather than silently picking one;
+//   - otherwise WARDEN_LISTEN is used, then host/port defaults.
+//
+// IPv6 hosts are bracketed via net.JoinHostPort.
 func resolveListener(hostFlag, portFlag, listenFlag string, hostSet, portSet, listenSet bool) (string, error) {
-	legacy := ""
 	if listenSet {
-		legacy = listenFlag
-		if strings.TrimSpace(legacy) == "" {
+		if hostSet || portSet {
+			return "", errors.New("--listen cannot be combined with --host or --port")
+		}
+		if strings.TrimSpace(listenFlag) == "" {
 			return "", errors.New("--listen is set but empty")
 		}
-	} else if v, ok := os.LookupEnv("WARDEN_LISTEN"); ok {
+		return listenFlag, nil
+	}
+	// Explicit --host/--port override the legacy WARDEN_LISTEN variable.
+	if hostSet || portSet {
+		host, port, err := resolveHostPort(hostFlag, portFlag, hostSet, portSet)
+		if err != nil {
+			return "", err
+		}
+		return net.JoinHostPort(host, port), nil
+	}
+	// Only environment variables are involved: legacy WARDEN_LISTEN versus the
+	// new WARDEN_HOST/WARDEN_PORT forms must not silently pick one.
+	if v, ok := os.LookupEnv("WARDEN_LISTEN"); ok {
+		if _, hasHost := os.LookupEnv("WARDEN_HOST"); hasHost {
+			return "", errors.New("WARDEN_LISTEN cannot be combined with WARDEN_HOST")
+		}
+		if _, hasPort := os.LookupEnv("WARDEN_PORT"); hasPort {
+			return "", errors.New("WARDEN_LISTEN cannot be combined with WARDEN_PORT")
+		}
 		if strings.TrimSpace(v) == "" {
 			return "", errors.New("WARDEN_LISTEN is set but empty")
 		}
-		legacy = v
-	}
-	if legacy != "" {
-		if hostSet || portSet {
-			return "", errors.New("--host/--port cannot be combined with the legacy listen address")
-		}
-		return legacy, nil
+		return v, nil
 	}
 	host, port, err := resolveHostPort(hostFlag, portFlag, hostSet, portSet)
 	if err != nil {

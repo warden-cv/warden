@@ -86,9 +86,10 @@ type serviceManager struct {
 }
 
 type unitMeta struct {
-	config string
-	listen string
-	health string
+	config     string
+	listen     string
+	health     string
+	listenMode string
 }
 
 // serviceOptions carries the values recorded in the managed unit. The legacy
@@ -111,6 +112,21 @@ func (o serviceOptions) listener() string {
 		return o.listen
 	}
 	return net.JoinHostPort(strings.TrimSpace(o.host), strings.TrimSpace(o.port))
+}
+
+// installOptions builds the serviceOptions recorded in a newly installed unit
+// from the resolved listener. Legacy bootstrap units keep the single-address
+// --listen form; explicit host/port units are split back into --host/--port so
+// their recorded listener is the runtime listener.
+func installOptions(configDir, root, addr string, legacy bool) (serviceOptions, error) {
+	if legacy {
+		return serviceOptions{configDir: configDir, listen: addr, root: root}, nil
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return serviceOptions{}, fmt.Errorf("cannot split resolved listener %q: %w", addr, err)
+	}
+	return serviceOptions{configDir: configDir, host: host, port: port, root: root}, nil
 }
 
 func userUnitPath(unitName string) string {
@@ -462,7 +478,11 @@ func renderWardenUnitBody(exe string, opts serviceOptions) string {
 }
 
 func buildWardenUnit(exe string, opts serviceOptions) string {
-	content := "# warden-config: " + opts.configDir + "\n# warden-listen: " + opts.listener() + "\n# warden-health: " + wardenHealthPath + "\n" + renderWardenUnitBody(exe, opts)
+	mode := "bootstrap"
+	if opts.listen == "" {
+		mode = "explicit"
+	}
+	content := "# warden-config: " + opts.configDir + "\n# warden-listen: " + opts.listener() + "\n# warden-listen-mode: " + mode + "\n# warden-health: " + wardenHealthPath + "\n" + renderWardenUnitBody(exe, opts)
 	sum := sha256.Sum256([]byte(content))
 	header := wardenUnitMarker + "\n" + wardenManagedPrefix + "v1 sha256=" + hex.EncodeToString(sum[:]) + "\n"
 	return header + content
@@ -495,8 +515,8 @@ func readManagedUnit(path string) (unitMeta, error) {
 	if hex.EncodeToString(sum[:]) != sm[1] {
 		return unitMeta{}, errModified
 	}
-	meta := unitMeta{}
-	configSeen, listenSeen, healthSeen := 0, 0, 0
+	meta := unitMeta{listenMode: "bootstrap"}
+	configSeen, listenSeen, healthSeen, modeSeen := 0, 0, 0, 0
 	for _, ln := range lines[2:] {
 		switch {
 		case strings.HasPrefix(ln, "# warden-config: "):
@@ -511,6 +531,12 @@ func readManagedUnit(path string) (unitMeta, error) {
 				return unitMeta{}, errMalformed
 			}
 			meta.listen = strings.TrimSpace(strings.TrimPrefix(ln, "# warden-listen: "))
+		case strings.HasPrefix(ln, "# warden-listen-mode: "):
+			modeSeen++
+			if modeSeen > 1 {
+				return unitMeta{}, errMalformed
+			}
+			meta.listenMode = strings.TrimSpace(strings.TrimPrefix(ln, "# warden-listen-mode: "))
 		case strings.HasPrefix(ln, "# warden-health: "):
 			healthSeen++
 			if healthSeen > 1 {
@@ -520,6 +546,12 @@ func readManagedUnit(path string) (unitMeta, error) {
 		}
 	}
 	if configSeen != 1 || listenSeen != 1 || healthSeen != 1 || meta.config == "" || meta.listen == "" || meta.health == "" {
+		return unitMeta{}, errMalformed
+	}
+	// Old units predating the mode marker default to bootstrap: their recorded
+	// listener is only a bootstrap value and durable config.json remains
+	// authoritative, matching the legacy behaviour.
+	if meta.listenMode != "explicit" && meta.listenMode != "bootstrap" {
 		return unitMeta{}, errMalformed
 	}
 	if meta.health != wardenHealthPath {
@@ -773,9 +805,14 @@ func (m *serviceManager) status(out io.Writer, version string) error {
 		}
 		return fmt.Errorf("%s unit is not valid: %w", m.unitName, err)
 	}
-	listen, err := wardenEffectiveListen(meta.config, meta.listen)
-	if err != nil {
-		return fmt.Errorf("cannot resolve the effective listen address: %w", err)
+	// New host/port units record an authoritative listener; legacy bootstrap
+	// units resolve the effective listener from durable config.json.
+	listen := meta.listen
+	if meta.listenMode != "explicit" {
+		listen, err = wardenEffectiveListen(meta.config, meta.listen)
+		if err != nil {
+			return fmt.Errorf("cannot resolve the effective listen address: %w", err)
+		}
 	}
 	enabled, err := m.queryState("is-enabled")
 	if err != nil {
@@ -1011,32 +1048,6 @@ func runService(args []string, version string) int {
 		fmt.Fprintln(os.Stderr, "warden:", err)
 		return 2
 	}
-	listenSet := flagProvided(fs, "listen")
-	hostSet := flagProvided(fs, "host")
-	portSet := flagProvided(fs, "port")
-	listenVal, hostVal, portVal := "", "", ""
-	if listenSet {
-		if hostSet || portSet {
-			fmt.Fprintln(os.Stderr, "warden: --host/--port cannot be combined with the legacy listen address")
-			return 2
-		}
-		listenVal = *listen
-	} else {
-		h, p, err := resolveHostPort(*host, *port, hostSet, portSet)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "warden:", err)
-			return 2
-		}
-		hostVal, portVal = h, p
-	}
-	addr := net.JoinHostPort(hostVal, portVal)
-	if listenVal != "" {
-		addr = listenVal
-	}
-	if err := validateNoControl(addr, "listen"); err != nil {
-		fmt.Fprintln(os.Stderr, "warden:", err)
-		return 2
-	}
 	m := &serviceManager{
 		unitName: "warden.service",
 		unitPath: userUnitPath("warden.service"),
@@ -1055,7 +1066,28 @@ func runService(args []string, version string) int {
 			return 1
 		}
 		m.exe = exe
-		opts := serviceOptions{configDir: *configDir, host: hostVal, port: portVal, listen: listenVal, root: *root}
+		addr, err := resolveListener(*host, *port, *listen, flagProvided(fs, "host"), flagProvided(fs, "port"), flagProvided(fs, "listen"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "warden:", err)
+			return 2
+		}
+		if err := validateNoControl(addr, "listen"); err != nil {
+			fmt.Fprintln(os.Stderr, "warden:", err)
+			return 2
+		}
+		// Resolve the recorded listener and its mode (explicit host/port vs
+		// legacy --listen/WARDEN_LISTEN bootstrap) for the generated unit.
+		legacy := flagProvided(fs, "listen")
+		if !legacy {
+			if _, hasListen := os.LookupEnv("WARDEN_LISTEN"); hasListen && !flagProvided(fs, "host") && !flagProvided(fs, "port") {
+				legacy = true
+			}
+		}
+		opts, err := installOptions(*configDir, *root, addr, legacy)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "warden:", err)
+			return 2
+		}
 		if err := m.install(opts, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "warden:", err)
 			return 1

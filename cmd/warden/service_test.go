@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1313,6 +1314,186 @@ func TestStatusReportsListenerURL(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "url:     http://"+listen) {
 		t.Fatalf("status missing effective listener URL:\n%s", out.String())
+	}
+}
+
+func splitListen(t *testing.T, addr string) (string, string) {
+	t.Helper()
+	h, p, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h, p
+}
+
+func TestWardenListenModeMarkers(t *testing.T) {
+	explicit := buildWardenUnit("/usr/local/bin/warden", wardenTestOptsHostPort("/config", "127.0.0.1", "7332", "/"))
+	if !strings.Contains(explicit, "# warden-listen-mode: explicit") {
+		t.Fatalf("host/port unit missing explicit mode marker:\n%s", explicit)
+	}
+	if _, err := readManagedUnitBytes(t, []byte(explicit)); err != nil {
+		t.Fatalf("explicit unit should validate: %v", err)
+	}
+	legacy := buildWardenUnit("/usr/local/bin/warden", testOpts("/config", "127.0.0.1:8080", "/"))
+	if !strings.Contains(legacy, "# warden-listen-mode: bootstrap") {
+		t.Fatalf("legacy unit missing bootstrap mode marker:\n%s", legacy)
+	}
+	if _, err := readManagedUnitBytes(t, []byte(legacy)); err != nil {
+		t.Fatalf("legacy unit should validate: %v", err)
+	}
+	// A hostile mode value is rejected.
+	bad := strings.Replace(legacy, "# warden-listen-mode: bootstrap", "# warden-listen-mode: attacker", 1)
+	if _, err := readManagedUnitBytes(t, []byte(bad)); err == nil {
+		t.Fatal("invalid listen-mode accepted")
+	}
+}
+
+func TestStatusUsesExplicitUnitListenerOverConfig(t *testing.T) {
+	// A new host/port unit records an authoritative listener; status must
+	// report and health-check it even when config.json holds an older address.
+	srv := jsonServer(t, 200, `{"ok":true}`, "application/json")
+	unitListen := strings.TrimPrefix(srv.URL, "http://")
+	host, port := splitListen(t, unitListen)
+	m, fr, base := newFakeManager(t)
+	configDir := filepath.Join(base, "config")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.install(wardenTestOptsHostPort(configDir, host, port, "/"), os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"127.0.0.1:8080"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fr.handler = activeHandler(fr)
+	var out bytes.Buffer
+	if err := m.status(&out, "1.0"); err != nil {
+		t.Fatalf("status failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "listen:  "+unitListen) {
+		t.Fatalf("explicit unit status must use the recorded listener, got:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "8080") {
+		t.Fatalf("explicit unit status must not fall back to durable config:\n%s", out.String())
+	}
+}
+
+func TestStatusLegacyUsesDurableConfig(t *testing.T) {
+	// A legacy --listen unit resolves its effective listener from config.json.
+	srv := jsonServer(t, 200, `{"ok":true}`, "application/json")
+	configListen := strings.TrimPrefix(srv.URL, "http://")
+	m, fr, base := newFakeManager(t)
+	configDir := filepath.Join(base, "config")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.install(testOpts(configDir, "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"`+configListen+`"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fr.handler = activeHandler(fr)
+	var out bytes.Buffer
+	if err := m.status(&out, "1.0"); err != nil {
+		t.Fatalf("status failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "listen:  "+configListen) {
+		t.Fatalf("legacy unit status must use durable config listener, got:\n%s", out.String())
+	}
+}
+
+func TestReinstallChangesUnitListenerWithoutConfig(t *testing.T) {
+	// Reinstalling with a different --port rewrites the unit's --host/--port and
+	// leaves the runtime listener authoritative without creating config.json.
+	m, _, _ := newFakeManager(t)
+	fsd := newFakeSystemd(m.unitPath)
+	m.run = fsd.runner()
+	configDir := "/config"
+	opts1 := wardenTestOptsHostPort(configDir, "127.0.0.1", "7402", "/")
+	if err := m.install(opts1, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	unit1, _ := os.ReadFile(m.unitPath)
+	if !strings.Contains(string(unit1), `"--port" "7402"`) {
+		t.Fatalf("first install must record 7402:\n%s", unit1)
+	}
+	if !strings.Contains(string(unit1), "# warden-listen-mode: explicit") {
+		t.Fatalf("first install must be explicit mode:\n%s", unit1)
+	}
+	fsd.setState("enabled", "active")
+	fsd.calls = nil
+	opts2 := wardenTestOptsHostPort(configDir, "127.0.0.1", "7403", "/")
+	if err := m.install(opts2, os.Stderr); err != nil {
+		t.Fatalf("reinstall: %v", err)
+	}
+	unit2, _ := os.ReadFile(m.unitPath)
+	if !strings.Contains(string(unit2), `"--port" "7403"`) {
+		t.Fatalf("reinstall must record 7403:\n%s", unit2)
+	}
+	if !strings.Contains(string(unit2), "# warden-listen-mode: explicit") {
+		t.Fatalf("reinstall unit must remain explicit mode:\n%s", unit2)
+	}
+	if !fsd.callsContain("restart ") {
+		t.Fatalf("changed listener must restart the service\ncalls: %v", fsd.calls)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "config.json")); !os.IsNotExist(err) {
+		t.Fatal("service install must not create config.json")
+	}
+}
+
+func TestInstallHonorsLegacyWardenListenEnv(t *testing.T) {
+	// WARDEN_LISTEN drives a legacy bootstrap install when no new host/port form
+	// is selected.
+	t.Setenv("WARDEN_LISTEN", "127.0.0.1:8080")
+	os.Unsetenv("WARDEN_HOST")
+	os.Unsetenv("WARDEN_PORT")
+	h, p, l, hs, ps, ls := listenerFlags()
+	addr, err := resolveListener(h, p, l, hs, ps, ls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr != "127.0.0.1:8080" {
+		t.Fatalf("WARDEN_LISTEN install address = %q", addr)
+	}
+	opts, err := installOptions("/config", "/", addr, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := buildWardenUnit("/usr/local/bin/warden", opts)
+	if !strings.Contains(unit, `"--listen" "127.0.0.1:8080"`) {
+		t.Fatalf("legacy install must record --listen:\n%s", unit)
+	}
+	if !strings.Contains(unit, "# warden-listen-mode: bootstrap") {
+		t.Fatalf("legacy install must be bootstrap mode:\n%s", unit)
+	}
+}
+
+func TestStatusIgnoresMalformedListenerEnv(t *testing.T) {
+	// Non-install service commands must ignore malformed WARDEN_HOST/WARDEN_PORT
+	// in the invoking shell.
+	srv := jsonServer(t, 200, `{"ok":true}`, "application/json")
+	listen := strings.TrimPrefix(srv.URL, "http://")
+	t.Setenv("WARDEN_HOST", "not a host")
+	t.Setenv("WARDEN_PORT", "not-a-port")
+	m, fr, base := newFakeManager(t)
+	configDir := filepath.Join(base, "config")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.install(testOpts(configDir, listen, "/"), os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"`+listen+`"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fr.handler = activeHandler(fr)
+	var out bytes.Buffer
+	if err := m.status(&out, "1.0"); err != nil {
+		t.Fatalf("status must ignore malformed listener env: %v", err)
+	}
+	if !strings.Contains(out.String(), "listen:  "+listen) {
+		t.Fatalf("status output missing listener:\n%s", out.String())
 	}
 }
 

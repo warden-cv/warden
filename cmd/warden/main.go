@@ -61,9 +61,32 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
+	// An explicitly selected --host/--port (CLI or WARDEN_HOST/WARDEN_PORT)
+	// overrides an existing durable config listener in memory, so the advertised
+	// override genuinely controls the runtime listener. A bare invocation or a
+	// legacy --listen selection keeps config.json as the durable source of truth.
+	if listenerOverrideSelected(fs) {
+		cfg.Listen = addr
+	}
 	if err := server.Run(cfg); err != nil {
 		fatal(fmt.Errorf("%v (listener: %s)", err, cfg.Listen))
 	}
+}
+
+// listenerOverrideSelected reports whether the user explicitly selected the new
+// host/port listener form (CLI flags or WARDEN_HOST/WARDEN_PORT environment).
+// Legacy --listen and bare invocations keep the durable config listener.
+func listenerOverrideSelected(fs *flag.FlagSet) bool {
+	if flagProvided(fs, "host") || flagProvided(fs, "port") {
+		return true
+	}
+	if _, ok := os.LookupEnv("WARDEN_HOST"); ok {
+		return true
+	}
+	if _, ok := os.LookupEnv("WARDEN_PORT"); ok {
+		return true
+	}
+	return false
 }
 func home() string {
 	h, _ := os.UserHomeDir()

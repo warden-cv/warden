@@ -241,3 +241,97 @@ func TestValidatePort(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveListenerExplicitPortOverridesLegacyEnv(t *testing.T) {
+	os.Unsetenv("WARDEN_HOST")
+	os.Unsetenv("WARDEN_PORT")
+	t.Setenv("WARDEN_LISTEN", "127.0.0.1:8080")
+	h, p, l, hs, ps, ls := listenerFlags("--port", "7402")
+	addr, err := resolveListener(h, p, l, hs, ps, ls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr != "127.0.0.1:7402" {
+		t.Fatalf("explicit --port must override WARDEN_LISTEN: %q", addr)
+	}
+}
+
+func TestResolveListenerExplicitHostOverridesLegacyEnv(t *testing.T) {
+	os.Unsetenv("WARDEN_PORT")
+	t.Setenv("WARDEN_LISTEN", "127.0.0.1:8080")
+	t.Setenv("WARDEN_HOST", "0.0.0.0")
+	h, p, l, hs, ps, ls := listenerFlags("--host", "10.0.0.1", "--port", "7402")
+	addr, err := resolveListener(h, p, l, hs, ps, ls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr != "10.0.0.1:7402" {
+		t.Fatalf("explicit --host/--port must override WARDEN_LISTEN: %q", addr)
+	}
+}
+
+func TestResolveListenerExplicitListenOverridesHostPortEnv(t *testing.T) {
+	t.Setenv("WARDEN_HOST", "0.0.0.0")
+	t.Setenv("WARDEN_PORT", "9000")
+	h, p, l, hs, ps, ls := listenerFlags("--listen", "127.0.0.1:8080")
+	addr, err := resolveListener(h, p, l, hs, ps, ls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr != "127.0.0.1:8080" {
+		t.Fatalf("explicit --listen must override host/port env: %q", addr)
+	}
+}
+
+func TestResolveListenerEnvConflict(t *testing.T) {
+	// Only environment variables involved: legacy WARDEN_LISTEN conflicts with
+	// WARDEN_HOST or WARDEN_PORT and must fail rather than silently pick one.
+	t.Setenv("WARDEN_LISTEN", "127.0.0.1:8080")
+	t.Setenv("WARDEN_HOST", "0.0.0.0")
+	h, p, l, hs, ps, ls := listenerFlags()
+	if _, err := resolveListener(h, p, l, hs, ps, ls); err == nil {
+		t.Fatal("WARDEN_LISTEN + WARDEN_HOST conflict accepted")
+	}
+	os.Unsetenv("WARDEN_HOST")
+	t.Setenv("WARDEN_PORT", "9000")
+	if _, err := resolveListener(h, p, l, hs, ps, ls); err == nil {
+		t.Fatal("WARDEN_LISTEN + WARDEN_PORT conflict accepted")
+	}
+}
+
+func TestListenerOverrideSelected(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("host", "", "")
+	fs.String("port", "", "")
+	fs.String("listen", "", "")
+	_ = fs.Parse(nil)
+	os.Unsetenv("WARDEN_HOST")
+	os.Unsetenv("WARDEN_PORT")
+	os.Unsetenv("WARDEN_LISTEN")
+	if listenerOverrideSelected(fs) {
+		t.Fatal("bare invocation must not override durable config")
+	}
+	// WARDEN_LISTEN only: not an explicit new-form override.
+	t.Setenv("WARDEN_LISTEN", "127.0.0.1:8080")
+	if listenerOverrideSelected(fs) {
+		t.Fatal("legacy WARDEN_LISTEN must not override durable config")
+	}
+	// WARDEN_HOST / WARDEN_PORT environment: override.
+	os.Unsetenv("WARDEN_LISTEN")
+	t.Setenv("WARDEN_HOST", "0.0.0.0")
+	if !listenerOverrideSelected(fs) {
+		t.Fatal("WARDEN_HOST must override durable config")
+	}
+	os.Unsetenv("WARDEN_HOST")
+	t.Setenv("WARDEN_PORT", "7402")
+	if !listenerOverrideSelected(fs) {
+		t.Fatal("WARDEN_PORT must override durable config")
+	}
+	// Explicit CLI --host/--port: override.
+	os.Unsetenv("WARDEN_PORT")
+	_ = fs.Set("host", "127.0.0.1")
+	_ = fs.Set("port", "7402")
+	if !listenerOverrideSelected(fs) {
+		t.Fatal("explicit --host/--port must override durable config")
+	}
+}
