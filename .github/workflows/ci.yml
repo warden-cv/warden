@@ -1,0 +1,72 @@
+name: CI
+
+# Read-only verification on every push to main and on pull requests. The only
+# permission is contents:read; nothing here builds a release or writes back.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to immutable commit SHAs, consistent with the repository policy
+      # used by the release workflow. checkout@v4 and setup-go@v5 reuse the
+      # exact pins already trusted in release.yml; setup-node@v4 is pinned to
+      # the v4 HEAD SHA.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      # gofmt cleanliness for maintained Go files. The two pre-existing,
+      # documented exceptions are excluded; every other tracked Go file must be
+      # gofmt-clean.
+      - name: gofmt clean (maintained files, documented exceptions)
+        run: |
+          fail=0
+          for f in $(git ls-files '*.go'); do
+            case "$f" in
+              internal/server/env_policy_test.go|internal/server/totp_test.go) continue ;;
+            esac
+            if [ -n "$(gofmt -l "$f")" ]; then
+              echo "gofmt: $f needs formatting"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+      - name: go test -race
+        run: go test -race ./...
+      - name: go build -trimpath
+        run: go build -trimpath ./...
+      - name: node --check source JavaScript
+        run: node --check content/assets/js/script.js
+      - name: node --check generated JavaScript
+        run: node --check public/assets/js/script.js
+      - name: agent UX suite
+        run: node tests/agent-ux.test.js
+      - name: markdown render smoke
+        run: node tests/markdown-render-smoke.js
+      - name: frontend security smoke
+        run: node tests/frontend-security-smoke.js
+      - name: generated asset byte parity
+        run: |
+          diff -q content/assets/js/script.js public/assets/js/script.js
+          diff -q content/assets/css/style.css public/assets/css/style.css
+      - name: workflow contract
+        run: scripts/workflow-contract.sh
+      - name: git history hygiene
+        run: scripts/git-history-hygiene.sh
