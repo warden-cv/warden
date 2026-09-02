@@ -460,7 +460,7 @@ func (a *app) agentRun(w http.ResponseWriter, r *http.Request) {
 			// task event so the task panel restores after reload, and streamed
 			// as a normalized server-owned task event so the live panel opens
 			// without waiting for terminal completion.
-			if tasks := taskSnapshot(raw); tasks != "" {
+			if tasks := taskSnapshot(raw, key); tasks != "" {
 				if err := a.persistAgentRunEvent(sess.AccountID, runID, clientSession, "task", tasks, "", seq, time.Now().UnixMilli()); err != nil {
 					persistFailed = true
 					persistErr = err.Error()
@@ -963,7 +963,14 @@ func sanitizeImageURL(u string) string {
 // taskSnapshot extracts and validates a todowrite task list from a tool_use
 // event, returning a normalized JSON string (kind "task") or "" when the
 // payload is not a trusted structured todowrite snapshot.
-func taskSnapshot(raw map[string]any) string {
+// taskSnapshot extracts and normalizes a todowrite snapshot. Each accepted
+// content field is redacted through the account/provider diagnostic sanitizer
+// (including the active key) before the list is marshalled, so the exact JSON
+// string can be used for durable persistence, live delivery and reload without
+// a separate string-level pass that could miss JSON-escaped secrets. Length
+// bounds are decided before redaction so an oversized original value cannot
+// become acceptable merely because redaction shortened it.
+func taskSnapshot(raw map[string]any, key string) string {
 	part, _ := raw["part"].(map[string]any)
 	tool, _ := part["tool"].(string)
 	if tool != "todowrite" {
@@ -992,9 +999,11 @@ func taskSnapshot(raw map[string]any) string {
 		}
 		content, _ := m["content"].(string)
 		content = strings.TrimSpace(content)
+		// Bound the length before redaction.
 		if content == "" || len(content) > 500 {
 			continue
 		}
+		content = sanitizeAgentDiagnostic(content, key)
 		status := normalizeTaskStatus(fmt.Sprint(m["status"]))
 		priority := normalizeTaskPriority(fmt.Sprint(m["priority"]))
 		out = append(out, map[string]string{"content": content, "status": status, "priority": priority})

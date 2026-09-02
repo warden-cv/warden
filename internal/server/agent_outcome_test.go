@@ -1466,7 +1466,7 @@ func TestWardenTaskSnapshotValidation(t *testing.T) {
 			map[string]any{"content": "second", "status": "in_progress", "priority": "low"},
 		}}},
 	}}
-	snap := taskSnapshot(valid)
+	snap := taskSnapshot(valid, "")
 	if snap == "" {
 		t.Fatal("valid todowrite snapshot not extracted")
 	}
@@ -1479,17 +1479,17 @@ func TestWardenTaskSnapshotValidation(t *testing.T) {
 	}
 	// Non-todowrite tool: no snapshot.
 	other := map[string]any{"type": "tool_use", "part": map[string]any{"tool": "bash", "state": map[string]any{"input": map[string]any{"command": "ls"}}}}
-	if got := taskSnapshot(other); got != "" {
+	if got := taskSnapshot(other, ""); got != "" {
 		t.Fatal("non-todowrite produced a task snapshot")
 	}
 	// Malformed (todos not an array) returns empty.
 	malformed := map[string]any{"type": "tool_use", "part": map[string]any{"tool": "todowrite", "state": map[string]any{"input": map[string]any{"todos": "nope"}}}}
-	if got := taskSnapshot(malformed); got != "" {
+	if got := taskSnapshot(malformed, ""); got != "" {
 		t.Fatal("malformed todowrite produced a snapshot")
 	}
 	// A valid empty todos array is an authoritative clear operation.
 	empty := map[string]any{"type": "tool_use", "part": map[string]any{"tool": "todowrite", "state": map[string]any{"input": map[string]any{"todos": []any{}}}}}
-	if got := taskSnapshot(empty); got != "[]" {
+	if got := taskSnapshot(empty, ""); got != "[]" {
 		t.Fatalf("valid empty todos = %q want []", got)
 	}
 }
@@ -1538,5 +1538,104 @@ func TestWardenAgentTodowriteStreamsTaskSnapshotAndToolEvent(t *testing.T) {
 	}
 	if taskCount != 1 {
 		t.Fatalf("durable task snapshots = %d want 1", taskCount)
+	}
+}
+
+// TestWardenAgentTaskSnapshotRedactsCredentials verifies task content is
+// redacted through the account/provider diagnostic sanitizer before the
+// snapshot is marshalled, so the streamed and durable snapshots are
+// byte-identical, never expose the active key (including when the key is
+// surrounded by JSON-sensitive quotes/backslashes), keep ordinary content
+// unchanged, remain valid JSON, and the raw forwarded tool event is still
+// sanitized per the existing policy.
+func TestWardenAgentTaskSnapshotRedactsCredentials(t *testing.T) {
+	fake := newFakeOpenCode(t)
+	a, user, sess, cookie := wardenAgentTestApp(t, fake)
+	ws := agentWorkspace(t, a)
+	key := "sk-test-secret-key-abcdef"
+	secretContent := `leaked ` + key + ` in a"b\c payload`
+	raw := map[string]any{
+		"type": "tool_use", "sessionID": "ses_x",
+		"part": map[string]any{
+			"tool": "todowrite",
+			"state": map[string]any{"status": "completed", "input": map[string]any{"todos": []any{
+				map[string]any{"content": secretContent, "status": "pending", "priority": "high"},
+				map[string]any{"content": "ordinary text", "status": "pending", "priority": "low"},
+			}}},
+		},
+	}
+	eventJSON, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := string(eventJSON) + "\n{\"type\":\"step_finish\",\"sessionID\":\"ses_x\",\"part\":{\"reason\":\"stop\"}}\n"
+	fake.invoke(t, stdout, "", 0, `{"info":{"id":"ses_x"},"messages":[]}`)
+	events := wardenRunRequest(t, a, sess, cookie, ws)
+	var streamed string
+	toolForwarded := false
+	for _, ev := range events {
+		switch ev["type"] {
+		case "task":
+			d, _ := ev["data"].(map[string]any)
+			streamed, _ = d["snapshot"].(string)
+		case "opencode":
+			d, _ := ev["data"].(map[string]any)
+			p, _ := d["part"].(map[string]any)
+			if p["tool"] == "todowrite" {
+				toolForwarded = true
+				if st, _ := p["state"].(map[string]any); st != nil {
+					if inp, _ := st["input"].(map[string]any); inp != nil {
+						if todos, _ := inp["todos"].([]any); len(todos) > 0 {
+							if m, _ := todos[0].(map[string]any); m != nil {
+								if c, _ := m["content"].(string); strings.Contains(c, key) {
+									t.Fatalf("raw forwarded event leaked the key: %q", c)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if streamed == "" {
+		t.Fatal("no streamed task snapshot")
+	}
+	if strings.Contains(streamed, key) {
+		t.Fatalf("key leaked in streamed snapshot: %s", streamed)
+	}
+	var todos []map[string]string
+	if err := json.Unmarshal([]byte(streamed), &todos); err != nil {
+		t.Fatalf("redacted snapshot is not valid JSON: %v (%s)", err, streamed)
+	}
+	if len(todos) != 2 {
+		t.Fatalf("todos = %d want 2", len(todos))
+	}
+	if !strings.Contains(todos[0]["content"], "[redacted]") || strings.Contains(todos[0]["content"], key) {
+		t.Fatalf("key not redacted: %q", todos[0]["content"])
+	}
+	if todos[1]["content"] != "ordinary text" {
+		t.Fatalf("non-secret content changed: %q", todos[1]["content"])
+	}
+	if !toolForwarded {
+		t.Fatal("raw todowrite tool event not forwarded")
+	}
+	merged, err := a.loadConversationMerged(user.ID, "conv1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var durable string
+	for _, ev := range merged {
+		if ev.Kind == "task" {
+			durable = ev.Text
+		}
+	}
+	if durable == "" {
+		t.Fatal("no durable task event")
+	}
+	if strings.Contains(durable, key) {
+		t.Fatalf("key leaked in durable snapshot: %s", durable)
+	}
+	if streamed != durable {
+		t.Fatalf("streamed and durable snapshots differ:\nstream=%s\ndurable=%s", streamed, durable)
 	}
 }

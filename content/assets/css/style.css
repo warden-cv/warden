@@ -597,7 +597,6 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 *::-webkit-scrollbar-thumb{background:#46514b;border:3px solid #151817;border-radius:999px;min-height:44px}
 *::-webkit-scrollbar-thumb:hover{background:#59665f}
 *::-webkit-scrollbar-corner{background:#151817}
-.agent-feed::-webkit-scrollbar,.editor-agent-feed::-webkit-scrollbar{width:16px}
 
 /* Agent workspace picker and whole-composer resizing. */
 .agent-workspace,.editor-agent-workspace{appearance:none;width:100%;border-left:0;border-right:0;border-top:0;border-radius:0;text-align:left;cursor:pointer}
