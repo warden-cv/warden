@@ -28,6 +28,7 @@ BEGIN {
   required_inline["node --check content/assets/js/script.js"]=1
   required_inline["node --check public/assets/js/script.js"]=1
   required_inline["node tests/agent-ux.test.js"]=1
+  required_inline["node tests/editor-layout.test.js"]=1
   required_inline["node tests/markdown-render-smoke.js"]=1
   required_inline["node tests/frontend-security-smoke.js"]=1
   required_inline["scripts/workflow-contract.sh"]=1

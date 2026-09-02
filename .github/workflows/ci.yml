@@ -58,6 +58,8 @@ jobs:
         run: node --check public/assets/js/script.js
       - name: agent UX suite
         run: node tests/agent-ux.test.js
+      - name: editor layout contract
+        run: node tests/editor-layout.test.js
       - name: markdown render smoke
         run: node tests/markdown-render-smoke.js
       - name: frontend security smoke
