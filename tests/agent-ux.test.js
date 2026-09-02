@@ -569,6 +569,70 @@ test('background task snapshot does not increment unread', async () => {
   if (run(ctx, "agentSessions['b'].unread") !== 1) throw new Error('real activity should increment unread');
 });
 
+// Per-session collapsed task panel: closing either Warden surface collapses
+// both; events, rerenders and tab switching do not reopen; explicit reopen
+// restores the latest snapshot on both surfaces.
+test('task panel close collapses both Warden surfaces and survives events/rerender/tab', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0},b:{id:'b',events:[],busy:false,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
+  if (run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('main panel should be open');
+  run(ctx, 'setAgentTasksCollapsed(true)');
+  if (!run(ctx, "$('#agentTaskPanel').hidden") || !run(ctx, "$('#editorAgentTaskPanel').hidden")) throw new Error('collapse did not hide both surfaces');
+  if (run(ctx, "agentSessions['a'].tasksCollapsed") !== true) throw new Error('collapsed flag not set');
+  if (run(ctx, "$('#agentTaskReopen').hidden") || run(ctx, "$('#editorAgentTaskReopen').hidden")) throw new Error('reopen badges should be visible');
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'opencode', data: { type: 'text', part: { type: 'text', text: 'hello' } } } });
+  if (!run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('a transcript event reopened the panel');
+  run(ctx, 'renderAgentSession()');
+  if (!run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('a rerender reopened the panel');
+  run(ctx, "activeAgentSessionId='b';renderAgentSession()");
+  run(ctx, "activeAgentSessionId='a';renderAgentSession()");
+  if (!run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('tab switching reopened the panel');
+  run(ctx, 'setAgentTasksCollapsed(false)');
+  if (run(ctx, "$('#agentTaskPanel').hidden") || run(ctx, "$('#editorAgentTaskPanel').hidden")) throw new Error('explicit reopen did not show the panels');
+  if (run(ctx, "$('#agentTaskList').children.length") !== 1 || run(ctx, "$('#editorAgentTaskList').children.length") !== 1) throw new Error('reopen should render the snapshot');
+});
+
+// Task snapshots keep updating while collapsed and reopening shows the latest.
+test('task snapshots update while collapsed and reopen shows latest on both surfaces', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
+  run(ctx, 'setAgentTasksCollapsed(true)');
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"one","status":"pending","priority":"high"},{"content":"two","status":"completed","priority":"low"}]' } } });
+  if (!run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('a later snapshot reopened the panel');
+  if (run(ctx, "agentSessions['a'].tasksCollapsed") !== true) throw new Error('collapsed preference lost');
+  run(ctx, 'setAgentTasksCollapsed(false)');
+  if (run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('panel did not reopen');
+  if (run(ctx, "$('#agentTaskList').children.length") !== 2) throw new Error('latest snapshot rows = ' + run(ctx, "$('#agentTaskList').children.length"));
+  if (run(ctx, "agentSessions['a'].tasksCollapsed") !== false) throw new Error('collapsed not cleared on reopen');
+});
+
+// An empty authoritative snapshot clears tasks even while collapsed.
+test('empty authoritative snapshot clears tasks while collapsed', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
+  run(ctx, 'setAgentTasksCollapsed(true)');
+  run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[]' } } });
+  if (!run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('panel not hidden after empty clear');
+  if (run(ctx, "$('#agentTaskList').children.length") !== 0) throw new Error('tasks not cleared');
+  if (!run(ctx, "$('#agentTaskReopen').hidden")) throw new Error('reopen badge should hide after clear');
+});
+
+// Synchronization must not reopen a collapsed task panel.
+test('synchronization preserves collapsed task panel', async () => {
+  const ctx = loadContext((url) => {
+    if (url === '/api/agent/conversations') return Promise.resolve(jsonOk([{ id: 'a', state: 'completed', currentRunId: 'run-1', events: [{ kind: 'task', text: '[{"content":"alpha","status":"pending","priority":"high"}]', name: '' }] }]));
+    return Promise.resolve(jsonOk({}));
+  });
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0,tasksCollapsed:true}};activeAgentSessionId='a';agentServerReady=true;workspaceRoot='/ws'");
+  await run(ctx, 'syncAgentConversations()');
+  if (run(ctx, "agentSessions['a'].tasksCollapsed") !== true) throw new Error('collapsed flag lost on sync');
+  run(ctx, 'renderAgentSession()');
+  if (!run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('sync reopened a collapsed panel');
+});
+
 // Run all registered tests sequentially and print a final summary. A single
 // failure or unhandled rejection leaves exitCode nonzero.
 (async function runAll() {

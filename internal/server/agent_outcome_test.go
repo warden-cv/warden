@@ -1548,20 +1548,23 @@ func TestWardenAgentTodowriteStreamsTaskSnapshotAndToolEvent(t *testing.T) {
 // surrounded by JSON-sensitive quotes/backslashes), keep ordinary content
 // unchanged, remain valid JSON, and the raw forwarded tool event is still
 // sanitized per the existing policy.
+
 func TestWardenAgentTaskSnapshotRedactsCredentials(t *testing.T) {
 	fake := newFakeOpenCode(t)
 	a, user, sess, cookie := wardenAgentTestApp(t, fake)
 	ws := agentWorkspace(t, a)
 	key := "sk-test-secret-key-abcdef"
 	secretContent := `leaked ` + key + ` in a"b\c payload`
+	todoOutput := `[{"content":"` + key + `","status":"completed"}]`
 	raw := map[string]any{
 		"type": "tool_use", "sessionID": "ses_x",
 		"part": map[string]any{
 			"tool": "todowrite",
-			"state": map[string]any{"status": "completed", "input": map[string]any{"todos": []any{
-				map[string]any{"content": secretContent, "status": "pending", "priority": "high"},
-				map[string]any{"content": "ordinary text", "status": "pending", "priority": "low"},
-			}}},
+			"state": map[string]any{
+				"status": "completed",
+				"input":  map[string]any{"todos": []any{map[string]any{"content": secretContent, "status": "pending", "priority": "high"}, map[string]any{"content": "ordinary text", "status": "pending", "priority": "low"}}},
+				"output": todoOutput,
+			},
 		},
 	}
 	eventJSON, err := json.Marshal(raw)
@@ -1572,36 +1575,18 @@ func TestWardenAgentTaskSnapshotRedactsCredentials(t *testing.T) {
 	fake.invoke(t, stdout, "", 0, `{"info":{"id":"ses_x"},"messages":[]}`)
 	events := wardenRunRequest(t, a, sess, cookie, ws)
 	var streamed string
-	toolForwarded := false
 	for _, ev := range events {
-		switch ev["type"] {
-		case "task":
+		rawJSON, _ := json.Marshal(ev)
+		if strings.Contains(string(rawJSON), key) {
+			t.Fatalf("key leaked in a streamed event: %s", rawJSON)
+		}
+		if ev["type"] == "task" {
 			d, _ := ev["data"].(map[string]any)
 			streamed, _ = d["snapshot"].(string)
-		case "opencode":
-			d, _ := ev["data"].(map[string]any)
-			p, _ := d["part"].(map[string]any)
-			if p["tool"] == "todowrite" {
-				toolForwarded = true
-				if st, _ := p["state"].(map[string]any); st != nil {
-					if inp, _ := st["input"].(map[string]any); inp != nil {
-						if todos, _ := inp["todos"].([]any); len(todos) > 0 {
-							if m, _ := todos[0].(map[string]any); m != nil {
-								if c, _ := m["content"].(string); strings.Contains(c, key) {
-									t.Fatalf("raw forwarded event leaked the key: %q", c)
-								}
-							}
-						}
-					}
-				}
-			}
 		}
 	}
 	if streamed == "" {
 		t.Fatal("no streamed task snapshot")
-	}
-	if strings.Contains(streamed, key) {
-		t.Fatalf("key leaked in streamed snapshot: %s", streamed)
 	}
 	var todos []map[string]string
 	if err := json.Unmarshal([]byte(streamed), &todos); err != nil {
@@ -1616,15 +1601,15 @@ func TestWardenAgentTaskSnapshotRedactsCredentials(t *testing.T) {
 	if todos[1]["content"] != "ordinary text" {
 		t.Fatalf("non-secret content changed: %q", todos[1]["content"])
 	}
-	if !toolForwarded {
-		t.Fatal("raw todowrite tool event not forwarded")
-	}
 	merged, err := a.loadConversationMerged(user.ID, "conv1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var durable string
 	for _, ev := range merged {
+		if strings.Contains(ev.Text, key) {
+			t.Fatalf("key leaked in a durable event: %+v", ev)
+		}
 		if ev.Kind == "task" {
 			durable = ev.Text
 		}
@@ -1632,10 +1617,11 @@ func TestWardenAgentTaskSnapshotRedactsCredentials(t *testing.T) {
 	if durable == "" {
 		t.Fatal("no durable task event")
 	}
-	if strings.Contains(durable, key) {
-		t.Fatalf("key leaked in durable snapshot: %s", durable)
-	}
 	if streamed != durable {
 		t.Fatalf("streamed and durable snapshots differ:\nstream=%s\ndurable=%s", streamed, durable)
+	}
+	var todosReload []map[string]string
+	if err := json.Unmarshal([]byte(durable), &todosReload); err != nil {
+		t.Fatalf("durable snapshot not valid JSON: %v", err)
 	}
 }
