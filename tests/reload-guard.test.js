@@ -15,8 +15,10 @@ const REGION_END = SCRIPT.indexOf('// END reload guard');
 if (REGION_START < 0 || REGION_END < 0) throw new Error('reload-guard region not found');
 const REGION = SCRIPT.slice(REGION_START, REGION_END);
 
-function loadGuard() {
+function loadGuard(opts) {
+  opts = opts || {};
   const listeners = { keydown: [], beforeunload: [] };
+  const toasts = [];
   let reloadCalls = 0;
   const body = { children: [], append(...x) { for (const k of x) if (k != null) this.children.push(k); } };
   function makeNode(tag) {
@@ -40,7 +42,8 @@ function loadGuard() {
     setTimeout,
     esc: (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
     document: { createElement: makeNode, body },
-    location: { reload() { reloadCalls++; } },
+    location: { reload() { reloadCalls++; if (opts.reloadThrows) throw new Error('reload blocked'); } },
+    toast: (m) => { toasts.push(String(m)); },
     window: {
       addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
       removeEventListener(type, fn) { if (listeners[type]) listeners[type] = listeners[type].filter((f) => f !== fn); },
@@ -60,7 +63,9 @@ function loadGuard() {
     ctx,
     fire,
     modal: () => body.children.find((c) => String(c.className || '').includes('reload-confirm-backdrop')),
+    modals: () => body.children.filter((c) => String(c.className || '').includes('reload-confirm-backdrop')),
     reloadCalls: () => reloadCalls,
+    toasts,
     run: (code) => vm.runInContext(code, ctx),
   };
 }
@@ -140,7 +145,7 @@ test('bypass resets if reload initiation fails and control returns', async () =>
   g.fire('keydown', { key: 'r', ctrlKey: true });
   g.modal().querySelector('form').onsubmit({ preventDefault() {} });
   assert.strictEqual(g.run('reloadConfirmArmed'), true);
-  await new Promise((r) => setTimeout(r, 220));
+  await new Promise((r) => setTimeout(r, 3200));
   assert.strictEqual(g.run('reloadConfirmArmed'), false, 'bypass must reset if control returns');
   const u = g.fire('beforeunload', {});
   assert.strictEqual(u._prevented, true, 'a later unload must be protected again');
@@ -164,16 +169,67 @@ test('unrelated shortcuts are unaffected', () => {
   }
 });
 
-test('repeated keydown does not open a second confirmation', () => {
+test('repeated reload keydowns are prevented and open only one confirmation', () => {
   const g = loadGuard();
   g.run('installReloadGuard()');
   g.fire('keydown', { key: 'r', ctrlKey: true });
   const held = g.fire('keydown', { key: 'r', ctrlKey: true, repeat: true });
-  assert.strictEqual(held._prevented, undefined, 'held-key repeat must be ignored entirely');
+  assert.strictEqual(held._prevented, true, 'held-key repeat must still be prevented');
   const again = g.fire('keydown', { key: 'r', ctrlKey: true });
   assert.strictEqual(again._prevented, true, 'recognized keydown still intercepted while prompt open');
-  const modals = g.ctx.document.body.children.filter((c) => String(c.className || '').includes('reload-confirm-backdrop'));
-  assert.strictEqual(modals.length, 1, 'must not open multiple confirmations');
+  assert.strictEqual(g.modals().length, 1, 'must not open multiple confirmations');
+});
+
+test('removing the guard closes an open dialog and invalidates its callback', () => {
+  const g = loadGuard();
+  g.run('installReloadGuard()');
+  g.fire('keydown', { key: 'r', ctrlKey: true });
+  assert(g.modal(), 'dialog should be open');
+  const staleForm = g.modal().querySelector('form');
+  g.run('removeReloadGuard()');
+  assert.strictEqual(g.modals().length, 0, 'removeReloadGuard must close the open dialog');
+  assert.strictEqual(g.run('reloadPromptOpen'), false, 'no stale prompt state');
+  assert.strictEqual(g.run('reloadConfirmArmed'), false, 'no bypass armed');
+  // Submitting the stale form after removal must not reload.
+  staleForm.onsubmit({ preventDefault() {} });
+  assert.strictEqual(g.reloadCalls(), 0, 'stale form submit must not reload');
+});
+
+test('showLogin and showSetup remove an open dialog and stale submit cannot reload', () => {
+  // The guard is installed when the authenticated app is shown; login/setup
+  // transitions call removeReloadGuard. Verify the full removal path closes an
+  // already-open dialog and invalidates its callback.
+  assert(/\bshowLogin\(\)\{[\s\S]*?removeReloadGuard\(\)/.test(SCRIPT), 'showLogin must remove the guard');
+  assert(/\bshowSetup\(status=\{\}\)\{removeReloadGuard\(\)/.test(SCRIPT), 'showSetup must remove the guard');
+  const g = loadGuard();
+  g.run('installReloadGuard()');
+  g.fire('keydown', { key: 'r', ctrlKey: true });
+  const staleForm = g.modal().querySelector('form');
+  g.run('removeReloadGuard()');
+  assert.strictEqual(g.modals().length, 0, 'dialog removed');
+  staleForm.onsubmit({ preventDefault() {} });
+  assert.strictEqual(g.reloadCalls(), 0, 'stale submit after removal must not reload');
+  const u = g.fire('beforeunload', {});
+  assert.strictEqual(u._prevented, undefined, 'guard removed means unload is not blocked');
+});
+
+test('synchronous reload failure clears the bypass and keeps the guard active', async () => {
+  const g = loadGuard({ reloadThrows: true });
+  g.run('installReloadGuard()');
+  g.fire('keydown', { key: 'r', ctrlKey: true });
+  g.modal().querySelector('form').onsubmit({ preventDefault() {} });
+  assert.strictEqual(g.run('reloadConfirmArmed'), false, 'bypass must be cleared immediately on failure');
+  assert.strictEqual(g.run('reloadGuardActive'), true, 'guard must remain active');
+  assert.strictEqual(g.run('reloadPromptOpen'), false, 'no stale prompt flag');
+  assert.strictEqual(g.modals().length, 0, 'no modal left behind');
+  assert.strictEqual(g.toasts.length, 1, 'a reload-failure toast should be shown');
+  const u = g.fire('beforeunload', {});
+  assert.strictEqual(u._prevented, true, 'a later unload must be protected again');
+});
+
+test('reload-confirm actions share the confirmation action-row styling', () => {
+  const css = fs.readFileSync('content/assets/css/style.css', 'utf8');
+  assert(/\.password-confirm-actions,\.reload-confirm-actions\{display:flex;justify-content:flex-end;gap:7px;margin-top:14px\}/.test(css), 'reload-confirm-actions must share the action-row contract');
 });
 
 test('login/setup state does not install or activate the protection', () => {
