@@ -38,23 +38,35 @@ export WARDEN_PASSWORD_HASH='pbkdf2-sha256$...'
 ./warden
 ```
 
-Open `http://127.0.0.1:8080`. Explorer and Terminal start in the server user's home directory, while the default Explorer/Editor filesystem boundary remains `/`, so the root breadcrumb can navigate to the whole machine. Use `--root /some/subtree` (or `WARDEN_FILE_ROOT`) when you intentionally want a narrower **file-management** view. This does not sandbox the PTY shell; terminal privilege must be controlled separately when Warden gains user/role levels.
+Open `http://127.0.0.1:7332`. Explorer and Terminal start in the server user's home directory, while the default Explorer/Editor filesystem boundary remains `/`, so the root breadcrumb can navigate to the whole machine. Use `--root /some/subtree` (or `WARDEN_FILE_ROOT`) when you intentionally want a narrower **file-management** view. This does not sandbox the PTY shell; terminal privilege must be controlled separately when Warden gains user/role levels.
 
 Warden binds to loopback by default. Loopback development automatically uses a non-Secure session cookie so plain `http://127.0.0.1` works correctly. Non-loopback listeners default to Secure cookies; behind an HTTPS reverse proxy enable `WARDEN_TRUST_PROXY=true`; Warden accepts forwarded scheme/client headers only from a loopback proxy and marks HTTPS sessions Secure.
+
+The listener is configured with `--host`/`--port` and the `WARDEN_HOST`/`WARDEN_PORT` environment variables, in that precedence order:
+
+```sh
+warden                        # 127.0.0.1:7332
+warden --port 7402            # 127.0.0.1:7402
+WARDEN_PORT=7402 warden       # 127.0.0.1:7402
+warden --host 0.0.0.0 --port 7402
+```
+
+Loopback (`127.0.0.1`) is recommended behind a reverse proxy. Binding `0.0.0.0` exposes Warden on all IPv4 interfaces and should only be deliberate. IPv6 hosts are accepted and bracketed automatically. Ports must be integers from 1 through 65535; an invalid or empty value fails rather than silently falling back. The legacy `--listen` flag and `WARDEN_LISTEN` environment variable remain accepted and cannot be combined with `--host`/`--port`. The fresh default changed from `8080` to `7332`; an existing `config.json` remains the durable source of truth, so installed instances keep their recorded listener until deliberately reinstalled.
 
 ## Run as a systemd user service
 
 Run Warden in the foreground with `warden` or `warden serve`. To keep it running without a terminal, install a per-user systemd unit:
 
 ```sh
-warden service install            # --config, --listen, --root accepted
+warden service install            # --host, --port, --config, --root accepted
+warden service install --port 7402  # install on 127.0.0.1:7402
 warden service status
 warden service logs               # or: warden service logs --follow
 warden service restart
 warden service uninstall          # stops the service but keeps all Warden configuration, accounts and databases
 ```
 
-The user unit is written to `~/.config/systemd/user/warden.service` and managed with `systemctl --user` and `journalctl --user-unit warden.service`. `service install` resolves the executable to a stable absolute path, refuses empty, relative or transient paths, and writes the unit atomically with a versioned integrity header. An existing unit that is not managed by Warden is never overwritten or removed silently. Install is transactional: the prior managed unit bytes are preserved, prior systemd enablement and activity are inspected before mutation, only exactly-recreatable states are accepted (`enabled`, `enabled-runtime`, `disabled` × `active`, `inactive`; masked/static/linked/generated/transient/failed/reloading states are refused before mutation — unmask or stop first), and rollback reproduces the exact prior enablement and activity states, distinguishing persistent from runtime enablement. A byte-identical unit already enabled and active is a genuine no-op; an unchanged unit that is inactive or disabled receives only the lifecycle steps needed, and a changed configuration reloads systemd and restarts the service. A failed fresh install is stopped and disabled while the unit is still loaded, then removed and systemd is reloaded. `warden service status` reports enabled/running state, PID, version, listen address and a live health check, and exits nonzero when the service is failed or missing.
+The user unit is written to `~/.config/systemd/user/warden.service` and managed with `systemctl --user` and `journalctl --user-unit warden.service`. `service install` resolves the executable to a stable absolute path, refuses empty, relative or transient paths, and writes the unit atomically with a versioned integrity header. It records the resolved host and port directly in the unit command, so the selected listener survives login, restart and reboot. It accepts `--host`/`--port` (defaulting to `127.0.0.1:7332` or the current `WARDEN_HOST`/`WARDEN_PORT` values), plus the legacy single-address `--listen`/`WARDEN_LISTEN`, `--config`, `--root`. An existing unit that is not managed by Warden is never overwritten or removed silently. Install is transactional: the prior managed unit bytes are preserved, prior systemd enablement and activity are inspected before mutation, only exactly-recreatable states are accepted (`enabled`, `enabled-runtime`, `disabled` × `active`, `inactive`; masked/static/linked/generated/transient/failed/reloading states are refused before mutation — unmask or stop first), and rollback reproduces the exact prior enablement and activity states, distinguishing persistent from runtime enablement. A byte-identical unit already enabled and active is a genuine no-op; an unchanged unit that is inactive or disabled receives only the lifecycle steps needed, and a changed configuration reloads systemd and restarts the service. A failed fresh install is stopped and disabled while the unit is still loaded, then removed and systemd is reloaded. `warden service status` reports enabled/running state, PID, version, listen address and a live health check, and exits nonzero when the service is failed or missing.
 
 `service install --system` (system-wide units) is a documented follow-up and is not yet supported; user mode is the default.
 

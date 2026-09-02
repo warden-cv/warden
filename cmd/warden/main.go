@@ -41,13 +41,19 @@ func main() {
 	}
 	fs := flag.NewFlagSet("warden", flag.ExitOnError)
 	configDir := fs.String("config", server.DefaultConfigDir(), "Warden configuration directory")
-	listen := fs.String("listen", env("WARDEN_LISTEN", "127.0.0.1:8080"), "listen address used when creating a new config")
+	host := fs.String("host", "", "HTTP bind host used when creating a new config (default 127.0.0.1; WARDEN_HOST overrides, CLI wins)")
+	port := fs.String("port", "", "HTTP bind port, 1-65535 (default 7332; WARDEN_PORT overrides, CLI wins)")
+	listen := fs.String("listen", "", "listen address used when creating a new config (legacy; alternative to --host/--port, honors WARDEN_LISTEN)")
 	root := fs.String("root", env("WARDEN_FILE_ROOT", "/"), "filesystem root used when creating a new config (terminal is not sandboxed by this)")
 	static := fs.String("static", env("WARDEN_STATIC_DIR", ""), "optional Nift-built frontend directory override")
 	fs.Parse(os.Args[1:])
+	addr, err := resolveListener(*host, *port, *listen, flagProvided(fs, "host"), flagProvided(fs, "port"), flagProvided(fs, "listen"))
+	if err != nil {
+		fatal(err)
+	}
 	pass := os.Getenv("WARDEN_PASSWORD_HASH") // optional legacy verifier used to authorize browser migration
-	secureDefault := !isLoopbackListen(*listen)
-	defaults := server.Config{Listen: *listen, FileRoot: *root, HomeDir: home(), StaticDir: *static, PasswordHash: pass, Version: version, ConfigDir: *configDir, SecureCookies: envBool("WARDEN_SECURE_COOKIES", secureDefault), TrustProxy: envBool("WARDEN_TRUST_PROXY", false)}
+	secureDefault := !isLoopbackListen(addr)
+	defaults := server.Config{Listen: addr, FileRoot: *root, HomeDir: home(), StaticDir: *static, PasswordHash: pass, Version: version, ConfigDir: *configDir, SecureCookies: envBool("WARDEN_SECURE_COOKIES", secureDefault), TrustProxy: envBool("WARDEN_TRUST_PROXY", false)}
 	if *static == "" {
 		defaults.StaticFS = wardenassets.PublicFS()
 	}
@@ -56,7 +62,7 @@ func main() {
 		fatal(err)
 	}
 	if err := server.Run(cfg); err != nil {
-		fatal(err)
+		fatal(fmt.Errorf("%v (listener: %s)", err, cfg.Listen))
 	}
 }
 func home() string {

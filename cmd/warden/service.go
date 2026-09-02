@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -88,6 +89,28 @@ type unitMeta struct {
 	config string
 	listen string
 	health string
+}
+
+// serviceOptions carries the values recorded in the managed unit. The legacy
+// single-address listen form is preserved for compatibility; otherwise the
+// canonical host/port pair is written to ExecStart.
+type serviceOptions struct {
+	configDir string
+	host      string
+	port      string
+	listen    string
+	root      string
+}
+
+// listener returns the bootstrap listen address recorded in the unit metadata:
+// the legacy listen address when set, otherwise the trimmed host/port pair
+// joined safely (so IPv6 hosts are bracketed). Values are canonicalized before
+// being written so surrounding whitespace can never leak into the unit.
+func (o serviceOptions) listener() string {
+	if o.listen != "" {
+		return o.listen
+	}
+	return net.JoinHostPort(strings.TrimSpace(o.host), strings.TrimSpace(o.port))
 }
 
 func userUnitPath(unitName string) string {
@@ -412,7 +435,7 @@ func systemdQuote(s string) string {
 // It intentionally does NOT set GH_CONFIG_DIR or any host GitHub
 // authentication: Warden is multi-user and host credentials are only shared
 // for accounts that explicitly configure their own environment.
-func renderWardenUnitBody(exe, configDir, listen, root string) string {
+func renderWardenUnitBody(exe string, opts serviceOptions) string {
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
 	b.WriteString("Description=Warden server console\n")
@@ -421,9 +444,14 @@ func renderWardenUnitBody(exe, configDir, listen, root string) string {
 	b.WriteString("[Service]\n")
 	b.WriteString("Type=simple\n")
 	b.WriteString("ExecStart=" + systemdQuote(exe))
-	b.WriteString(" " + systemdQuote("--config") + " " + systemdQuote(configDir))
-	b.WriteString(" " + systemdQuote("--listen") + " " + systemdQuote(listen))
-	b.WriteString(" " + systemdQuote("--root") + " " + systemdQuote(root))
+	b.WriteString(" " + systemdQuote("--config") + " " + systemdQuote(opts.configDir))
+	if opts.listen != "" {
+		b.WriteString(" " + systemdQuote("--listen") + " " + systemdQuote(opts.listen))
+	} else {
+		b.WriteString(" " + systemdQuote("--host") + " " + systemdQuote(strings.TrimSpace(opts.host)))
+		b.WriteString(" " + systemdQuote("--port") + " " + systemdQuote(strings.TrimSpace(opts.port)))
+	}
+	b.WriteString(" " + systemdQuote("--root") + " " + systemdQuote(opts.root))
 	b.WriteString("\n")
 	b.WriteString("WorkingDirectory=" + systemdQuote(filepath.Dir(exe)) + "\n")
 	b.WriteString("Restart=on-failure\n")
@@ -433,8 +461,8 @@ func renderWardenUnitBody(exe, configDir, listen, root string) string {
 	return b.String()
 }
 
-func buildWardenUnit(exe, configDir, listen, root string) string {
-	content := "# warden-config: " + configDir + "\n# warden-listen: " + listen + "\n# warden-health: " + wardenHealthPath + "\n" + renderWardenUnitBody(exe, configDir, listen, root)
+func buildWardenUnit(exe string, opts serviceOptions) string {
+	content := "# warden-config: " + opts.configDir + "\n# warden-listen: " + opts.listener() + "\n# warden-health: " + wardenHealthPath + "\n" + renderWardenUnitBody(exe, opts)
 	sum := sha256.Sum256([]byte(content))
 	header := wardenUnitMarker + "\n" + wardenManagedPrefix + "v1 sha256=" + hex.EncodeToString(sum[:]) + "\n"
 	return header + content
@@ -624,15 +652,15 @@ func (m *serviceManager) requireManaged(verb string) error {
 	return nil
 }
 
-func (m *serviceManager) install(configDir, listen, root string, out io.Writer) error {
+func (m *serviceManager) install(opts serviceOptions, out io.Writer) error {
 	for _, v := range []struct{ val, name string }{
-		{configDir, "config"}, {listen, "listen"}, {root, "root"},
+		{opts.configDir, "config"}, {opts.listener(), "listen"}, {opts.root, "root"},
 	} {
 		if err := validateNoControl(v.val, v.name); err != nil {
 			return err
 		}
 	}
-	unit := buildWardenUnit(m.exe, configDir, listen, root)
+	unit := buildWardenUnit(m.exe, opts)
 	priorUnit, hadUnit := []byte(nil), false
 	if b, err := os.ReadFile(m.unitPath); err == nil {
 		hadUnit = true
@@ -716,7 +744,7 @@ func (m *serviceManager) install(configDir, listen, root string, out io.Writer) 
 	fmt.Fprintf(out, "unit:   %s\n", m.unitName)
 	fmt.Fprintf(out, "file:   %s\n", m.unitPath)
 	fmt.Fprintf(out, "state:  %s\n", strings.TrimSpace(active))
-	fmt.Fprintf(out, "url:    http://%s\n", listen)
+	fmt.Fprintf(out, "url:    http://%s\n", opts.listener())
 	return nil
 }
 
@@ -766,6 +794,7 @@ func (m *serviceManager) status(out io.Writer, version string) error {
 	fmt.Fprintf(out, "pid:     %s\n", strings.TrimSpace(pid))
 	fmt.Fprintf(out, "version: %s\n", version)
 	fmt.Fprintf(out, "listen:  %s\n", listen)
+	fmt.Fprintf(out, "url:     http://%s\n", listen)
 	if active != stateActive {
 		return fmt.Errorf("%s is %q; expected active", m.unitName, active)
 	}
@@ -955,7 +984,9 @@ func runService(args []string, version string) int {
 	system := fs.Bool("system", false, "install a system-wide unit (not yet supported; user mode is the default)")
 	follow := fs.Bool("follow", false, "follow new journal output")
 	configDir := fs.String("config", server.DefaultConfigDir(), "Warden configuration directory recorded in the unit")
-	listen := fs.String("listen", env("WARDEN_LISTEN", "127.0.0.1:8080"), "bootstrap listen address recorded in the unit")
+	host := fs.String("host", "", "HTTP bind host recorded in the unit (default 127.0.0.1; WARDEN_HOST overrides, CLI wins)")
+	port := fs.String("port", "", "HTTP bind port recorded in the unit, 1-65535 (default 7332; WARDEN_PORT overrides, CLI wins)")
+	listen := fs.String("listen", "", "bootstrap listen address recorded in the unit (legacy; alternative to --host/--port, honors WARDEN_LISTEN)")
 	root := fs.String("root", env("WARDEN_FILE_ROOT", "/"), "filesystem root recorded in the unit")
 	if err := fs.Parse(rest); err != nil {
 		return 2
@@ -976,11 +1007,33 @@ func runService(args []string, version string) int {
 		fmt.Fprintln(os.Stderr, "warden:", err)
 		return 2
 	}
-	if err := validateNoControl(*listen, "listen"); err != nil {
+	if err := validateNoControl(*root, "root"); err != nil {
 		fmt.Fprintln(os.Stderr, "warden:", err)
 		return 2
 	}
-	if err := validateNoControl(*root, "root"); err != nil {
+	listenSet := flagProvided(fs, "listen")
+	hostSet := flagProvided(fs, "host")
+	portSet := flagProvided(fs, "port")
+	listenVal, hostVal, portVal := "", "", ""
+	if listenSet {
+		if hostSet || portSet {
+			fmt.Fprintln(os.Stderr, "warden: --host/--port cannot be combined with the legacy listen address")
+			return 2
+		}
+		listenVal = *listen
+	} else {
+		h, p, err := resolveHostPort(*host, *port, hostSet, portSet)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "warden:", err)
+			return 2
+		}
+		hostVal, portVal = h, p
+	}
+	addr := net.JoinHostPort(hostVal, portVal)
+	if listenVal != "" {
+		addr = listenVal
+	}
+	if err := validateNoControl(addr, "listen"); err != nil {
 		fmt.Fprintln(os.Stderr, "warden:", err)
 		return 2
 	}
@@ -1002,7 +1055,8 @@ func runService(args []string, version string) int {
 			return 1
 		}
 		m.exe = exe
-		if err := m.install(*configDir, *listen, *root, os.Stdout); err != nil {
+		opts := serviceOptions{configDir: *configDir, host: hostVal, port: portVal, listen: listenVal, root: *root}
+		if err := m.install(opts, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "warden:", err)
 			return 1
 		}

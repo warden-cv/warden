@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -72,6 +73,10 @@ func newFakeManager(t *testing.T) (*serviceManager, *fakeRunner, string) {
 	return m, fr, base
 }
 
+func testOpts(configDir, listen, root string) serviceOptions {
+	return serviceOptions{configDir: configDir, listen: listen, root: root}
+}
+
 func jsonServer(t *testing.T, code int, body string, ct string) *httptest.Server {
 	t.Helper()
 	if ct == "" {
@@ -108,7 +113,7 @@ func readManagedUnitBytes(t *testing.T, data []byte) (unitMeta, error) {
 }
 
 func TestBuildWardenUnit(t *testing.T) {
-	unit := buildWardenUnit("/usr/local/bin/warden", "/home/nick/.config/warden", "127.0.0.1:8080", "/")
+	unit := buildWardenUnit("/usr/local/bin/warden", testOpts("/home/nick/.config/warden", "127.0.0.1:8080", "/"))
 	if !strings.Contains(unit, wardenUnitMarker) {
 		t.Fatal("missing managed marker")
 	}
@@ -131,6 +136,55 @@ func TestBuildWardenUnit(t *testing.T) {
 	}
 	if _, err := readManagedUnitBytes(t, []byte(unit)); err != nil {
 		t.Fatalf("built unit should validate: %v", err)
+	}
+}
+
+func wardenTestOptsHostPort(configDir, host, port, root string) serviceOptions {
+	return serviceOptions{configDir: configDir, host: host, port: port, root: root}
+}
+
+func TestBuildWardenUnitHostPort(t *testing.T) {
+	// A default install resolves to 127.0.0.1:7332 and the unit must record it
+	// through --host/--port so it survives login, restart and reboot.
+	def := buildWardenUnit("/usr/local/bin/warden", wardenTestOptsHostPort("/home/nick/.config/warden", "127.0.0.1", "7332", "/"))
+	for _, want := range []string{`"--host" "127.0.0.1"`, `"--port" "7332"`, `# warden-listen: 127.0.0.1:7332`} {
+		if !strings.Contains(def, want) {
+			t.Fatalf("default unit missing %q\n%s", want, def)
+		}
+	}
+	if strings.Contains(def, "--listen") {
+		t.Fatal("default unit must use --host/--port, not legacy --listen")
+	}
+	if _, err := readManagedUnitBytes(t, []byte(def)); err != nil {
+		t.Fatalf("default unit should validate: %v", err)
+	}
+
+	// An explicit 0.0.0.0:7402 install records that exact listener.
+	wide := buildWardenUnit("/usr/local/bin/warden", wardenTestOptsHostPort("/home/nick/.config/warden", "0.0.0.0", "7402", "/"))
+	for _, want := range []string{`"--host" "0.0.0.0"`, `"--port" "7402"`, `# warden-listen: 0.0.0.0:7402`} {
+		if !strings.Contains(wide, want) {
+			t.Fatalf("wide unit missing %q\n%s", want, wide)
+		}
+	}
+	if _, err := readManagedUnitBytes(t, []byte(wide)); err != nil {
+		t.Fatalf("wide unit should validate: %v", err)
+	}
+}
+
+func TestBuildWardenUnitHostPortCanonical(t *testing.T) {
+	// Whitespace-surrounded host/port must never leak into the unit metadata or
+	// ExecStart; only the canonical trimmed values are recorded.
+	opts := wardenTestOptsHostPort("/config", "  127.0.0.1  ", "  7402  ", "/")
+	unit := buildWardenUnit("/usr/local/bin/warden", opts)
+	for _, want := range []string{`"--host" "127.0.0.1"`, `"--port" "7402"`, `# warden-listen: 127.0.0.1:7402`} {
+		if !strings.Contains(unit, want) {
+			t.Fatalf("canonical unit missing %q\n%s", want, unit)
+		}
+	}
+	for _, bad := range []string{`"  127.0.0.1  "`, `"  7402  "`, `# warden-listen:   127.0.0.1:7402`} {
+		if strings.Contains(unit, bad) {
+			t.Fatalf("unit leaked untrimmed value %q\n%s", bad, unit)
+		}
 	}
 }
 
@@ -172,13 +226,13 @@ func TestValidateNoControl(t *testing.T) {
 		}
 	}
 	m, _, _ := newFakeManager(t)
-	if err := m.install("/config\nRestart=always", "127.0.0.1:8080", "/", os.Stderr); err == nil {
+	if err := m.install(testOpts("/config\nRestart=always", "127.0.0.1:8080", "/"), os.Stderr); err == nil {
 		t.Fatal("install accepted a control-character config path")
 	}
 }
 
 func TestManagedUnitIntegrity(t *testing.T) {
-	unit := buildWardenUnit("/usr/local/bin/warden", "/config", "127.0.0.1:8080", "/")
+	unit := buildWardenUnit("/usr/local/bin/warden", testOpts("/config", "127.0.0.1:8080", "/"))
 	if _, err := readManagedUnitBytes(t, []byte(unit)); err != nil {
 		t.Fatalf("valid unit rejected: %v", err)
 	}
@@ -227,7 +281,7 @@ func TestManagedUnitIntegrity(t *testing.T) {
 		}
 	})
 	t.Run("wrong health path rejected", func(t *testing.T) {
-		body := renderWardenUnitBody("/usr/local/bin/warden", "/config", "127.0.0.1:8080", "/")
+		body := renderWardenUnitBody("/usr/local/bin/warden", testOpts("/config", "127.0.0.1:8080", "/"))
 		content := "# warden-config: /config\n# warden-listen: 127.0.0.1:8080\n# warden-health: /other\n" + body
 		sum := sha256.Sum256([]byte(content))
 		bad := wardenUnitMarker + "\n" + wardenManagedPrefix + "v1 sha256=" + hex.EncodeToString(sum[:]) + "\n" + content
@@ -236,7 +290,7 @@ func TestManagedUnitIntegrity(t *testing.T) {
 		}
 	})
 	t.Run("duplicate metadata rejected even with valid checksum", func(t *testing.T) {
-		body := renderWardenUnitBody("/usr/local/bin/warden", "/config", "127.0.0.1:8080", "/")
+		body := renderWardenUnitBody("/usr/local/bin/warden", testOpts("/config", "127.0.0.1:8080", "/"))
 		content := "# warden-config: /config\n# warden-config: /other\n# warden-listen: 127.0.0.1:8080\n# warden-health: /api/setup/status\n" + body
 		sum := sha256.Sum256([]byte(content))
 		bad := wardenUnitMarker + "\n" + wardenManagedPrefix + "v1 sha256=" + hex.EncodeToString(sum[:]) + "\n" + content
@@ -245,7 +299,7 @@ func TestManagedUnitIntegrity(t *testing.T) {
 		}
 	})
 	t.Run("malformed metadata with valid checksum", func(t *testing.T) {
-		body := renderWardenUnitBody("/usr/local/bin/warden", "/config", "127.0.0.1:8080", "/")
+		body := renderWardenUnitBody("/usr/local/bin/warden", testOpts("/config", "127.0.0.1:8080", "/"))
 		for _, content := range []string{
 			"# warden-config: \n# warden-listen: 127.0.0.1:8080\n# warden-health: /api/setup/status\n" + body,
 			"# warden-config: /config\n# warden-listen: 127.0.0.1:8080\x00x\n# warden-health: /api/setup/status\n" + body,
@@ -488,7 +542,7 @@ func TestInstallFreshAndChanged(t *testing.T) {
 		m, _, _ := newFakeManager(t)
 		fs := newFakeSystemd(m.unitPath)
 		m.run = fs.runner()
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatalf("install: %v", err)
 		}
 		unit, err := os.ReadFile(m.unitPath)
@@ -515,13 +569,13 @@ func TestInstallFreshAndChanged(t *testing.T) {
 		m, _, _ := newFakeManager(t)
 		fs := newFakeSystemd(m.unitPath)
 		m.run = fs.runner()
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fs.setState("enabled", "active")
 		fs.calls = nil
 		fi, _ := os.Stat(m.unitPath)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatalf("no-op reinstall: %v", err)
 		}
 		for _, forbid := range []string{"daemon-reload", "enable ", "restart ", "start "} {
@@ -538,12 +592,12 @@ func TestInstallFreshAndChanged(t *testing.T) {
 		m, _, _ := newFakeManager(t)
 		fs := newFakeSystemd(m.unitPath)
 		m.run = fs.runner()
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fs.setState("enabled", "active")
 		fs.calls = nil
-		if err := m.install("/config2", "127.0.0.1:8081", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config2", "127.0.0.1:8081", "/"), os.Stderr); err != nil {
 			t.Fatalf("changed reinstall: %v", err)
 		}
 		if !fs.callsContain("restart warden.service") {
@@ -555,12 +609,12 @@ func TestInstallFreshAndChanged(t *testing.T) {
 		m, _, _ := newFakeManager(t)
 		fs := newFakeSystemd(m.unitPath)
 		m.run = fs.runner()
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fs.setState("enabled", "inactive")
 		fs.calls = nil
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatalf("inactive reinstall: %v", err)
 		}
 		if !fs.callsContain("start warden.service") {
@@ -575,12 +629,12 @@ func TestInstallFreshAndChanged(t *testing.T) {
 		m, _, _ := newFakeManager(t)
 		fs := newFakeSystemd(m.unitPath)
 		m.run = fs.runner()
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fs.setState("disabled", "inactive")
 		fs.calls = nil
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatalf("disabled reinstall: %v", err)
 		}
 		if !fs.callsContain("enable warden.service") || !fs.callsContain("start warden.service") {
@@ -618,14 +672,14 @@ func TestInstallRollbackMatrix(t *testing.T) {
 			m, _, _ := newFakeManager(t)
 			fs := newFakeSystemd(m.unitPath)
 			m.run = fs.runner()
-			if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+			if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			priorUnit, _ := os.ReadFile(m.unitPath)
 			fs.setState(p.enabled, p.active)
 			fs.calls = nil
 			if !p.restorable {
-				err := m.install("/configX", "127.0.0.1:8082", "/", os.Stderr)
+				err := m.install(testOpts("/configX", "127.0.0.1:8082", "/"), os.Stderr)
 				if err == nil {
 					t.Fatalf("non-restorable pair (%q/%q) was not refused", p.enabled, p.active)
 				}
@@ -641,7 +695,7 @@ func TestInstallRollbackMatrix(t *testing.T) {
 				return
 			}
 			fs.failVerb = "restart"
-			err := m.install("/configY", "127.0.0.1:8083", "/", os.Stderr)
+			err := m.install(testOpts("/configY", "127.0.0.1:8083", "/"), os.Stderr)
 			if err == nil {
 				t.Fatalf("install should fail at restart for restorable pair (%q/%q)", p.enabled, p.active)
 			}
@@ -678,12 +732,12 @@ func TestInstallRestoresEnablementLayers(t *testing.T) {
 			m, _, _ := newFakeManager(t)
 			fs := newFakeSystemd(m.unitPath)
 			m.run = fs.runner()
-			if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+			if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fs.setState(tc.prior, "inactive")
 			fs.failVerb = "restart"
-			if err := m.install("/configY", "127.0.0.1:8083", "/", os.Stderr); err == nil {
+			if err := m.install(testOpts("/configY", "127.0.0.1:8083", "/"), os.Stderr); err == nil {
 				t.Fatal("install should fail at restart")
 			}
 			ew, _, _ := m.systemctl("is-enabled", m.unitName)
@@ -714,11 +768,11 @@ func TestInstallReachesInstalledStateForAcceptedPriors(t *testing.T) {
 			m, _, _ := newFakeManager(t)
 			fs := newFakeSystemd(m.unitPath)
 			m.run = fs.runner()
-			if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+			if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fs.setState(p[0], p[1])
-			if err := m.install("/configY", "127.0.0.1:8083", "/", os.Stderr); err != nil {
+			if err := m.install(testOpts("/configY", "127.0.0.1:8083", "/"), os.Stderr); err != nil {
 				t.Fatalf("accepted prior %s/%s could not reach the installed state: %v", p[0], p[1], err)
 			}
 			ew, _, _ := m.systemctl("is-enabled", m.unitName)
@@ -746,7 +800,7 @@ func TestInstallFailureRestoresPriorState(t *testing.T) {
 				fs := newFakeSystemd(m.unitPath)
 				m.run = fs.runner()
 				fs.failVerb = st.verb
-				err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr)
+				err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr)
 				if err == nil {
 					t.Fatalf("install with %s failure did not fail", st.verb)
 				}
@@ -768,13 +822,13 @@ func TestInstallFailureRestoresPriorState(t *testing.T) {
 				m, _, _ := newFakeManager(t)
 				fs := newFakeSystemd(m.unitPath)
 				m.run = fs.runner()
-				if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+				if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 					t.Fatal(err)
 				}
 				priorUnit, _ := os.ReadFile(m.unitPath)
 				fs.setState("enabled-runtime", "inactive")
 				fs.failVerb = st.verb
-				err := m.install("/configY", "127.0.0.1:8083", "/", os.Stderr)
+				err := m.install(testOpts("/configY", "127.0.0.1:8083", "/"), os.Stderr)
 				if err == nil {
 					t.Fatalf("reinstall with %s failure did not fail", st.verb)
 				}
@@ -795,12 +849,12 @@ func TestInstallFailureRestoresPriorState(t *testing.T) {
 		m, _, _ := newFakeManager(t)
 		fs := newFakeSystemd(m.unitPath)
 		m.run = fs.runner()
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fs.setState("enabled", "active")
 		fs.failVerb = "restart"
-		if err := m.install("/configZ", "127.0.0.1:8084", "/", os.Stderr); err == nil {
+		if err := m.install(testOpts("/configZ", "127.0.0.1:8084", "/"), os.Stderr); err == nil {
 			t.Fatal("reinstall with restart failure did not fail")
 		}
 		if fs.enabledWord() != "enabled" || fs.activeWord() != "active" {
@@ -812,7 +866,7 @@ func TestInstallFailureRestoresPriorState(t *testing.T) {
 		fs := newFakeSystemd(m.unitPath)
 		m.run = fs.runner()
 		fs.failVerb = "restart"
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err == nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err == nil {
 			t.Fatal("install did not fail")
 		}
 		word, _, _ := m.systemctl("is-enabled", m.unitName)
@@ -837,14 +891,14 @@ func TestInstallRefusesForeignUnit(t *testing.T) {
 	if err := os.WriteFile(m.unitPath, []byte("# hand written\n[Service]\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err == nil {
+	if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err == nil {
 		t.Fatal("install overwrote a foreign unit")
 	}
 }
 
 func TestInstallRefusesModifiedManagedUnit(t *testing.T) {
 	m, _, _ := newFakeManager(t)
-	if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+	if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	unit, _ := os.ReadFile(m.unitPath)
@@ -852,7 +906,7 @@ func TestInstallRefusesModifiedManagedUnit(t *testing.T) {
 	if err := os.WriteFile(m.unitPath, []byte(tampered), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.install("/config", "127.0.0.1:8081", "/", os.Stderr); err == nil {
+	if err := m.install(testOpts("/config", "127.0.0.1:8081", "/"), os.Stderr); err == nil {
 		t.Fatal("install silently overwrote a modified managed unit")
 	}
 }
@@ -862,7 +916,7 @@ func TestActionsRequireManagedUnit(t *testing.T) {
 	if err := m.action("start", os.Stderr); err == nil {
 		t.Fatal("start on a missing unit succeeded")
 	}
-	if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+	if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	unit, _ := os.ReadFile(m.unitPath)
@@ -888,7 +942,7 @@ func TestUninstallFailClosed(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"127.0.0.1:8080"}`), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if err := m.install(configDir, "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts(configDir, "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -924,7 +978,7 @@ func TestUninstallFailClosed(t *testing.T) {
 	})
 	t.Run("inactive and disabled with normal exit codes", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -953,7 +1007,7 @@ func TestUninstallFailClosed(t *testing.T) {
 	})
 	t.Run("stop failure is not swallowed", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -975,7 +1029,7 @@ func TestUninstallFailClosed(t *testing.T) {
 	})
 	t.Run("modified unit is refused", func(t *testing.T) {
 		m, _, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		unit, _ := os.ReadFile(m.unitPath)
@@ -994,7 +1048,7 @@ func TestUninstallFailClosed(t *testing.T) {
 func TestUninstallStateQueryFailures(t *testing.T) {
 	t.Run("is-active launch failure", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -1017,7 +1071,7 @@ func TestUninstallStateQueryFailures(t *testing.T) {
 	})
 	t.Run("is-active bus failure is not read as inactive", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -1037,7 +1091,7 @@ func TestUninstallStateQueryFailures(t *testing.T) {
 	})
 	t.Run("unrecognized is-active output", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -1055,7 +1109,7 @@ func TestUninstallStateQueryFailures(t *testing.T) {
 	})
 	t.Run("is-enabled bus failure", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -1109,7 +1163,7 @@ func TestStatus(t *testing.T) {
 	})
 	t.Run("invalid unit", func(t *testing.T) {
 		m, _, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		unit, _ := os.ReadFile(m.unitPath)
@@ -1122,7 +1176,7 @@ func TestStatus(t *testing.T) {
 	})
 	t.Run("inactive service", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -1140,7 +1194,7 @@ func TestStatus(t *testing.T) {
 	})
 	t.Run("surfaces is-active bus failure", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -1168,7 +1222,7 @@ func TestStatus(t *testing.T) {
 		if err := os.MkdirAll(configDir, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := m.install(configDir, "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts(configDir, "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"`+effective+`"}`), 0600); err != nil {
@@ -1186,7 +1240,7 @@ func TestStatus(t *testing.T) {
 		if err := os.MkdirAll(configDir, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := m.install(configDir, strings.TrimPrefix(srv.URL, "http://"), "/", os.Stderr); err != nil {
+		if err := m.install(testOpts(configDir, strings.TrimPrefix(srv.URL, "http://"), "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"`+strings.TrimPrefix(srv.URL, "http://")+`"}`), 0600); err != nil {
@@ -1204,7 +1258,7 @@ func TestStatus(t *testing.T) {
 		if err := os.MkdirAll(configDir, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := m.install(configDir, strings.TrimPrefix(srv.URL, "http://"), "/", os.Stderr); err != nil {
+		if err := m.install(testOpts(configDir, strings.TrimPrefix(srv.URL, "http://"), "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"`+strings.TrimPrefix(srv.URL, "http://")+`"}`), 0600); err != nil {
@@ -1222,7 +1276,7 @@ func TestStatus(t *testing.T) {
 		if err := os.MkdirAll(configDir, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := m.install(configDir, strings.TrimPrefix(srv.URL, "http://"), "/", os.Stderr); err != nil {
+		if err := m.install(testOpts(configDir, strings.TrimPrefix(srv.URL, "http://"), "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"`+strings.TrimPrefix(srv.URL, "http://")+`"}`), 0600); err != nil {
@@ -1235,6 +1289,33 @@ func TestStatus(t *testing.T) {
 	})
 }
 
+func TestStatusReportsListenerURL(t *testing.T) {
+	srv := jsonServer(t, 200, `{"ok":true}`, "application/json")
+	listen := strings.TrimPrefix(srv.URL, "http://")
+	m, fr, base := newFakeManager(t)
+	configDir := filepath.Join(base, "config")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.install(testOpts(configDir, listen, "/"), os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"`+listen+`"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fr.handler = activeHandler(fr)
+	var out bytes.Buffer
+	if err := m.status(&out, "1.0"); err != nil {
+		t.Fatalf("status failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "listen:  "+listen) {
+		t.Fatalf("status missing listen address:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "url:     http://"+listen) {
+		t.Fatalf("status missing effective listener URL:\n%s", out.String())
+	}
+}
+
 func TestStrictExitFailures(t *testing.T) {
 	t.Run("install daemon-reload nonzero prevents enable and restart", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
@@ -1244,7 +1325,7 @@ func TestStrictExitFailures(t *testing.T) {
 			}
 			return "", 0, nil
 		}
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err == nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err == nil {
 			t.Fatal("install succeeded despite a failed daemon-reload")
 		}
 		joined := strings.Join(fr.calls, "\n")
@@ -1260,7 +1341,7 @@ func TestStrictExitFailures(t *testing.T) {
 			}
 			return "", 0, nil
 		}
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err == nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err == nil {
 			t.Fatal("install succeeded despite a failed enable")
 		}
 		if strings.Contains(strings.Join(fr.calls, "\n"), "restart warden.service") {
@@ -1275,14 +1356,14 @@ func TestStrictExitFailures(t *testing.T) {
 			}
 			return "", 0, nil
 		}
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err == nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err == nil {
 			t.Fatal("install succeeded despite a failed restart")
 		}
 	})
 	t.Run("lifecycle start/stop/restart nonzero reports failure", func(t *testing.T) {
 		for _, verb := range []string{"start", "stop", "restart"} {
 			m, fr, _ := newFakeManager(t)
-			if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+			if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fr.calls = nil
@@ -1299,7 +1380,7 @@ func TestStrictExitFailures(t *testing.T) {
 	})
 	t.Run("uninstall stop nonzero preserves the unit", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -1325,7 +1406,7 @@ func TestStrictExitFailures(t *testing.T) {
 	})
 	t.Run("uninstall disable nonzero preserves the unit", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -1352,7 +1433,7 @@ func TestStrictExitFailures(t *testing.T) {
 	})
 	t.Run("final daemon-reload nonzero is reported", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -1377,7 +1458,7 @@ func TestStrictExitFailures(t *testing.T) {
 	})
 	t.Run("logs reports nonzero journalctl", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -1496,7 +1577,7 @@ func TestTransitionalUninstall(t *testing.T) {
 	} {
 		t.Run(tc.state, func(t *testing.T) {
 			m, fr, _ := newFakeManager(t)
-			if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+			if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fr.calls = nil
@@ -1525,7 +1606,7 @@ func TestTransitionalUninstall(t *testing.T) {
 	}
 	t.Run("stop succeeds but service still active preserves unit", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -1548,7 +1629,7 @@ func TestTransitionalUninstall(t *testing.T) {
 	})
 	t.Run("disable succeeds but service still enabled preserves unit", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -1586,7 +1667,7 @@ func TestDisableVerificationFailsClosed(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, fr, _ := newFakeManager(t)
-			if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+			if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fr.calls = nil
@@ -1640,7 +1721,7 @@ func TestIsEnabledUninstallPolicy(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.state, func(t *testing.T) {
 			m, fr, _ := newFakeManager(t)
-			if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+			if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fr.calls = nil
@@ -1702,7 +1783,7 @@ func TestUninstallRollback(t *testing.T) {
 
 	t.Run("success removes the unit and leaves no backup artifacts", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -1734,7 +1815,7 @@ func TestUninstallRollback(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"127.0.0.1:8080"}`), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if err := m.install(configDir, "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts(configDir, "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		orig, _ := os.ReadFile(m.unitPath)
@@ -1781,7 +1862,7 @@ func TestUninstallRollback(t *testing.T) {
 
 	t.Run("concurrent replacement is preserved and the backup is recoverable", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		orig, _ := os.ReadFile(m.unitPath)
@@ -1824,7 +1905,7 @@ func TestUninstallRollback(t *testing.T) {
 
 	t.Run("second reload failure is surfaced after restoration", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("/config", "127.0.0.1:8080", "/", os.Stderr); err != nil {
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
