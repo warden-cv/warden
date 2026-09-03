@@ -13,13 +13,16 @@ permissions:
 
 jobs:
   service-lifecycle:
-    # The lifecycle exercise boots its own isolated systemd user manager on a
-    # private HOME/XDG_CONFIG_HOME/XDG_RUNTIME_DIR and D-Bus session bus. A
-    # GitHub-hosted runner cannot reliably boot a second user manager next to
-    # its ambient one, so the whole exercise runs inside a dedicated systemd
-    # container: the container's own PID-1 systemd is the only system manager,
-    # the exercise's user manager boots cleanly there, and nothing on the host
-    # runner (or any developer machine) is ever touched.
+    # Exercises the real systemd user-service contract: the script always boots
+    # an isolated systemd user manager on a private HOME, XDG_CONFIG_HOME,
+    # XDG_RUNTIME_DIR and D-Bus session bus, then installs, reloads,
+    # enables/starts, verifies active state and the Warden-specific
+    # /api/setup/status identity contract, stops/starts/restarts, exercises the
+    # finite crash-loop policy and reset-failed recovery, runs the install-time
+    # health gate against a foreign JSON server, uninstalls, and reinstalls.
+    # It also runs systemd-analyze --user verify over the generated unit. The
+    # isolated environment means a developer's real Warden binary, unit,
+    # service and data are never touched.
     runs-on: ubuntu-latest
     steps:
       # Pinned to the same immutable commit SHAs trusted by ci.yml and release.yml.
@@ -28,78 +31,25 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: install systemd analyze tooling
+        run: |
+          if ! command -v systemd-analyze >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y systemd-analyze
+          fi
       - name: build warden binary
         run: |
           mkdir -p "$HOME/.warden-lifecycle-bin"
           go build -trimpath -o "$HOME/.warden-lifecycle-bin/warden" ./cmd/warden
-      - name: build isolated systemd container image
-        run: |
-          mkdir -p "$RUNNER_TEMP/sysd"
-          printf '%s\n' \
-            'FROM ubuntu:24.04' \
-            'RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus systemd-analyze && rm -f /usr/sbin/policy-rc.d' \
-            'CMD ["/sbin/init"]' \
-            > "$RUNNER_TEMP/sysd/Dockerfile"
-          set +e
-          out=$(docker build -t warden-sysd-ubuntu "$RUNNER_TEMP/sysd" 2>&1)
-          code=$?
-          printf '%s\n' "$out" | tail -25
-          if [ $code -ne 0 ]; then
-            printf '%s\n' "$out" | sed 's/^/::error::/' | tail -25
-            exit $code
-          fi
-          docker run --rm warden-sysd-ubuntu bash -c 'command -v systemd-analyze && command -v dbus-daemon' \
-            || { echo "systemd tooling missing from image" >&2; exit 1; }
-      - name: start isolated systemd container
+      - name: real systemd service lifecycle
         run: |
           set +e
-          out=$(docker run -d --name "warden-lc-${{ github.run_id }}" \
-            --privileged \
-            --cgroupns=host \
-            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
-            warden-sysd-ubuntu 2>&1)
-          code=$?
-          printf '%s\n' "$out"
-          if [ $code -ne 0 ]; then
-            printf '%s\n' "$out" | sed 's/^/::error::/'
-            exit $code
-          fi
-          for _i in $(seq 1 90); do
-            docker exec "warden-lc-${{ github.run_id }}" systemctl is-system-running >/dev/null 2>&1 && break
-            sleep 1
-          done
-          if ! docker exec "warden-lc-${{ github.run_id }}" systemctl is-system-running >/dev/null 2>&1; then
-            echo "container did not become ready; dumping container logs:"
-            docker logs --tail 60 "warden-lc-${{ github.run_id }}" 2>&1
-            exit 1
-          fi
-          # The system manager needs its system D-Bus bus for user managers to
-          # register with PID 1; ensure it is up before the lifecycle runs.
-          docker exec "warden-lc-${{ github.run_id }}" bash -c \
-            "systemctl start dbus.socket dbus.service 2>/dev/null || true"
-          if ! docker exec "warden-lc-${{ github.run_id }}" test -S /run/dbus/system_bus_socket; then
-            echo "system D-Bus socket missing; dumping container logs:"
-            docker logs --tail 60 "warden-lc-${{ github.run_id }}" 2>&1
-            exit 1
-          fi
-          docker exec "warden-lc-${{ github.run_id }}" bash -c "useradd -m -s /bin/bash warden"
-          docker cp "$HOME/.warden-lifecycle-bin/warden" "warden-lc-${{ github.run_id }}":/opt/warden
-          docker cp "$GITHUB_WORKSPACE/tests/service-lifecycle.sh" "warden-lc-${{ github.run_id }}":/opt/service-lifecycle.sh
-      - name: real systemd service lifecycle (isolated container)
-        run: |
-          set +e
-          out=$(docker exec -u warden \
-            -e WARDEN_LIFECYCLE_BIN=/opt/warden \
-            -e HOME=/home/warden \
-            "warden-lc-${{ github.run_id }}" bash /opt/service-lifecycle.sh 2>&1)
+          out=$(sh tests/service-lifecycle.sh 2>&1)
           code=$?
           printf '%s\n' "$out"
           if [ $code -ne 0 ]; then
             printf '%s\n' "$out" | sed 's/^/::error::/'
           fi
           exit $code
-      - name: teardown isolated container
-        if: always()
-        run: docker rm -f "warden-lc-${{ github.run_id }}" >/dev/null 2>&1 || true
       - name: git diff --check
         run: git diff --check
