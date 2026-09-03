@@ -47,7 +47,7 @@ class Node {
 
 // Slice the agent UX region of the Warden script so top-level editor/boot
 // code does not run in the sandbox.
-const AGENT_START = 'function safeAgentSession';
+const AGENT_START = 'function agentUiStorageKey';
 const AGENT_END = 'function changeAgentProvider';
 const regionStart = SCRIPT.indexOf(AGENT_START);
 const regionEnd = SCRIPT.indexOf(AGENT_END, regionStart);
@@ -78,6 +78,7 @@ function makeContext(fetchImpl) {
     requestAnimationFrame: (fn) => { try { fn(); } catch {} },
     innerWidth: 1280,
     innerHeight: 800,
+    AbortController,
     fetch: (url, opt = {}) => { fetchCalls.push({ url, ...opt }); return impl(url, opt); },
     localStorage: { _d: {}, getItem(k) { return this._d[k] || null; }, setItem(k, v) { this._d[k] = String(v); }, removeItem(k) { delete this._d[k]; } },
     setTimeout,
@@ -86,12 +87,19 @@ function makeContext(fetchImpl) {
     agentClosedSessions: [],
     agentServerReady: false,
     agentSaveTimers: new Map(),
+    agentUiPrefs: { activeId: '', collapsed: {} },
+    currentAccountId: 'anonymous',
+    crypto: { randomUUID: () => 'sid-'+Math.random().toString(36).slice(2) },
     agentSessionsStorageKey: () => 'warden.agentSessions.test.' + (ctx.window && ctx.window.currentAccountId ? ctx.window.currentAccountId : 'anonymous'),
     agentSid: () => 'sid-'+Math.random().toString(36).slice(2),
     agentSessionTitle: (s) => s?.title || s?.workspace || 'Agent',
     activeAgentSessionId: '',
     workspaceRoot: '/ws',
     agentProviders: [],
+    agentAttachments: [],
+    agentPendingDecodes: new Map(),
+    agentRenderAttachments() {},
+    csrf: 'test-csrf',
     fetchCalls,
     $: (sel) => el(sel),
     api: (url, opt) => ctx.fetch(url, opt).then((r) => r.json()),
@@ -626,7 +634,7 @@ test('synchronization preserves collapsed task panel', async () => {
     if (url === '/api/agent/conversations') return Promise.resolve(jsonOk([{ id: 'a', state: 'completed', currentRunId: 'run-1', events: [{ kind: 'task', text: '[{"content":"alpha","status":"pending","priority":"high"}]', name: '' }] }]));
     return Promise.resolve(jsonOk({}));
   });
-  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0,tasksCollapsed:true}};activeAgentSessionId='a';agentServerReady=true;workspaceRoot='/ws'");
+  run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0,tasksCollapsed:true}};activeAgentSessionId='a';agentUiPrefs={activeId:'a',collapsed:{a:true}};agentServerReady=true;workspaceRoot='/ws'");
   await run(ctx, 'syncAgentConversations()');
   if (run(ctx, "agentSessions['a'].tasksCollapsed") !== true) throw new Error('collapsed flag lost on sync');
   run(ctx, 'renderAgentSession()');
@@ -664,13 +672,17 @@ test('switching to empty session clears collapsed reopen badges on both surfaces
 
 // Collapsed preference survives a reload (persist + reconstruct).
 test('collapsed task panel survives reload', async () => {
-  const ctx = loadContext();
+  const ctx = loadContext((url) => {
+    if (url === '/api/agent/conversations') return Promise.resolve(jsonOk([{id:'a',state:'completed',events:[{kind:'task',text:'[{"content":"alpha","status":"pending","priority":"high"}]'}]}]));
+    return Promise.resolve(jsonOk({}));
+  });
   run(ctx, "agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a'");
   run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
   run(ctx, 'setAgentTasksCollapsed(true)');
-  const stored = ctx.localStorage.getItem('warden.agentSessions.test.anonymous');
-  if (!stored || !stored.includes('tasksCollapsed')) throw new Error('tasksCollapsed not persisted locally');
+  const stored = ctx.localStorage.getItem('warden.agentUI.v1.anonymous');
+  if (!stored || !stored.includes('"a":true')) throw new Error('collapsed preference not persisted locally');
   run(ctx, 'loadAgentSessions()');
+  await run(ctx, 'syncAgentConversations()');
   if (run(ctx, "agentSessions['a'].tasksCollapsed") !== true) throw new Error('collapsed not restored on reload');
   run(ctx, 'renderAgentSession()');
   if (!run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('collapsed panel reopened after reload');
@@ -683,12 +695,8 @@ test('reopened task panel survives reload', async () => {
   run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
   run(ctx, 'setAgentTasksCollapsed(true)');
   run(ctx, 'setAgentTasksCollapsed(false)');
-  const stored = ctx.localStorage.getItem('warden.agentSessions.test.anonymous');
-  if (!stored || !stored.includes('"tasksCollapsed":false')) throw new Error('reopen not persisted');
-  run(ctx, 'loadAgentSessions()');
-  if (run(ctx, "agentSessions['a'].tasksCollapsed") !== false) throw new Error('open state not restored on reload');
-  run(ctx, 'renderAgentSession()');
-  if (run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('reopened panel hidden after reload');
+  const stored = ctx.localStorage.getItem('warden.agentUI.v1.anonymous');
+  if (!stored || stored.includes('"a":true')) throw new Error('reopen preference not persisted');
 });
 
 // Warden task preferences do not cross account/session storage boundaries.
@@ -697,8 +705,69 @@ test('task preferences are scoped to the account storage key', async () => {
   run(ctx, "currentAccountId='accA';agentSessions={a:{id:'a',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a'");
   run(ctx, 'consumeAgentStreamEvent("a", agentSessions["a"], EV, new Set())', { EV: { type: 'task', data: { snapshot: '[{"content":"alpha","status":"pending","priority":"high"}]' } } });
   run(ctx, 'setAgentTasksCollapsed(true)');
-  if (!(run(ctx, "localStorage.getItem('warden.agentSessions.test.accA') || ''") ).includes('tasksCollapsed')) throw new Error('account key not written');
-  if ((run(ctx, "localStorage.getItem('warden.agentSessions.test.accB') || ''") ).includes('tasksCollapsed')) throw new Error('preference leaked across account boundary');
+  if (!(run(ctx, "localStorage.getItem('warden.agentUI.v1.accA') || ''") ).includes('"a":true')) throw new Error('account key not written');
+  if ((run(ctx, "localStorage.getItem('warden.agentUI.v1.accB') || ''") ).includes('"a":true')) throw new Error('preference leaked across account boundary');
+});
+
+test('running agent leaves both prompts editable but disables submission', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',workspace:'/w',events:[],busy:true,followBottom:true,unread:0}};activeAgentSessionId='a';renderAgentSession()");
+  if (run(ctx, "$('#agent-prompt').disabled") || run(ctx, "$('#editor-agent-prompt').disabled")) throw new Error('agent prompts must remain editable during a run');
+  if (!run(ctx, "$('#agent-run').disabled") || !run(ctx, "$('#editor-agent-run').disabled")) throw new Error('agent Run buttons must remain disabled during a run');
+});
+
+test('OpenCode preflight rejection becomes terminal locally', async () => {
+  const message = "OpenCode is not installed or not in Warden's PATH";
+  const ctx = loadContext((url) => {
+    if (url === '/api/agent/run') return Promise.resolve({ok:false,status:503,statusText:'Service Unavailable',text:async()=>message});
+    return Promise.resolve(jsonOk({}));
+  });
+  run(ctx, "agentSessions={a:{id:'a',workspace:'/w',events:[],busy:false,followBottom:true,unread:0}};activeAgentSessionId='a'");
+  await run(ctx, 'runAgent("do it")');
+  if (run(ctx, "agentSessions['a'].busy")) throw new Error('OpenCode rejection left the session busy');
+  if (run(ctx, "agentSessions['a'].state") !== 'failed') throw new Error('OpenCode rejection did not set failed state');
+});
+
+test('agent conversations are never serialized to localStorage', async () => {
+  const ctx = loadContext();
+  ctx.localStorage.setItem('warden.agentSessions.test.anonymous', JSON.stringify({sessions:{legacy:{events:[{text:'large transcript'}]}}}));
+  run(ctx, 'loadAgentUiPrefs()');
+  run(ctx, "agentSessions={a:{id:'a',events:[{kind:'user',text:'secret transcript'}],busy:false}};activeAgentSessionId='a';saveAgentSessions()");
+  if (ctx.localStorage.getItem('warden.agentSessions.test.anonymous') !== null) throw new Error('obsolete full-session payload was retained');
+  const ui = ctx.localStorage.getItem('warden.agentUI.v1.anonymous') || '';
+  if (ui.includes('secret transcript') || ui.includes('events') || ui.includes('sessions')) throw new Error('conversation data leaked into UI preferences');
+});
+
+test('unsent prompts are session-specific across tab switches', async () => {
+  const ctx = loadContext();
+  run(ctx, "agentSessions={a:{id:'a',events:[],draft:'',attachments:[]},b:{id:'b',events:[],draft:'',attachments:[]}};activeAgentSessionId='a';agentAttachments=[];$('#agent-prompt').value='draft A';setActiveAgentSession('b')");
+  if (run(ctx, "$('#agent-prompt').value") !== '') throw new Error('session B inherited session A draft');
+  run(ctx, "$('#agent-prompt').value='draft B';setActiveAgentSession('a')");
+  if (run(ctx, "$('#agent-prompt').value") !== 'draft A') throw new Error('session A draft was not restored');
+  run(ctx, "setActiveAgentSession('b')");
+  if (run(ctx, "$('#editor-agent-prompt').value") !== 'draft B') throw new Error('session B draft was not restored on editor surface');
+});
+
+test('new run clears and closes previous task state', async () => {
+  const message = 'OpenCode unavailable';
+  const ctx = loadContext((url) => url === '/api/agent/run' ? Promise.resolve({ok:false,status:503,statusText:'Unavailable',text:async()=>message}) : Promise.resolve(jsonOk({})));
+  run(ctx, "agentSessions={a:{id:'a',workspace:'',events:[{kind:'task',text:'[{\"content\":\"old\",\"status\":\"pending\"}]'}],tasksCollapsed:true,busy:false,attachments:[]}};activeAgentSessionId='a';agentAttachments=[];agentUiPrefs={activeId:'a',collapsed:{a:true}}");
+  await run(ctx, 'runAgent("next")');
+  if (run(ctx, "agentSessions['a'].tasksCollapsed")) throw new Error('previous task panel remained collapsed instead of resetting');
+  if (!run(ctx, "$('#agentTaskPanel').hidden") || !run(ctx, "$('#editorAgentTaskPanel').hidden")) throw new Error('previous task panel remained open');
+  if (!run(ctx, "$('#agentTaskReopen').hidden") || !run(ctx, "$('#editorAgentTaskReopen').hidden")) throw new Error('Tasks control remained visible before the new run emitted tasks');
+});
+
+test('workspace-less session runs against the server default root', async () => {
+  let sent;
+  const ctx = loadContext((url,opt) => {
+    if (url === '/api/agent/run') { sent=JSON.parse(opt.body); return Promise.resolve({ok:false,status:503,statusText:'Unavailable',text:async()=> 'test stop'}); }
+    return Promise.resolve(jsonOk({}));
+  });
+  run(ctx, "agentSessions={a:{id:'a',workspace:'',events:[],busy:false,attachments:[]}};activeAgentSessionId='a';agentAttachments=[];renderAgentSession()");
+  if (run(ctx, "$('#agent-run').disabled") || run(ctx, "$('#editor-agent-run').disabled")) throw new Error('workspace-less session disabled Run');
+  await run(ctx, 'runAgent("default root")');
+  if (!sent || sent.workspace !== '') throw new Error('workspace-less run did not submit the default-root marker');
 });
 
 // Run all registered tests sequentially and print a final summary. A single

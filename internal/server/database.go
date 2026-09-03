@@ -310,6 +310,11 @@ var databaseMigrations = []databaseMigration{
 		ALTER TABLE conversations ADD COLUMN current_run_id TEXT NOT NULL DEFAULT '';
 		ALTER TABLE agent_runs ADD COLUMN diagnostics TEXT NOT NULL DEFAULT '';`,
 	},
+	{
+		version: 10,
+		name:    "client conversation event run identity",
+		sql:     `ALTER TABLE conversation_events ADD COLUMN run_id TEXT NOT NULL DEFAULT '';`,
+	},
 }
 
 func openDatabase(configDir string) (*sql.DB, error) {

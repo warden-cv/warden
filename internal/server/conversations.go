@@ -15,11 +15,9 @@ type durableAgentEvent struct {
 	Text      string `json:"text"`
 	Name      string `json:"name,omitempty"`
 	CreatedAt int64  `json:"createdAt,omitempty"`
-	// RunID is a private server-only field carrying the owning run for
-	// server-owned events. It is excluded from JSON and used internally for
-	// run-scoped supersession so a replacement never removes assistant content
-	// from an unrelated run.
-	RunID string `json:"-"`
+	// RunID preserves task ownership across reloads so stale task snapshots from
+	// an earlier run cannot repopulate a newer run's task panel.
+	RunID string `json:"runId,omitempty"`
 }
 
 type durableConversation struct {
@@ -51,24 +49,6 @@ func (a *app) conversationsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jsonOut(w, items)
-	case http.MethodPost:
-		var q struct {
-			Conversations []durableConversation `json:"conversations"`
-		}
-		if !decodeLargeJSON(w, r, &q) {
-			return
-		}
-		if len(q.Conversations) > 250 {
-			http.Error(w, "too many conversations", 400)
-			return
-		}
-		for i := range q.Conversations {
-			if err := a.saveConversation(sess.AccountID, &q.Conversations[i]); err != nil {
-				http.Error(w, err.Error(), 400)
-				return
-			}
-		}
-		jsonOut(w, map[string]any{"ok": true, "imported": len(q.Conversations)})
 	default:
 		http.Error(w, "method", 405)
 	}
@@ -157,14 +137,14 @@ func (a *app) saveConversation(accountID string, c *durableConversation) error {
 		return err
 	}
 	for sequence, event := range c.Events {
-		if event.Kind == "" || len(event.Text) > 1<<20 || len(event.Name) > 500 {
+		if event.Kind == "" || len(event.Text) > 1<<20 || len(event.Name) > 500 || (event.RunID != "" && !validAgentSessionID(event.RunID)) {
 			return errors.New("invalid conversation event")
 		}
 		created := event.CreatedAt
 		if created <= 0 {
 			created = c.CreatedAt + int64(sequence)
 		}
-		if _, err = tx.Exec("INSERT INTO conversation_events(account_id,conversation_id,sequence,kind,text,name,created_at) VALUES(?,?,?,?,?,?,?)", accountID, c.ID, sequence, event.Kind, event.Text, event.Name, created); err != nil {
+		if _, err = tx.Exec("INSERT INTO conversation_events(account_id,conversation_id,sequence,kind,text,name,created_at,run_id) VALUES(?,?,?,?,?,?,?,?)", accountID, c.ID, sequence, event.Kind, event.Text, event.Name, created, event.RunID); err != nil {
 			return err
 		}
 	}
@@ -199,7 +179,7 @@ func (a *app) loadConversations(accountID string) ([]durableConversation, error)
 }
 
 func (a *app) loadConversationEvents(accountID, conversationID string) ([]durableAgentEvent, error) {
-	rows, err := a.db.Query("SELECT kind,text,name,created_at FROM conversation_events WHERE account_id=? AND conversation_id=? ORDER BY sequence", accountID, conversationID)
+	rows, err := a.db.Query("SELECT kind,text,name,created_at,run_id FROM conversation_events WHERE account_id=? AND conversation_id=? ORDER BY sequence", accountID, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +187,7 @@ func (a *app) loadConversationEvents(accountID, conversationID string) ([]durabl
 	events := []durableAgentEvent{}
 	for rows.Next() {
 		var event durableAgentEvent
-		if err := rows.Scan(&event.Kind, &event.Text, &event.Name, &event.CreatedAt); err != nil {
+		if err := rows.Scan(&event.Kind, &event.Text, &event.Name, &event.CreatedAt, &event.RunID); err != nil {
 			return nil, err
 		}
 		events = append(events, event)

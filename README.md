@@ -131,6 +131,8 @@ The BH00-BH17 hardening campaign is complete. Its executable evidence, limits an
 
 Warden v1 focuses on authenticated monitoring, a full filesystem explorer, workspace-oriented code/text editing with bounded Git source control, interactive PTY terminals, durable coding-agent sessions, alerts and revisioned website management. The System submenu provides structured administration for certificates, cron, Docker, fail2ban, firewall, services, SSH and users. Internet-facing deployments still require a dedicated OS account, TLS reverse proxy, tested backups and deliberate capability assignment.
 
+Coding-agent conversations, events and run state are stored server-side in Warden's SQLite database. Browser `localStorage` contains only small account-scoped interface preferences such as the active session and collapsed Tasks state; it never stores conversation transcripts, attachments or unsent prompts.
+
 
 ## Install
 

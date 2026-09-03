@@ -9,6 +9,7 @@ const fs = require('fs');
 const assert = require('assert');
 
 const css = fs.readFileSync('content/assets/css/style.css', 'utf8');
+const html = fs.readFileSync('content/index.html', 'utf8');
 
 function blocks(selPrefix) {
   const out = [];
@@ -79,5 +80,34 @@ assert(
 // Text/controls remain vertically centred after the workspace row height was
 // raised to match the editor toolbar row.
 assert(ws.body.includes('display:flex') && ws.body.includes('align-items:center'), 'agent workspace row must vertically centre its content');
+
+// Composer contract: the provider occupies its own centred row. Copy session
+// and Tasks form the left action group, while Run remains right aligned on the
+// row below. This protects the intended two-row layout at narrow panel widths.
+const providerRow = html.match(/<div class="editor-agent-provider-row">([\s\S]*?)<\/div>/);
+assert(providerRow, 'editor agent provider row must exist');
+assert(providerRow[1].includes('id="editor-agent-provider"'), 'provider select must be in the provider row');
+
+const actionRow = html.match(/<div class="editor-agent-action-row">([\s\S]*?)<\/form>/);
+assert(actionRow, 'editor agent action row must exist');
+assert(actionRow[1].includes('class="agent-compose-actions"'), 'left action group must exist');
+assert(actionRow[1].includes('id="editor-agent-copy-session"'), 'Copy session must be in the left action group');
+assert(actionRow[1].includes('id="editorAgentTaskReopen"'), 'Tasks must be beside Copy session');
+assert(actionRow[1].includes('class="agent-compose-run"'), 'right run group must exist');
+assert(actionRow[1].includes('id="editor-agent-run"'), 'Run must be in the right action group');
+assert(
+  blocks('.editor-agent-compose>.editor-agent-provider-row').some((b) => b.body.includes('width:100%')),
+  'provider row must span the composer width'
+);
+assert(
+  blocks('.editor-agent-compose>.editor-agent-provider-row .agent-provider-select').some(
+    (b) => b.body.includes('width:100%') && b.body.includes('max-width:none')
+  ),
+  'provider dropdown must match the prompt width'
+);
+assert(
+  blocks('.editor-agent-compose>.editor-agent-action-row').some((b) => b.body.includes('justify-content:space-between')),
+  'action row must separate left controls from Run'
+);
 
 console.log('warden editor/agent layout contract: ok');

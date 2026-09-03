@@ -558,6 +558,9 @@ func renderWardenUnitBody(exe string, opts serviceOptions) string {
 	b.WriteString("Restart=on-failure\n")
 	b.WriteString("RestartSec=3\n")
 	b.WriteString("Environment=HOME=%h\n")
+	// User services do not inherit the interactive shell PATH. Include the
+	// official OpenCode per-user location plus standard user/system locations.
+	b.WriteString("Environment=PATH=%h/.opencode/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin\n")
 	b.WriteString("\n[Install]\n")
 	b.WriteString("WantedBy=default.target\n")
 	return b.String()

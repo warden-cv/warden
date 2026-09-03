@@ -764,6 +764,19 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 .agent-event.assistant a{color:#8fd0a6;text-decoration:none;border-bottom:1px solid #486653}
 .agent-event.assistant a:hover{color:#b6e3c5;border-bottom-color:#7fc89b}
 
+/* Editor Agent composer: centre provider selection on its own row and keep
+   session actions separate from the right-aligned run controls. */
+.editor-agent-panel{--editor-agent-compose-height:150px}
+.editor-agent-compose{display:flex;flex-direction:column}
+.editor-agent-compose textarea{height:auto;min-height:54px;flex:1 1 auto}
+.editor-agent-compose>.editor-agent-provider-row{display:flex;align-items:center;margin-top:6px;width:100%}
+.editor-agent-compose>.editor-agent-provider-row .agent-provider-select{width:100%;max-width:none}
+.editor-agent-compose>.editor-agent-action-row{display:flex;justify-content:space-between;align-items:center;margin-top:6px;gap:8px}
+.editor-agent-action-row>.agent-compose-actions,.editor-agent-action-row>.agent-compose-run{display:flex;align-items:center;gap:5px;min-width:0}
+.editor-agent-action-row>.agent-compose-run{margin-left:auto}
+.editor-agent-compose #editor-agent-copy-session{margin-left:0}
+.editor-agent-compose #editor-agent-activity{margin-left:0}
+
 /* BH15 keyboard, focus and motion guarantees. */
 .skip-link{position:fixed;z-index:500;top:8px;left:8px;padding:9px 12px;border:1px solid var(--line2);border-radius:6px;background:var(--panel);color:var(--text);transform:translateY(-160%)}
 .skip-link:focus{transform:translateY(0)}

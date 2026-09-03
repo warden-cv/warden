@@ -814,6 +814,12 @@ func TestWardenMigrationAddsRunEventsAndColumns(t *testing.T) {
 	if colCount != 1 {
 		t.Fatal("conversations.current_run_id missing after migration")
 	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('conversation_events') WHERE name='run_id'").Scan(&colCount); err != nil {
+		t.Fatal(err)
+	}
+	if colCount != 1 {
+		t.Fatal("conversation_events.run_id missing after migration")
+	}
 }
 
 // --- provider insufficient-balance (Warden parity) ---

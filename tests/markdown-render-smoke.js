@@ -25,6 +25,8 @@ function byClass(node,cls,out=[]){
   return out;
 }
 const src=fs.readFileSync('content/assets/js/script.js','utf8');
+const page=fs.readFileSync('content/index.html','utf8');
+if(page.includes('Implement, investigate')||page.includes('drop or paste images'))throw new Error('agent prompt placeholder returned');
 
 // ---- Markdown + tool rendering ----
 const ctx=load(src,'function appendAgentMarkdownInline','function renderAgentFeed');
