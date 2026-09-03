@@ -13,19 +13,14 @@ permissions:
 
 jobs:
   service-lifecycle:
-    # Best-effort, non-blocking. The lifecycle exercise always boots its own
-    # isolated systemd user manager on a private HOME/XDG_CONFIG_HOME/
-    # XDG_RUNTIME_DIR and D-Bus session bus, so a developer's real Warden
-    # binary, unit, service and data are never touched. That genuinely
-    # isolated exercise requires a host that can host an additional systemd
-    # user manager (a real Linux machine or a systemd-capable self-hosted
-    # runner). GitHub-hosted runners cannot boot a second user manager next to
-    # their ambient one, so this job fails there by design and is therefore
-    # non-blocking (continue-on-error); the renderer and lifecycle logic remain
-    # fully verified by the unit suite (which runs real systemd-analyze --user
-    # verify) in ci.yml and by the local/manual run of tests/service-lifecycle.sh.
+    # The lifecycle exercise always boots its own isolated systemd user manager
+    # on a private HOME/XDG_CONFIG_HOME/XDG_RUNTIME_DIR and D-Bus session bus,
+    # so a developer's real Warden binary, unit, service and data are never
+    # touched. A GitHub-hosted runner cannot boot a second user manager next to
+    # its ambient one, so the exercise runs as a dedicated throwaway OS user
+    # whose first systemd user manager boots cleanly; the OS-user boundary makes
+    # the manager genuinely isolated from the runner's ambient manager.
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       # Pinned to the same immutable commit SHAs trusted by ci.yml and release.yml.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -33,25 +28,31 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: install systemd analyze tooling
-        run: |
-          if ! command -v systemd-analyze >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y systemd-analyze
-          fi
       - name: build warden binary
         run: |
           mkdir -p "$HOME/.warden-lifecycle-bin"
           go build -trimpath -o "$HOME/.warden-lifecycle-bin/warden" ./cmd/warden
-      - name: real systemd service lifecycle
+      - name: prepare isolated exercise user
+        run: |
+          sudo useradd -m -s /bin/bash wardenlc
+          sudo mkdir -p /home/wardenlc/exercise
+          sudo cp "$HOME/.warden-lifecycle-bin/warden" /home/wardenlc/exercise/warden
+          sudo cp "$GITHUB_WORKSPACE/tests/service-lifecycle.sh" /home/wardenlc/exercise/service-lifecycle.sh
+          sudo chown -R wardenlc:wardenlc /home/wardenlc/exercise
+      - name: real systemd service lifecycle (isolated user)
         run: |
           set +e
-          out=$(sh tests/service-lifecycle.sh 2>&1)
+          out=$(sudo -u wardenlc -H env \
+            WARDEN_LIFECYCLE_BIN=/home/wardenlc/exercise/warden \
+            bash /home/wardenlc/exercise/service-lifecycle.sh 2>&1)
           code=$?
           printf '%s\n' "$out"
           if [ $code -ne 0 ]; then
             printf '%s\n' "$out" | sed 's/^/::error::/'
           fi
           exit $code
+      - name: remove isolated exercise user
+        if: always()
+        run: sudo userdel -r wardenlc >/dev/null 2>&1 || true
       - name: git diff --check
         run: git diff --check

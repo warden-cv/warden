@@ -122,43 +122,34 @@ SYSTEMD_BIN=$(command -v systemd 2>/dev/null || true)
 [ -n "$SYSTEMD_BIN" ] || SYSTEMD_BIN=/usr/lib/systemd/systemd
 [ -x "$SYSTEMD_BIN" ] || die "cannot find a systemd user manager binary to boot"
 
-# The isolated user manager can fail to become ready on a loaded CI runner, so
-# the boot is retried once with a fresh D-Bus bus and systemd instance. Two
-# failures mean the environment cannot host an isolated user manager at all,
-# so the exercise fails rather than hiding that with more retries.
+# Boot an isolated session D-Bus and systemd user manager on the private
+# runtime directory. systemctl --user resolves the manager through the exported
+# XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS, so nothing here touches the ambient
+# user manager. A single boot failure is a hard failure: an environment that
+# cannot host an isolated user manager (for example a CI runner that already
+# has an ambient user manager) must be reported rather than retried into a
+# false pass.
+SYSTEMD_BIN=$(command -v systemd 2>/dev/null || true)
+[ -n "$SYSTEMD_BIN" ] || SYSTEMD_BIN=/usr/lib/systemd/systemd
+[ -x "$SYSTEMD_BIN" ] || die "cannot find a systemd user manager binary to boot"
+
 DBUS_ADDR="unix:path=$XDG_RUNTIME_DIR/bus"
 export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
-DBUS_PID=0
-SYSTEMD_PID=0
-attempt=0
-while :; do
-  attempt=$((attempt + 1))
-  rm -f "$XDG_RUNTIME_DIR/bus"
-  dbus-daemon --session --address="$DBUS_ADDR" >"$WORK/dbus-boot.log" 2>&1 &
-  DBUS_PID=$!
-  "$SYSTEMD_BIN" --user >"$WORK/systemd-boot.log" 2>&1 &
-  SYSTEMD_PID=$!
-  # A freshly booted user manager can take tens of seconds to become ready on a
-  # loaded CI runner, so each attempt's readiness deadline is generous (60s).
-  ready=0
-  for _i in $(seq 1 300); do
-    systemctl --user is-system-running >/dev/null 2>&1 && { ready=1; break; }
-    sleep 0.2
-  done
-  [ "$ready" = 1 ] && break
-  echo "service-lifecycle: isolated user manager attempt $attempt did not become ready"
-  kill "$SYSTEMD_PID" 2>/dev/null || true
-  wait "$SYSTEMD_PID" 2>/dev/null || true
-  kill "$DBUS_PID" 2>/dev/null || true
-  wait "$DBUS_PID" 2>/dev/null || true
-  SYSTEMD_PID=0
-  DBUS_PID=0
-  if [ "$attempt" -ge 2 ]; then
-    BOOTLOG=$(tail -c 2000 "$WORK/systemd-boot.log" 2>/dev/null | tr '\n' ' ' | cut -c1-1200)
-    die "isolated user manager did not become ready after $attempt attempts; the environment cannot host an isolated user manager${BOOTLOG:+ (systemd --user: $BOOTLOG)}"
-  fi
-  sleep 1
+dbus-daemon --session --address="$DBUS_ADDR" >"$WORK/dbus-boot.log" 2>&1 &
+DBUS_PID=$!
+"$SYSTEMD_BIN" --user >"$WORK/systemd-boot.log" 2>&1 &
+SYSTEMD_PID=$!
+# A freshly booted user manager can take tens of seconds to become ready on a
+# loaded CI runner, so the readiness deadline is generous (60s).
+ready=0
+for _i in $(seq 1 300); do
+  systemctl --user is-system-running >/dev/null 2>&1 && { ready=1; break; }
+  sleep 0.2
 done
+if [ "$ready" != 1 ]; then
+  BOOTLOG=$(tail -c 2000 "$WORK/systemd-boot.log" 2>/dev/null | tr '\n' ' ' | cut -c1-1200)
+  die "isolated user manager did not become ready${BOOTLOG:+ (systemd --user: $BOOTLOG)}"
+fi
 
 wait_active() {
   for _i in $(seq 1 60); do
