@@ -49,6 +49,7 @@ jobs:
           set +e
           out=$(docker run -d --name "warden-lc-${{ github.run_id }}" \
             --privileged \
+            --cgroupns=host \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             warden-sysd-ubuntu 2>&1)
           code=$?
@@ -57,12 +58,15 @@ jobs:
             printf '%s\n' "$out" | sed 's/^/::error::/'
             exit $code
           fi
-          for _i in $(seq 1 60); do
+          for _i in $(seq 1 90); do
             docker exec "warden-lc-${{ github.run_id }}" systemctl is-system-running >/dev/null 2>&1 && break
             sleep 1
           done
-          docker exec "warden-lc-${{ github.run_id }}" systemctl is-system-running >/dev/null 2>&1 \
-            || { docker logs "warden-lc-${{ github.run_id }}" 2>&1 | sed 's/^/::error::/'; exit 1; }
+          if ! docker exec "warden-lc-${{ github.run_id }}" systemctl is-system-running >/dev/null 2>&1; then
+            echo "container did not become ready; dumping container logs:"
+            docker logs --tail 60 "warden-lc-${{ github.run_id }}" 2>&1
+            exit 1
+          fi
           docker exec "warden-lc-${{ github.run_id }}" bash -c "useradd -m -s /bin/bash warden"
           docker cp "$HOME/.warden-lifecycle-bin/warden" "warden-lc-${{ github.run_id }}":/opt/warden
           docker cp "$GITHUB_WORKSPACE/tests/service-lifecycle.sh" "warden-lc-${{ github.run_id }}":/opt/service-lifecycle.sh
