@@ -379,3 +379,47 @@ func TestRequestSchemeFromTrustedLoopbackProxy(t *testing.T) {
 		t.Fatalf("untrusted requestScheme = %q, want http", got)
 	}
 }
+
+// TestSetupStatusCarriesIdentityContract pins the stable identity values Warden's
+// public liveness endpoint must carry so the service health checker can reject a
+// foreign JSON process that answers with a plausible setup-shaped body. The
+// identity is additive and exposes no configuration, accounts, paths, credentials
+// or setup tokens.
+func TestSetupStatusCarriesIdentityContract(t *testing.T) {
+	dir := t.TempDir()
+	store, err := loadConfigStore(dir, instanceConfigFile{Version: configSchemaVersion, Listen: "127.0.0.1:7332", FileRoot: "/", HomeDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := loadAccountStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: Config{}, config: store, accounts: accounts, secrets: &secretStore{}}
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7332/api/setup/status", nil)
+	req.RemoteAddr = "127.0.0.1:9999"
+	w := httptest.NewRecorder()
+	a.setupStatus(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("setup status status=%d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("setup status body is not JSON: %v: %s", err, w.Body.String())
+	}
+	ok, isBool := body["ok"].(bool)
+	if !isBool || !ok {
+		t.Fatalf("identity ok must be exactly true, got %v", body["ok"])
+	}
+	if svc, _ := body["service"].(string); svc != "warden" {
+		t.Fatalf("identity service must be exactly %q, got %v", "warden", body["service"])
+	}
+	if _, ok := body["required"].(bool); !ok {
+		t.Fatalf("required must remain a boolean, got %v", body["required"])
+	}
+	for _, forbidden := range []string{"setupToken", "setup_token", "password", "master.key", "client_secret", "client_id", "redirect", "path", "home", "account"} {
+		if strings.Contains(w.Body.String(), forbidden) {
+			t.Fatalf("liveness body leaks %q: %s", forbidden, w.Body.String())
+		}
+	}
+}

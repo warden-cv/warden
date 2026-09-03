@@ -3,57 +3,81 @@
 #
 # Exercises the full service contract against a genuine systemd user manager:
 #   fresh install -> daemon reload -> enable/start -> active-state verification
-#   -> Warden-specific health verification -> status -> stop -> start -> restart
-#   -> changed reinstall -> special-path runtime identity (quote/backslash/space
-#   /percent args + cwd) -> injected start-limit failure and reset-failed
-#   recovery -> install-time health-gate failure (foreign JSON server) -> retry
-#   -> uninstall -> reinstall after uninstall -> final uninstall.
+#   -> Warden-specific health verification (exact identity contract) -> status
+#   -> stop -> start -> restart (CLI-verified) -> changed reinstall ->
+#   special-path runtime identity (quote/backslash/space/percent args + cwd) ->
+#   injected start-limit failure and reset-failed recovery -> install-time
+#   health-gate failure (foreign JSON server) -> retry -> uninstall -> reinstall
+#   after uninstall -> final uninstall.
 #
 # The generated unit is additionally validated with `systemd-analyze --user
 # verify` while it is installed, so a malformed directive fails this script
 # rather than the user's next `warden service install`.
 #
-# When no usable user manager is running (for example on a CI runner without a
-# login session) an isolated user systemd instance is booted so the exercise
-# still runs against real systemd code.
+# The exercise ALWAYS runs in an isolated environment: a private temporary
+# HOME, XDG_CONFIG_HOME, XDG_RUNTIME_DIR and session D-Bus bus, plus an
+# isolated systemd user manager that this invocation spawns and terminates.
+# It never touches the ambient user manager, a developer's real
+# ~/.config/systemd/user directory, a real warden installation or real data,
+# so no force flag exists. Every path is collision-resistant under a fresh
+# mktemp base and cleanup removes only artifacts created by this invocation.
 set -eu
 
 die() { echo "service-lifecycle: $*" >&2; exit 1; }
 
-# The ambient user manager and warden must agree on the user config directory.
-# Unset any sandbox override so the unit lands in the real user location
-# (~/.config/systemd/user) that the manager searches.
-unset XDG_CONFIG_HOME 2>/dev/null || true
+# Capture the source binary before HOME is isolated. The CI job builds it to
+# the default location; WARDEN_LIFECYCLE_BIN overrides it.
+BIN_SOURCE=${WARDEN_LIFECYCLE_BIN:-"$HOME/.warden-lifecycle-bin/warden"}
+[ -x "$BIN_SOURCE" ] || die "warden binary not found at $BIN_SOURCE"
 
-# A dedicated lifecycle-only binary path (default), so a developer's real
-# `~/.local/bin/warden` installation is never replaced or damaged. The CI job
-# builds a scratch binary there; WARDEN_LIFECYCLE_BIN overrides it.
-BIN=${WARDEN_LIFECYCLE_BIN:-"$HOME/.warden-lifecycle-bin/warden"}
+# Collision-resistant private base for every path this invocation creates. The
+# base lives under the real HOME (never os.TempDir) so the warden binary it
+# holds is a "stable" path that `service install` accepts, and a unique mktemp
+# name means a concurrent invocation never collides. Cleanup removes it wholly.
+BASE=$(mktemp -d "$HOME/.warden-lifecycle.XXXXXX")
+WORK="$BASE/work"
+mkdir -p "$WORK"
+ISOLATED_HOME="$BASE/home"
+mkdir -p "$ISOLATED_HOME"
+XDG_CONFIG_HOME="$BASE/xdg-config"
+mkdir -p "$XDG_CONFIG_HOME"
+XDG_RUNTIME_DIR="$BASE/runtime"
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+
+export HOME="$ISOLATED_HOME"
+export XDG_CONFIG_HOME
+export XDG_RUNTIME_DIR
+
+# The unit and probe live in the isolated user config directory.
+UNIT_DIR="$XDG_CONFIG_HOME/systemd/user"
+UNIT="$UNIT_DIR/warden.service"
+mkdir -p "$UNIT_DIR"
+
+BIN="$BASE/bin/warden"
+mkdir -p "$BASE/bin"
+cp "$BIN_SOURCE" "$BIN"
+chmod +x "$BIN"
+cp "$BIN" "$BIN.save"
+
+cd "$WORK"
+
 PORT=${WARDEN_LIFECYCLE_PORT:-$(( 10000 + ($$ % 20000) ))}
-UNIT="$HOME/.config/systemd/user/warden.service"
-
-[ -x "$BIN" ] || die "warden binary not found at $BIN"
-
-# Never damage a developer's real installation: this exercise installs and
-# uninstalls the well-known unit name warden.service, so refuse to run when a
-# warden.service unit already exists in the ambient user manager unless the
-# operator explicitly opts in. This is checked before any binary backup or
-# config scratch directory is created.
-if [ "${WARDEN_LIFECYCLE_FORCE:-0}" != "1" ] && systemctl --user list-unit-files warden.service >/dev/null 2>&1 \
-  && systemctl --user list-unit-files warden.service | grep -q 'warden.service'; then
-  die "a warden.service unit already exists; refusing to damage it (set WARDEN_LIFECYCLE_FORCE=1 to override)"
-fi
-
-CONFIG=$(mktemp -d /tmp/warden-lc-config.XXXXXX)
-ROOT=$(mktemp -d /tmp/warden-lc-root.XXXXXX)
-CRASH=$(mktemp /tmp/warden-lc-crash.XXXXXX.sh)
-BLOCKER=
+CONFIG="$BASE/config"
+mkdir -p "$CONFIG"
+ROOT="$BASE/root"
+mkdir -p "$ROOT"
+CRASH="$WORK/crash.sh"
 cat > "$CRASH" <<'SH'
 #!/bin/sh
 exit 1
 SH
 chmod +x "$CRASH"
-cp "$BIN" "$BIN.save"
+
+DBUS_PID=0
+SYSTEMD_PID=0
+BLOCKER=
+
 overwrite_bin() { # replace $BIN atomically, retrying past a transient ETXTBSY
   for _i in $(seq 1 30); do
     cp "$CRASH" "$BIN" 2>/dev/null && return 0
@@ -69,38 +93,52 @@ restore_bin() {
   die "cannot restore the installed binary at $BIN"
 }
 cleanup() {
-  restore_bin 2>/dev/null || true
-  [ -n "$BLOCKER" ] && kill "$BLOCKER" 2>/dev/null || true
-  rm -f "$BIN.save" "$CRASH"
-  rm -rf "$CONFIG" "$ROOT"
-  rm -f ~/.config/systemd/user/warden-rtid.service
+  # Stop what the isolated manager is running, then terminate the daemons this
+  # invocation spawned, then remove only the private base directory.
   systemctl --user stop warden.service >/dev/null 2>&1 || true
   systemctl --user disable warden.service >/dev/null 2>&1 || true
-  rm -f "$UNIT" ./*.unit-backup-* 2>/dev/null || true
-  systemctl --user daemon-reload >/dev/null 2>&1 || true
+  systemctl --user stop warden-rtid.service >/dev/null 2>&1 || true
+  [ -n "$BLOCKER" ] && { kill "$BLOCKER" 2>/dev/null || true; }
+  if [ -n "$SYSTEMD_PID" ] && [ "$SYSTEMD_PID" != 0 ]; then
+    kill "$SYSTEMD_PID" 2>/dev/null || true
+    wait "$SYSTEMD_PID" 2>/dev/null || true
+  fi
+  if [ -n "$DBUS_PID" ] && [ "$DBUS_PID" != 0 ]; then
+    kill "$DBUS_PID" 2>/dev/null || true
+    wait "$DBUS_PID" 2>/dev/null || true
+  fi
+  # systemd leaves a read-only "inaccessible" directory tree in the runtime
+  # dir with mode-000 special files; make it removable before removing the base.
+  chmod -R u+rwX "$XDG_RUNTIME_DIR" 2>/dev/null || true
+  rm -rf "$BASE"
 }
 trap cleanup EXIT
 
-# Boot an isolated user manager when the ambient one is not usable. A freshly
-# booted instance reports "starting" until it is ready.
-if ! systemctl --user is-system-running >/dev/null 2>&1 && [ "${WARDEN_LIFECYCLE_USER_MGR:-0}" != "1" ]; then
-  echo "service-lifecycle: booting an isolated user systemd manager"
-  SYSTEMD_BIN=$(command -v systemd 2>/dev/null || true)
-  [ -n "$SYSTEMD_BIN" ] || SYSTEMD_BIN=/usr/lib/systemd/systemd
-  [ -x "$SYSTEMD_BIN" ] || die "cannot find a systemd user manager binary to boot"
-  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$HOME/.warden-lifecycle-runtime}"
-  mkdir -p "$XDG_RUNTIME_DIR"
-  chmod 700 "$XDG_RUNTIME_DIR"
-  export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-  dbus-daemon --session --fork --address="$DBUS_SESSION_BUS_ADDRESS" --print-address=1 >/dev/null 2>&1 || die "cannot start session dbus"
-  "$SYSTEMD_BIN" --user >/dev/null 2>&1 &
-  for _i in $(seq 1 50); do
-    systemctl --user is-system-running >/dev/null 2>&1 && break
-    sleep 0.2
-  done
-  systemctl --user is-system-running >/dev/null 2>&1 || die "isolated user manager did not become ready"
-  export WARDEN_LIFECYCLE_USER_MGR=1
-fi
+# Boot an isolated session D-Bus and systemd user manager on the private
+# runtime directory. systemctl --user resolves the manager through the exported
+# XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS, so nothing here touches the ambient
+# user manager.
+DBUS_ADDR="unix:path=$XDG_RUNTIME_DIR/bus"
+export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
+dbus-daemon --session --address="$DBUS_ADDR" >/dev/null 2>&1 &
+DBUS_PID=$!
+[ -n "$DBUS_PID" ] || die "cannot determine the dbus daemon pid"
+SYSTEMD_BIN=$(command -v systemd 2>/dev/null || true)
+[ -n "$SYSTEMD_BIN" ] || SYSTEMD_BIN=/usr/lib/systemd/systemd
+[ -x "$SYSTEMD_BIN" ] || die "cannot find a systemd user manager binary to boot"
+"$SYSTEMD_BIN" --user >"$WORK/systemd-boot.log" 2>&1 &
+SYSTEMD_PID=$!
+# A freshly booted user manager can take tens of seconds to become ready on a
+# loaded CI runner, so the readiness deadline is generous (60s).
+for _i in $(seq 1 300); do
+  systemctl --user is-system-running >/dev/null 2>&1 && break
+  sleep 0.2
+done
+systemctl --user is-system-running >/dev/null 2>&1 || {
+  echo "--- systemd --user boot log ---"
+  cat "$WORK/systemd-boot.log" 2>/dev/null || true
+  die "isolated user manager did not become ready"
+}
 
 wait_active() {
   for _i in $(seq 1 60); do
@@ -134,14 +172,17 @@ echo "== active-state verification =="
 [ "$(systemctl --user is-active warden.service)" = "active" ] || die "warden.service not active"
 
 echo "== Warden-specific health verification =="
-# The recorded listener must answer /api/setup/status with the Warden health
-# contract (a JSON object carrying the `required` boolean), not merely 2xx JSON.
+# The recorded listener must answer /api/setup/status with the exact Warden
+# identity contract (ok:true, service:"warden", required:<bool>), not merely
+# 2xx JSON.
 if command -v python3 >/dev/null 2>&1; then
-  python3 - "$PORT" <<'PY' || die "health endpoint did not return the Warden contract"
+  python3 - "$PORT" <<'PY' || die "health endpoint did not return the Warden identity contract"
 import json, sys, urllib.request
 port = sys.argv[1]
 with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/setup/status", timeout=5) as r:
     data = json.load(r)
+assert data.get("ok") is True, data
+assert data.get("service") == "warden", data
 assert isinstance(data.get("required"), bool), data
 PY
 else
@@ -151,7 +192,7 @@ fi
 echo "== status (with health check) =="
 "$BIN" service status >/dev/null
 
-echo "== stop / start / restart =="
+echo "== stop / start / restart (CLI performs its own readiness verification) =="
 "$BIN" service stop
 [ "$(systemctl --user is-active warden.service)" = "inactive" ] || die "warden.service not stopped"
 "$BIN" service start
@@ -186,11 +227,11 @@ SPROBE_ESCAPED=$(printf '%s' "$SPROBE" | sed 's/%/%%/g')
   printf '[Unit]\nDescription=runtime path identity probe\n\n[Service]\nType=oneshot\n'
   printf 'ExecStart=%s "%s" "arg with \\"quote" "back\\\\slash"\n' "$ROOT/emit.sh" "$SPROUT"
   printf 'WorkingDirectory=%s\n' "$SPROBE_ESCAPED"
-} > ~/.config/systemd/user/warden-rtid.service
+} > "$UNIT_DIR/warden-rtid.service"
 systemctl --user daemon-reload
 systemctl --user start warden-rtid.service
 systemctl --user stop warden-rtid.service
-rm -f ~/.config/systemd/user/warden-rtid.service
+rm -f "$UNIT_DIR/warden-rtid.service"
 systemctl --user daemon-reload
 {
   read -r wdline
@@ -211,25 +252,34 @@ done
 state=$(systemctl --user is-active warden.service 2>/dev/null || true)
 echo "post-crash-loop state: $state"
 [ "$state" = "failed" ] || die "expected start-limit 'failed' state after crash loop, got '$state'"
+# The CLI's own activation must refuse to report success while the service
+# crashes, proving `service start` performs its own readiness verification.
+if "$BIN" service start >/dev/null 2>&1; then
+  die "service start reported success for a crashing service"
+fi
 restore_bin
 # Reinstall over the failed unit must clear the start-limit state (reset-failed)
 # and bring the service back to active.
 install >/dev/null
 wait_active "reinstall recovery"
 [ "$(systemctl --user is-active warden.service)" = "active" ] || die "reinstall did not recover the service"
+"$BIN" service restart
+wait_active "CLI restart after recovery"
 
 echo "== install-time health-gate failure (foreign JSON server on port) then retry =="
 "$BIN" service uninstall >/dev/null
 if command -v python3 >/dev/null 2>&1; then
   # A foreign process occupies the configured listener and answers 200 with a
-  # JSON object that is NOT the Warden health contract. It must not be able to
-  # impersonate Warden: the health gate rejects the foreign body and the warden
-  # process cannot bind, so the install fails and leaves a retryable state.
+  # plausible setup-shaped JSON body ({"required":...}) that is NOT the Warden
+  # identity contract. It must not be able to impersonate Warden: the health
+  # gate rejects the foreign body and the warden process cannot bind, so the
+  # install fails and leaves a retryable state.
   cat > "$ROOT/foreign.py" <<'PY'
 import http.server, json, os
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        body = json.dumps({"ok": False, "service": "foreign"}).encode()
+        body = json.dumps({"required": False, "legacyPasswordRequired": False,
+                           "tokenRequired": True, "googleEnabled": False}).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
@@ -262,7 +312,13 @@ echo "== uninstall =="
 "$BIN" service uninstall >/dev/null
 [ -e "$UNIT" ] && die "unit still present after uninstall"
 systemctl --user is-active warden.service >/dev/null 2>&1 && die "warden.service still loaded after uninstall"
-[ -z "$(ls -A . 2>/dev/null | grep '\.unit-backup-' || true)" ] || die "uninstall left a backup artifact behind"
+leftover=0
+for f in "$UNIT_DIR"/.warden.service.unit-backup-*; do
+  [ -e "$f" ] || continue
+  leftover=1
+  break
+done
+[ "$leftover" = 0 ] || die "uninstall left a backup artifact behind"
 
 echo "== reinstall after uninstall (retryable fresh state) =="
 install >/dev/null

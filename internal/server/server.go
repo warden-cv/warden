@@ -131,7 +131,7 @@ func (a *app) setupStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method", 405)
 		return
 	}
-	jsonOut(w, map[string]any{"required": a.accounts.empty(), "legacyPasswordRequired": a.cfg.PasswordHash != "", "tokenRequired": !isLoopbackClient(r), "googleEnabled": a.googleReady()})
+	jsonOut(w, map[string]any{"required": a.accounts.empty(), "legacyPasswordRequired": a.cfg.PasswordHash != "", "tokenRequired": !isLoopbackClient(r), "googleEnabled": a.googleReady(), "ok": true, "service": "warden"})
 }
 func (a *app) setup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

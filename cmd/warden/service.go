@@ -33,6 +33,12 @@ const wardenManagedPrefix = "# warden-managed: "
 // health check targets.
 const wardenHealthPath = "/api/setup/status"
 
+// wardenHealthService is the stable identity value Warden's public liveness
+// response carries. The health checker requires it exactly, so a foreign JSON
+// process occupying the listener cannot impersonate Warden with a plausible
+// setup-shaped body such as {"required":false} alone.
+const wardenHealthService = "warden"
+
 var (
 	errNotManaged = errors.New("not a managed unit")
 	errMalformed  = errors.New("malformed managed unit header")
@@ -729,10 +735,12 @@ func resolveExecutable(exe string) (string, error) {
 	return abs, nil
 }
 
-// healthCheck requires the Warden health contract: a 2xx response whose body is
-// a JSON object carrying the `required` boolean that /api/setup/status always
-// emits. Any other 2xx JSON object (an empty object, an array, malformed JSON,
-// a missing or non-boolean `required` key) is rejected so a foreign
+// healthCheck requires the Warden identity contract: a 2xx response whose body
+// is a JSON object carrying the exact stable identity values the setup-status
+// endpoint always emits — `ok` strictly true, `service` strictly "warden", and
+// the setup-status `required` boolean. Any other 2xx JSON object (a plausible
+// setup-shaped `{"required":false}`, an empty object, an array, malformed JSON,
+// a missing or wrong-typed identity value) is rejected so a foreign
 // JSON-speaking process occupying the listener cannot impersonate Warden on
 // the install health gate. The endpoint is the public, read-only setup-status
 // route and exposes no credentials, account data or filesystem content.
@@ -757,8 +765,16 @@ func healthCheck(url string) error {
 	if err := json.Unmarshal(body, &v); err != nil {
 		return fmt.Errorf("expected a JSON object response: %v", err)
 	}
+	ok, isBool := v["ok"].(bool)
+	if !isBool || !ok {
+		return fmt.Errorf("expected the Warden identity contract {\"ok\":true,...}, got %s", strings.TrimSpace(string(body)))
+	}
+	svc, isStr := v["service"].(string)
+	if !isStr || svc != wardenHealthService {
+		return fmt.Errorf("expected the Warden identity contract {\"service\":%q,...}, got %s", wardenHealthService, strings.TrimSpace(string(body)))
+	}
 	if _, ok := v["required"].(bool); !ok {
-		return fmt.Errorf("expected the Warden health contract {\"required\":<bool>}, got %s", strings.TrimSpace(string(body)))
+		return fmt.Errorf("expected the Warden setup-status contract {\"required\":<bool>}, got %s", strings.TrimSpace(string(body)))
 	}
 	return nil
 }
@@ -839,6 +855,22 @@ func wardenEffectiveListen(configDir, fallback string) (string, error) {
 		return "", errors.New("config.json has an empty listen address")
 	}
 	return cfg.Listen, nil
+}
+
+// resolveListenerMeta resolves the effective installed listener from managed
+// unit metadata: explicit host/port units use their recorded listener
+// authoritatively; legacy bootstrap units resolve the effective listener from
+// durable config.json.
+func resolveListenerMeta(meta unitMeta) (string, error) {
+	listen := meta.listen
+	if meta.listenMode != "explicit" {
+		var err error
+		listen, err = wardenEffectiveListen(meta.config, meta.listen)
+		if err != nil {
+			return "", err
+		}
+	}
+	return listen, nil
 }
 
 func (m *serviceManager) requireManaged(verb string) error {
@@ -990,9 +1022,24 @@ func (m *serviceManager) install(opts serviceOptions, out io.Writer) error {
 		}
 		return err
 	}
+	// Final confirmation snapshot: the readiness gate proves the unit was
+	// active and healthy at its last poll, but the final is-active query is a
+	// separate transaction step. A query error or a non-active result is a
+	// transaction failure and executes the same rollback as any other step —
+	// never print a non-active state and return success.
 	active, err := m.queryState("is-active")
 	if err != nil {
+		if rb := m.rollbackInstall(priorUnit, hadUnit, priorEnabledWord, priorActiveWord); rb != "" {
+			return fmt.Errorf("cannot confirm %s active state after install: %w%s", m.unitName, err, rb)
+		}
 		return fmt.Errorf("cannot confirm %s active state after install: %w", m.unitName, err)
+	}
+	if active != stateActive {
+		err := fmt.Errorf("%s ended %q after a successful readiness check", m.unitName, stateName(active))
+		if rb := m.rollbackInstall(priorUnit, hadUnit, priorEnabledWord, priorActiveWord); rb != "" {
+			return fmt.Errorf("%w%s", err, rb)
+		}
+		return err
 	}
 	fmt.Fprintf(out, "unit:   %s\n", m.unitName)
 	fmt.Fprintf(out, "file:   %s\n", m.unitPath)
@@ -1002,8 +1049,12 @@ func (m *serviceManager) install(opts serviceOptions, out io.Writer) error {
 }
 
 func (m *serviceManager) action(verb string, out io.Writer) error {
-	if err := m.requireManaged(verb); err != nil {
-		return err
+	meta, err := readManagedUnit(m.unitPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("refusing to %s %s: unit is not installed", verb, m.unitName)
+		}
+		return fmt.Errorf("refusing to %s %s: %w", verb, m.unitName, err)
 	}
 	// Deliberate activation paths clear a prior start-limit failure immediately
 	// before start/restart so an operator can recover from a prior crash loop.
@@ -1034,6 +1085,22 @@ func (m *serviceManager) action(verb string, out io.Writer) error {
 		if st != stateInactive {
 			return fmt.Errorf("%s still reports %q after stop", m.unitName, stateName(st))
 		}
+		return nil
+	}
+	// A start/restart job can return zero before the process finishes starting,
+	// and the process can then crash or remain unhealthy immediately afterward,
+	// so the CLI applies the same bounded active-state plus Warden-identity
+	// readiness gate that install uses before reporting success. Every failure
+	// class (immediate failure, state-query failure, timeout, transport failure,
+	// invalid identity) returns nonzero.
+	if verb == "start" || verb == "restart" {
+		listen, err := resolveListenerMeta(meta)
+		if err != nil {
+			return fmt.Errorf("cannot resolve the installed listener after %s %s: %w", verb, m.unitName, err)
+		}
+		if err := m.waitReady(listen); err != nil {
+			return fmt.Errorf("%s %s did not become healthy after activation: %w", verb, m.unitName, err)
+		}
 	}
 	return nil
 }
@@ -1048,12 +1115,9 @@ func (m *serviceManager) status(out io.Writer, version string) error {
 	}
 	// New host/port units record an authoritative listener; legacy bootstrap
 	// units resolve the effective listener from durable config.json.
-	listen := meta.listen
-	if meta.listenMode != "explicit" {
-		listen, err = wardenEffectiveListen(meta.config, meta.listen)
-		if err != nil {
-			return fmt.Errorf("cannot resolve the effective listen address: %w", err)
-		}
+	listen, err := resolveListenerMeta(meta)
+	if err != nil {
+		return fmt.Errorf("cannot resolve the effective listen address: %w", err)
 	}
 	enabled, err := m.queryState("is-enabled")
 	if err != nil {

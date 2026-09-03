@@ -28,6 +28,12 @@ func init() {
 	installHealthDeadline = 100 * time.Millisecond
 }
 
+// healthIdentityBody is a valid Warden liveness body: the setup-status shape
+// plus the exact identity values (ok:true, service:"warden") the checker now
+// requires. A plausible setup-shaped body without that identity must be
+// rejected.
+const healthIdentityBody = `{"required":false,"ok":true,"service":"warden"}`
+
 type fakeRunner struct {
 	mu      sync.Mutex
 	calls   []string
@@ -1537,6 +1543,258 @@ func TestActionsResetFailedBeforeStartRestart(t *testing.T) {
 	})
 }
 
+// TestActionsReadinessGate proves `service start` and `service restart` apply
+// the same bounded active-state plus Warden-identity readiness gate that
+// install uses: a successful systemctl job is not enough. An immediate crash,
+// an active-but-unhealthy process, a foreign process on the resolved listener,
+// a readiness timeout and a state-query failure each return nonzero for both
+// activation commands.
+func TestActionsReadinessGate(t *testing.T) {
+	origProbe, origDeadline, origInterval := healthProbe, installHealthDeadline, installHealthPollInterval
+	t.Cleanup(func() {
+		healthProbe, installHealthDeadline, installHealthPollInterval = origProbe, origDeadline, origInterval
+	})
+	installHealthPollInterval = time.Millisecond
+	installHealthDeadline = 80 * time.Millisecond
+
+	installAndReset := func(t *testing.T) (*serviceManager, *fakeRunner) {
+		t.Helper()
+		healthProbe = func(string) error { return nil }
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		fr := fs.runner()
+		m.run = fr
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fs.setState("enabled", "active")
+		fr.calls = nil
+		return m, fr
+	}
+
+	t.Run("start verifies healthy activation", func(t *testing.T) {
+		m, _ := installAndReset(t)
+		healthProbe = func(string) error { return nil }
+		if err := m.action("start", os.Stderr); err != nil {
+			t.Fatalf("start on a healthy service failed: %v", err)
+		}
+	})
+	t.Run("restart verifies healthy activation", func(t *testing.T) {
+		m, _ := installAndReset(t)
+		healthProbe = func(string) error { return nil }
+		if err := m.action("restart", os.Stderr); err != nil {
+			t.Fatalf("restart on a healthy service failed: %v", err)
+		}
+	})
+	t.Run("start fails when the process crashes immediately after the start job", func(t *testing.T) {
+		m, fr := installAndReset(t)
+		orig := fr.handler
+		healthProbe = func(string) error { return nil }
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "is-active") {
+				return "failed", exitForActive("failed"), nil
+			}
+			return orig(name, args...)
+		}
+		err := m.action("start", os.Stderr)
+		if err == nil {
+			t.Fatal("start reported success for a service that crashed immediately")
+		}
+		if !strings.Contains(err.Error(), "did not become healthy") {
+			t.Fatalf("immediate crash not attributed to the readiness gate: %v", err)
+		}
+	})
+	t.Run("restart fails for an active but unhealthy process", func(t *testing.T) {
+		m, fr := installAndReset(t)
+		orig := fr.handler
+		healthProbe = func(string) error { return errors.New("boom: not healthy") }
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "is-active") {
+				return "active", 0, nil
+			}
+			return orig(name, args...)
+		}
+		err := m.action("restart", os.Stderr)
+		if err == nil {
+			t.Fatal("restart reported success for an unhealthy process")
+		}
+		if !strings.Contains(err.Error(), "health check failed") {
+			t.Fatalf("unhealthy activation not reported: %v", err)
+		}
+	})
+	t.Run("start rejects a foreign process on the resolved listener", func(t *testing.T) {
+		// A plausible setup-shaped impostor ({"required":false}) answers the
+		// resolved listener; the real healthCheck must reject it.
+		srv := jsonServer(t, 200, `{"required":false}`, "application/json")
+		m, _, base := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		fr2 := fs.runner()
+		m.run = fr2
+		configDir := filepath.Join(base, "config")
+		if err := os.MkdirAll(configDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		healthProbe = func(string) error { return nil }
+		if err := m.install(testOpts(configDir, "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		listen := strings.TrimPrefix(srv.URL, "http://")
+		if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"listen":"`+listen+`"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		fs.setState("enabled", "active")
+		fr2.calls = nil
+		orig := fr2.handler
+		healthProbe = healthCheck
+		fr2.handler = func(name string, args ...string) (string, int, error) {
+			if fr2.contains(args, "is-active") {
+				return "active", 0, nil
+			}
+			return orig(name, args...)
+		}
+		err := m.action("start", os.Stderr)
+		if err == nil {
+			t.Fatal("start reported success against a foreign process on the listener")
+		}
+		if !strings.Contains(err.Error(), "identity contract") {
+			t.Fatalf("foreign listener rejection not attributed to identity: %v", err)
+		}
+	})
+	t.Run("start fails when readiness times out", func(t *testing.T) {
+		m, fr := installAndReset(t)
+		orig := fr.handler
+		healthProbe = func(string) error { return nil }
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "is-active") {
+				return "activating", exitForActive("activating"), nil
+			}
+			return orig(name, args...)
+		}
+		err := m.action("start", os.Stderr)
+		if err == nil {
+			t.Fatal("start reported success for a service that never became ready")
+		}
+		if !strings.Contains(err.Error(), "did not become active and healthy") {
+			t.Fatalf("readiness timeout not reported: %v", err)
+		}
+	})
+	t.Run("restart fails on a state-query failure", func(t *testing.T) {
+		m, fr := installAndReset(t)
+		orig := fr.handler
+		healthProbe = func(string) error { return nil }
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "is-active") {
+				return "", -1, errors.New("systemctl not found")
+			}
+			return orig(name, args...)
+		}
+		err := m.action("restart", os.Stderr)
+		if err == nil {
+			t.Fatal("restart reported success despite a state-query failure")
+		}
+		if !strings.Contains(err.Error(), "did not become healthy") || !strings.Contains(err.Error(), "cannot verify") {
+			t.Fatalf("state-query failure not surfaced: %v", err)
+		}
+	})
+}
+
+// TestInstallFinalStateQueryFailure proves the install's post-readiness
+// confirmation query is transactional: a final is-active query error or a
+// non-active result after a successful readiness check is a transaction
+// failure that executes the same rollback as any other step, and a rollback
+// failure is surfaced explicitly.
+func TestInstallFinalStateQueryFailure(t *testing.T) {
+	origProbe, origDeadline, origInterval := healthProbe, installHealthDeadline, installHealthPollInterval
+	t.Cleanup(func() {
+		healthProbe, installHealthDeadline, installHealthPollInterval = origProbe, origDeadline, origInterval
+	})
+	installHealthPollInterval = time.Millisecond
+	installHealthDeadline = 80 * time.Millisecond
+	healthProbe = func(string) error { return nil }
+
+	run := func(t *testing.T, finalActive func(calls int) (string, int, error), failRollbackReload bool) (*serviceManager, error) {
+		t.Helper()
+		m, fr, _ := newFakeManager(t)
+		activeCalls, reloads := 0, 0
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			switch {
+			case fr.contains(args, "daemon-reload"):
+				reloads++
+				if failRollbackReload && reloads == 2 {
+					return "reload failed", 1, nil
+				}
+				return "", 0, nil
+			case fr.contains(args, "is-active"):
+				activeCalls++
+				if activeCalls == 1 {
+					return "active", 0, nil
+				}
+				return finalActive(activeCalls)
+			case fr.contains(args, "is-enabled"):
+				return "enabled", 0, nil
+			}
+			return "", 0, nil
+		}
+		err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr)
+		return m, err
+	}
+
+	t.Run("final state query failure rolls back the fresh install", func(t *testing.T) {
+		m, err := run(t, func(int) (string, int, error) { return "", -1, errors.New("bus gone") }, false)
+		if err == nil {
+			t.Fatal("install reported success despite a final state-query failure")
+		}
+		if !strings.Contains(err.Error(), "cannot confirm warden.service active state after install") {
+			t.Fatalf("final query failure not reported: %v", err)
+		}
+		if strings.Contains(err.Error(), "rollback incomplete") {
+			t.Fatalf("rollback should have been clean: %v", err)
+		}
+		if _, statErr := os.Stat(m.unitPath); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("failed install left the unit behind (state not retryable): %v", statErr)
+		}
+	})
+	t.Run("final state inactive after readiness rolls back the fresh install", func(t *testing.T) {
+		m, err := run(t, func(int) (string, int, error) { return "inactive", 3, nil }, false)
+		if err == nil {
+			t.Fatal("install reported success although the unit ended inactive")
+		}
+		if !strings.Contains(err.Error(), `ended "inactive"`) {
+			t.Fatalf("non-active final state not reported: %v", err)
+		}
+		if strings.Contains(err.Error(), "rollback incomplete") {
+			t.Fatalf("rollback should have been clean: %v", err)
+		}
+		if _, statErr := os.Stat(m.unitPath); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("failed install left the unit behind (state not retryable): %v", statErr)
+		}
+	})
+	t.Run("rollback failure during the final-state query rollback is surfaced", func(t *testing.T) {
+		m, err := run(t, func(int) (string, int, error) { return "", -1, errors.New("bus gone") }, true)
+		if err == nil {
+			t.Fatal("install reported success despite a final state-query failure")
+		}
+		if !strings.Contains(err.Error(), "rollback incomplete") || !strings.Contains(err.Error(), "reload systemd") {
+			t.Fatalf("rollback failure not surfaced explicitly: %v", err)
+		}
+		if _, statErr := os.Stat(m.unitPath); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("failed install left the unit behind (state not retryable): %v", statErr)
+		}
+	})
+	t.Run("rollback failure after a non-active final state is surfaced", func(t *testing.T) {
+		m, err := run(t, func(int) (string, int, error) { return "inactive", 3, nil }, true)
+		if err == nil {
+			t.Fatal("install reported success although the unit ended inactive")
+		}
+		if !strings.Contains(err.Error(), "rollback incomplete") {
+			t.Fatalf("rollback failure not surfaced explicitly: %v", err)
+		}
+		if _, statErr := os.Stat(m.unitPath); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("failed install left the unit behind (state not retryable): %v", statErr)
+		}
+	})
+}
+
 // TestInstallHealthGate covers the install-time readiness verification: after
 // start/restart the install must require a valid active state and a successful
 // /api/setup/status response within a bounded deadline, and must roll the
@@ -1734,7 +1992,7 @@ func TestInstallHealthGate(t *testing.T) {
 			if r.URL.Path == wardenHealthPath {
 				hit = true
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"required":false,"legacyPasswordRequired":false,"tokenRequired":true,"googleEnabled":false}`))
+				_, _ = w.Write([]byte(`{"required":false,"legacyPasswordRequired":false,"tokenRequired":true,"googleEnabled":false,"ok":true,"service":"warden"}`))
 				return
 			}
 			http.NotFound(w, r)
@@ -1755,36 +2013,48 @@ func TestInstallHealthGate(t *testing.T) {
 }
 
 // TestHealthCheckRequiresWardenContract verifies the identity contract of the
-// install health gate: only a 2xx JSON object carrying the `required` boolean
-// that /api/setup/status always emits is accepted, so a foreign JSON-speaking
-// process cannot impersonate Warden on a configured port.
+// install health gate: only a 2xx JSON object carrying the exact identity
+// values (ok:true, service:"warden") and the setup-status `required` boolean is
+// accepted, so a foreign JSON-speaking process cannot impersonate Warden with a
+// plausible setup-shaped body such as {"required":false} alone.
 func TestHealthCheckRequiresWardenContract(t *testing.T) {
 	probe := func(code int, body, ct string) error {
 		srv := jsonServer(t, code, body, ct)
 		return healthCheck(srv.URL + wardenHealthPath)
 	}
-	if err := probe(200, `{"required":false}`, "application/json"); err != nil {
-		t.Fatalf("the real Warden health contract must pass: %v", err)
+	if err := probe(200, healthIdentityBody, "application/json"); err != nil {
+		t.Fatalf("the real Warden health identity contract must pass: %v", err)
 	}
-	if err := probe(200, `{"required":true,"legacyPasswordRequired":false,"tokenRequired":true,"googleEnabled":false}`, "application/json"); err != nil {
+	if err := probe(200, `{"required":true,"legacyPasswordRequired":false,"tokenRequired":true,"googleEnabled":false,"ok":true,"service":"warden"}`, "application/json"); err != nil {
 		t.Fatalf("a setup-required Warden response must pass: %v", err)
 	}
-	if err := probe(200, `{"required":false,"extra":1}`, "application/json"); err != nil {
-		t.Fatalf("an object containing required:<bool> must pass: %v", err)
+	if err := probe(200, `{"required":false,"ok":true,"service":"warden","extra":1}`, "application/json"); err != nil {
+		t.Fatalf("a body with exact identity values must pass: %v", err)
 	}
 	for _, c := range []struct {
 		code     int
 		body, ct string
 	}{
+		// A plausible setup-shaped impostor body is rejected: it carries the
+		// `required` boolean but none of the identity values.
+		{200, `{"required":false}`, "application/json"},
+		{200, `{"required":true,"legacyPasswordRequired":false,"tokenRequired":true,"googleEnabled":false}`, "application/json"},
+		{200, `{"required":false,"ok":true}`, "application/json"},
+		{200, `{"required":false,"service":"warden"}`, "application/json"},
+		{200, `{"required":false,"ok":true,"service":"cortex"}`, "application/json"},
+		{200, `{"required":false,"ok":false,"service":"warden"}`, "application/json"},
+		{200, `{"required":false,"ok":"true","service":"warden"}`, "application/json"},
+		{200, `{"ok":true,"service":"warden"}`, "application/json"},
+		{200, `{"required":false,"ok":1,"service":"warden"}`, "application/json"},
+		{200, `{"required":false,"ok":true,"service":42}`, "application/json"},
 		{200, `{}`, "application/json"},
 		{200, `{"ok":true}`, "application/json"},
-		{200, `{"required":"false"}`, "application/json"},
-		{200, `{"required":1}`, "application/json"},
+		{200, `{"required":"false","ok":true,"service":"warden"}`, "application/json"},
 		{200, `[1,2,3]`, "application/json"},
 		{200, `{"required":false}`, "text/plain"},
 		{200, `not json at all`, "application/json"},
-		{500, `{"required":false}`, "application/json"},
-		{404, `{"required":false}`, "application/json"},
+		{500, `{"required":false,"ok":true,"service":"warden"}`, "application/json"},
+		{404, `{"required":false,"ok":true,"service":"warden"}`, "application/json"},
 	} {
 		if err := probe(c.code, c.body, c.ct); err == nil {
 			t.Fatalf("health check accepted an impostor response %d %q %q", c.code, c.body, c.ct)
@@ -2103,7 +2373,7 @@ func TestStatus(t *testing.T) {
 		}
 	})
 	t.Run("durable config overrides bootstrap listen", func(t *testing.T) {
-		srv := jsonServer(t, 200, `{"required":false}`, "application/json")
+		srv := jsonServer(t, 200, healthIdentityBody, "application/json")
 		effective := strings.TrimPrefix(srv.URL, "http://")
 		m, fr, base := newFakeManager(t)
 		configDir := filepath.Join(base, "config")
@@ -2178,7 +2448,7 @@ func TestStatus(t *testing.T) {
 }
 
 func TestStatusReportsListenerURL(t *testing.T) {
-	srv := jsonServer(t, 200, `{"required":false}`, "application/json")
+	srv := jsonServer(t, 200, healthIdentityBody, "application/json")
 	listen := strings.TrimPrefix(srv.URL, "http://")
 	m, fr, base := newFakeManager(t)
 	configDir := filepath.Join(base, "config")
@@ -2238,7 +2508,7 @@ func TestWardenListenModeMarkers(t *testing.T) {
 func TestStatusUsesExplicitUnitListenerOverConfig(t *testing.T) {
 	// A new host/port unit records an authoritative listener; status must
 	// report and health-check it even when config.json holds an older address.
-	srv := jsonServer(t, 200, `{"required":false}`, "application/json")
+	srv := jsonServer(t, 200, healthIdentityBody, "application/json")
 	unitListen := strings.TrimPrefix(srv.URL, "http://")
 	host, port := splitListen(t, unitListen)
 	m, fr, base := newFakeManager(t)
@@ -2267,7 +2537,7 @@ func TestStatusUsesExplicitUnitListenerOverConfig(t *testing.T) {
 
 func TestStatusLegacyUsesDurableConfig(t *testing.T) {
 	// A legacy --listen unit resolves its effective listener from config.json.
-	srv := jsonServer(t, 200, `{"required":false}`, "application/json")
+	srv := jsonServer(t, 200, healthIdentityBody, "application/json")
 	configListen := strings.TrimPrefix(srv.URL, "http://")
 	m, fr, base := newFakeManager(t)
 	configDir := filepath.Join(base, "config")
@@ -2359,7 +2629,7 @@ func TestInstallHonorsLegacyWardenListenEnv(t *testing.T) {
 func TestStatusIgnoresMalformedListenerEnv(t *testing.T) {
 	// Non-install service commands must ignore malformed WARDEN_HOST/WARDEN_PORT
 	// in the invoking shell.
-	srv := jsonServer(t, 200, `{"required":false}`, "application/json")
+	srv := jsonServer(t, 200, healthIdentityBody, "application/json")
 	listen := strings.TrimPrefix(srv.URL, "http://")
 	t.Setenv("WARDEN_HOST", "not a host")
 	t.Setenv("WARDEN_PORT", "not-a-port")

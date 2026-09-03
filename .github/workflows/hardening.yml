@@ -1,7 +1,8 @@
 name: Hardening gates
 
-# Read-only verification of the Warden service contract against a real systemd
-# user manager on Linux. The only permission is contents:read.
+# Read-only verification of the Warden service contract against a real,
+# genuinely isolated systemd user manager on Linux. The only permission is
+# contents:read.
 on:
   push:
     branches: [main]
@@ -12,16 +13,16 @@ permissions:
 
 jobs:
   service-lifecycle:
-    # Exercises the real systemd user-service contract: the script boots an
-    # isolated user manager when the runner has no usable login session, then
-    # installs, reloads, enables/starts, verifies active state and the
-    # Warden-specific /api/setup/status health contract, stops/starts/restarts,
-    # exercises the finite crash-loop policy and reset-failed recovery, runs the
-    # install-time health gate against a foreign JSON server, uninstalls, and
-    # reinstalls. It also runs systemd-analyze --user verify over the generated
-    # unit so a malformed directive fails CI. A dedicated lifecycle binary path
-    # and collision-resistant temporary config/root paths keep a developer's
-    # real Warden binary, unit, service and data untouched.
+    # Exercises the real systemd user-service contract: the script always boots
+    # an isolated systemd user manager on a private HOME, XDG_CONFIG_HOME,
+    # XDG_RUNTIME_DIR and D-Bus session bus, then installs, reloads,
+    # enables/starts, verifies active state and the Warden-specific
+    # /api/setup/status identity contract, stops/starts/restarts, exercises the
+    # finite crash-loop policy and reset-failed recovery, runs the install-time
+    # health gate against a foreign JSON server, uninstalls, and reinstalls.
+    # It also runs systemd-analyze --user verify over the generated unit. The
+    # isolated environment means a developer's real Warden binary, unit,
+    # service and data are never touched.
     runs-on: ubuntu-latest
     steps:
       # Pinned to the same immutable commit SHAs trusted by ci.yml and release.yml.
@@ -41,6 +42,16 @@ jobs:
           mkdir -p "$HOME/.warden-lifecycle-bin"
           go build -trimpath -o "$HOME/.warden-lifecycle-bin/warden" ./cmd/warden
       - name: real systemd service lifecycle
-        run: tests/service-lifecycle.sh
+        run: |
+          set +e
+          out=$(sh tests/service-lifecycle.sh 2>&1)
+          code=$?
+          printf '%s\n' "$out"
+          # On failure, surface each output line as a GitHub annotation so the
+          # failure is readable through the public checks API on a public repo.
+          if [ $code -ne 0 ]; then
+            printf '%s\n' "$out" | sed 's/^/::error::/'
+          fi
+          exit $code
       - name: git diff --check
         run: git diff --check
