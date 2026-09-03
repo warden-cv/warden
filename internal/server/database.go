@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -336,7 +337,12 @@ func openDatabase(configDir string) (*sql.DB, error) {
 	db.SetMaxOpenConns(8)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
+	// Establishing a connection applies the DSN-embedded PRAGMAs including
+	// journal_mode=WAL. When several Warden processes start concurrently against
+	// a brand-new database, those WAL transitions can collide with an immediate
+	// SQLITE_BUSY that the busy timeout does not cover, so retry transient lock
+	// errors until the database converges rather than failing startup.
+	if err := pingDatabaseBusyRetry(ctx, db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("open Warden database: %w", err)
 	}
@@ -357,6 +363,36 @@ func openDatabase(configDir string) (*sql.DB, error) {
 		return nil, fmt.Errorf("check Warden database integrity: %s", integrity)
 	}
 	return db, nil
+}
+
+// databaseBusy reports whether err is a transient SQLite lock error that
+// concurrent startup can legitimately hit (for example connections racing to
+// switch the journal to WAL on a brand-new database). Such errors must be
+// retried rather than failing startup.
+func databaseBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "database is locked") || strings.Contains(lower, "sqlite_busy")
+}
+
+// pingDatabaseBusyRetry pings the database, retrying transient SQLITE_BUSY
+// errors with a short backoff until the context deadline, so concurrent first
+// startup converges deterministically.
+func pingDatabaseBusyRetry(ctx context.Context, db *sql.DB) error {
+	for {
+		if err := db.PingContext(ctx); err == nil {
+			return nil
+		} else if !databaseBusy(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func migrateDatabase(ctx context.Context, db *sql.DB) error {
