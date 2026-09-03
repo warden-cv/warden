@@ -416,9 +416,9 @@ func validateInstanceConfig(c instanceConfigFile) error {
 	if strings.TrimSpace(c.HomeDir) == "" || !filepath.IsAbs(c.HomeDir) {
 		return errors.New("home_dir must be an absolute path")
 	}
-	if strings.TrimSpace(c.StaticDir) == "" {
-		return errors.New("static_dir is required")
-	}
+	// static_dir is optional: every binary embeds the Nift-built frontend, and
+	// the main command sets StaticFS when no --static override is supplied, so
+	// an empty value legitimately means "use the embedded frontend".
 	return nil
 }
 

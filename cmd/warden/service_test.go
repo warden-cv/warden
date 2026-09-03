@@ -15,7 +15,18 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
+
+// init configures the install-time readiness gate for the sandbox: installs
+// must not require a live listener, and the readiness poll must be fast so
+// every test that reaches the health gate completes deterministically.
+// Health-gate tests override healthProbe and restore it via t.Cleanup.
+func init() {
+	healthProbe = func(string) error { return nil }
+	installHealthPollInterval = time.Millisecond
+	installHealthDeadline = 100 * time.Millisecond
+}
 
 type fakeRunner struct {
 	mu      sync.Mutex
@@ -70,6 +81,18 @@ func newFakeManager(t *testing.T) (*serviceManager, *fakeRunner, string) {
 	base := t.TempDir()
 	unitPath := filepath.Join(base, "systemd", "user", "warden.service")
 	fr := &fakeRunner{}
+	// Default model: a freshly installed service is enabled and active, so the
+	// install transaction's readiness gate passes when a test does not override
+	// the runner before its setup install.
+	fr.handler = func(name string, args ...string) (string, int, error) {
+		switch {
+		case fr.contains(args, "is-active"):
+			return "active", 0, nil
+		case fr.contains(args, "is-enabled"):
+			return "enabled", 0, nil
+		}
+		return "", 0, nil
+	}
 	m := &serviceManager{unitName: "warden.service", unitPath: unitPath, exe: "/usr/local/bin/warden", run: fr}
 	return m, fr, base
 }
@@ -189,6 +212,305 @@ func TestBuildWardenUnitHostPortCanonical(t *testing.T) {
 	}
 }
 
+func TestSystemdExecQuote(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"/usr/bin/warden", `"/usr/bin/warden"`},
+		{`C:\warden\app`, `"C:\\warden\\app"`},
+		{"has $dollar", `"has $$dollar"`},
+		{"expand ${FOO} here", `"expand $${FOO} here"`},
+		{`say "hi"`, `"say \"hi\""`},
+		{"100%", `"100%%"`},
+		{"a b  c", `"a b  c"`},
+	}
+	for _, c := range cases {
+		if got := systemdExecQuote(c.in); got != c.want {
+			t.Fatalf("systemdExecQuote(%q)=%q want %q", c.in, got, c.want)
+		}
+	}
+	// Backticks and single quotes are literal in systemd command lines; a
+	// backslash before them would survive as a stray character, so they must
+	// not be escaped.
+	if got := systemdExecQuote("a`b"); got != "\"a`b\"" {
+		t.Fatalf("backtick must stay literal: %q", got)
+	}
+	if got := systemdExecQuote("it's"); got != `"it's"` {
+		t.Fatalf("single quote must stay literal: %q", got)
+	}
+}
+
+func TestSystemdEnvValue(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"/home/nick/.config/warden", `"/home/nick/.config/warden"`},
+		{"/path with spaces", `"/path with spaces"`},
+		{`back\slash`, `"back\\slash"`},
+		{`say "hi"`, `"say \"hi\""`},
+		{"50%", `"50%%"`},
+		{"$USER stays literal", `"$USER stays literal"`},
+		{"a`b", "\"a`b\""},
+	}
+	for _, c := range cases {
+		if got := systemdEnvValue(c.in); got != c.want {
+			t.Fatalf("systemdEnvValue(%q)=%q want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestSystemdUnitPath(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"/usr/local/bin", "/usr/local/bin"},
+		{"/home/nick/My Documents", "/home/nick/My Documents"},
+		{`/tmp/foo"bar`, `/tmp/foo"bar`},
+		{`/tmp/a\b`, `/tmp/a\b`},
+		{"/tmp/100%", "/tmp/100%%"},
+		{"/tmp/%h/secret", "/tmp/%%h/secret"},
+	}
+	for _, c := range cases {
+		if got := systemdUnitPath(c.in); got != c.want {
+			t.Fatalf("systemdUnitPath(%q)=%q want %q", c.in, got, c.want)
+		}
+	}
+	for _, in := range []string{"/usr/local/bin", "/home/nick/My Documents", `"/usr/local/bin"`} {
+		if got := systemdUnitPath(in); strings.Contains(got, "\"") && !strings.HasPrefix(got, "\"") {
+			t.Fatalf("systemdUnitPath(%q) introduced quotes: %q", in, got)
+		}
+	}
+}
+
+// TestBuildWardenUnitWorkingDirectoryNoQuotes is the regression for the real
+// Ubuntu install failure: WorkingDirectory must be an unquoted absolute path
+// equivalent to "WorkingDirectory=/usr/local/bin". Literal quote characters
+// around the value make systemd reject the unit ("path is not absolute"), which
+// made `warden service install` fail with "bad unit file setting".
+func TestBuildWardenUnitWorkingDirectoryNoQuotes(t *testing.T) {
+	unit := buildWardenUnit("/usr/local/bin/warden", testOpts("/home/nick/.config/warden", "127.0.0.1:8080", "/"))
+	if !strings.Contains(unit, "WorkingDirectory=/usr/local/bin\n") {
+		t.Fatalf("WorkingDirectory must be an unquoted absolute path\n%s", unit)
+	}
+	for _, bad := range []string{`WorkingDirectory="/usr/local/bin"`, `WorkingDirectory=\"/usr/local/bin\"`, `WorkingDirectory='"/usr/local/bin"'`} {
+		if strings.Contains(unit, bad) {
+			t.Fatalf("unit contains a quoted WorkingDirectory value %q\n%s", bad, unit)
+		}
+	}
+}
+
+// TestBuildWardenUnitRestartPolicy pins the approved finite restart policy in
+// its correct sections: StartLimitIntervalSec and StartLimitBurst in [Unit],
+// Restart and RestartSec in [Service]. The unit must never regress to unlimited
+// crash-loop restarting.
+func TestBuildWardenUnitRestartPolicy(t *testing.T) {
+	unit := buildWardenUnit("/usr/local/bin/warden", testOpts("/config", "127.0.0.1:8080", "/"))
+	unitSection := sectionContent(unit, "[Unit]")
+	serviceSection := sectionContent(unit, "[Service]")
+	for _, want := range []string{"StartLimitIntervalSec=60", "StartLimitBurst=5"} {
+		if !strings.Contains(unitSection, want) {
+			t.Fatalf("[Unit] section missing %q\n%s", want, unit)
+		}
+	}
+	for _, want := range []string{"Restart=on-failure", "RestartSec=3"} {
+		if !strings.Contains(serviceSection, want) {
+			t.Fatalf("[Service] section missing %q\n%s", want, unit)
+		}
+	}
+	for _, bad := range []string{"Restart=always", "StartLimitIntervalSec=0", "StartLimitBurst=0"} {
+		if strings.Contains(unit, bad) {
+			t.Fatalf("unit regressed to %q\n%s", bad, unit)
+		}
+	}
+}
+
+// sectionContent returns the body of a systemd unit section, or "" when the
+// section header is absent.
+func sectionContent(unit, header string) string {
+	lines := strings.Split(unit, "\n")
+	in := false
+	var b strings.Builder
+	for _, ln := range lines {
+		if strings.HasPrefix(ln, "[") && strings.HasSuffix(ln, "]") {
+			in = ln == header
+			continue
+		}
+		if in {
+			b.WriteString(ln)
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+// TestBuildWardenUnitSpecialCharacters renders a unit whose executable, config
+// and root paths contain systemd-sensitive characters (spaces, quotes,
+// backslashes, percent, dollar) and asserts each directive escapes its value
+// according to the directive's syntax: command-line quoting for ExecStart and
+// unquoted path escaping for WorkingDirectory (which derives from the
+// executable's parent directory). Warden records no Environment value beyond
+// HOME=%h (a deliberate specifier, never doubled), so Environment escaping is
+// proven by systemdEnvValue directly.
+func TestBuildWardenUnitSpecialCharacters(t *testing.T) {
+	opts := serviceOptions{
+		host:      "127.0.0.1",
+		port:      "7332",
+		configDir: `/home/nick/.config/50% data "quoted"`,
+		root:      `/home/nick/My Documents 100% warden`,
+	}
+	exe := `/usr/local/bin/My Warden 100%/warden`
+	unit := buildWardenUnit(exe, opts)
+
+	if !strings.Contains(unit, "WorkingDirectory=/usr/local/bin/My Warden 100%%\n") {
+		t.Fatalf("WorkingDirectory must be the raw unquoted parent path with percent doubled\n%s", unit)
+	}
+	for _, want := range []string{
+		`ExecStart="/usr/local/bin/My Warden 100%%/warden"`,
+		`"--config" "/home/nick/.config/50%% data \"quoted\""`,
+		`"--root" "/home/nick/My Documents 100%% warden"`,
+	} {
+		if !strings.Contains(unit, want) {
+			t.Fatalf("unit missing %q\n%s", want, unit)
+		}
+	}
+	if strings.Contains(unit, `WorkingDirectory="/usr/local/bin`) {
+		t.Fatal("WorkingDirectory must not be quoted")
+	}
+}
+
+// TestSystemdAnalyzeVerifyRenderedUnit is a genuine Linux validation of the
+// rendered unit: it writes the generated unit to a temporary file and runs
+// `systemd-analyze --user verify` against it. The exit code is authoritative —
+// a string-only assertion is insufficient because the malformed WorkingDirectory
+// line looked superficially plausible. A deliberately buggy variant (quoted
+// WorkingDirectory) is verified to FAIL so the mechanism is proven to catch the
+// exact observed regression, not merely to accept any input. The default Go
+// suite never writes into or mutates a developer's real user systemd
+// configuration: units are written only under t.TempDir and the analyzer runs
+// against an isolated XDG_RUNTIME_DIR.
+func TestSystemdAnalyzeVerifyRenderedUnit(t *testing.T) {
+	analyze, err := exec.LookPath("systemd-analyze")
+	if err != nil {
+		t.Skip("systemd-analyze not installed; skipping real systemd unit verification")
+	}
+	if _, err := os.Stat("/bin/true"); err != nil {
+		t.Skip("/bin/true unavailable; skipping real systemd unit verification")
+	}
+	// specialExe installs a real executable under a path containing spaces and
+	// a percent sign, so systemd-analyze's executable check passes while the
+	// working directory exercises systemd-sensitive characters.
+	specialExe := func(t *testing.T) string {
+		t.Helper()
+		dir := filepath.Join(t.TempDir(), "Warden 100%")
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		src, err := os.ReadFile("/bin/true")
+		if err != nil {
+			t.Fatal(err)
+		}
+		exe := filepath.Join(dir, "warden")
+		if err := os.WriteFile(exe, src, 0755); err != nil {
+			t.Fatal(err)
+		}
+		return exe
+	}
+	writeAndVerify := func(t *testing.T, name, unit string) (string, bool) {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(unit), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// Bootstrap the user-manager environment: systemd-analyze --user needs a
+		// runtime directory to initialize a manager even in a headless build
+		// environment, so an isolated XDG_RUNTIME_DIR is provided.
+		runtimeDir := t.TempDir()
+		if err := os.Chmod(runtimeDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(analyze, "--user", "verify", path)
+		cmd.Env = append(os.Environ(), "XDG_RUNTIME_DIR="+runtimeDir)
+		out, err := cmd.CombinedOutput()
+		if err != nil && isVerifyInfraFailure(string(out)) {
+			// The manager itself could not initialize (no user bus/runtime
+			// directory); that is an infrastructure limitation, never an
+			// acceptance or rejection of the unit under test.
+			t.Skipf("systemd user manager cannot initialize here: %s", strings.TrimSpace(string(out)))
+		}
+		ok := err == nil && !strings.Contains(string(out), path)
+		return string(out), ok
+	}
+
+	opts := testOpts("/home/nick/.config/warden", "127.0.0.1:7332", "/")
+
+	t.Run("ordinary paths verify clean", func(t *testing.T) {
+		out, ok := writeAndVerify(t, "warden.service", buildWardenUnit("/bin/true", opts))
+		if !ok {
+			t.Fatalf("systemd-analyze verify failed for the ordinary unit\n%s", out)
+		}
+	})
+	t.Run("special-character paths verify clean", func(t *testing.T) {
+		special := serviceOptions{
+			host:      "127.0.0.1",
+			port:      "7332",
+			configDir: `/home/nick/.config/50% data "quoted"`,
+			root:      `/home/nick/My Documents 100% warden`,
+		}
+		out, ok := writeAndVerify(t, "warden.service", buildWardenUnit(specialExe(t), special))
+		if !ok {
+			t.Fatalf("systemd-analyze verify failed for the special-character unit\n%s", out)
+		}
+	})
+	t.Run("quoted WorkingDirectory is rejected by verify", func(t *testing.T) {
+		buggy := strings.Replace(buildWardenUnit("/bin/true", opts), "WorkingDirectory=/bin", `WorkingDirectory="/bin"`, 1)
+		out, ok := writeAndVerify(t, "warden.service", buggy)
+		if ok {
+			t.Fatalf("systemd-analyze verify accepted the quoted WorkingDirectory regression\n%s", out)
+		}
+		if !strings.Contains(out, "not absolute") {
+			t.Fatalf("verify did not report the WorkingDirectory path error\n%s", out)
+		}
+	})
+}
+
+// isVerifyInfraFailure reports whether a failed systemd-analyze invocation is
+// an environment limitation (no user manager, no runtime directory, no bus)
+// rather than a defect in the unit under test. Infrastructure initialization
+// failures must never be classified as acceptance or rejection of a unit.
+func isVerifyInfraFailure(out string) bool {
+	lower := strings.ToLower(out)
+	for _, m := range []string{
+		"failed to lookup runtimedirectory path",
+		"failed to initialize manager",
+		"failed to create manager",
+		"no such device or address",
+		"failed to connect to bus",
+		"cannot find any user bus",
+		"cannot access user bus",
+	} {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestIsVerifyInfraFailure(t *testing.T) {
+	for _, m := range []string{
+		"Failed to lookup RuntimeDirectory path: No such device or address",
+		"Failed to initialize manager: No such device or address",
+		"Failed to connect to bus: No such file or directory",
+	} {
+		if !isVerifyInfraFailure(m) {
+			t.Fatalf("infrastructure failure not recognized: %q", m)
+		}
+	}
+	for _, m := range []string{
+		"WorkingDirectory= path is not absolute: \"/usr/local/bin\"",
+		"warden.service: Unit configuration has fatal error",
+		"",
+	} {
+		if isVerifyInfraFailure(m) {
+			t.Fatalf("unit defect misclassified as infrastructure failure: %q", m)
+		}
+	}
+}
+
 func TestResolveExecutable(t *testing.T) {
 	if _, err := resolveExecutable(""); err == nil {
 		t.Fatal("empty path accepted")
@@ -214,6 +536,64 @@ func TestResolveExecutable(t *testing.T) {
 	}
 	if got != "/bin/true" {
 		t.Fatalf("resolved %q want /bin/true", got)
+	}
+}
+
+func TestResolveExecutableRejectsUnsafeSystemdForms(t *testing.T) {
+	// Character and whitespace rejections happen before any filesystem check,
+	// so crafted absolute paths exercise them deterministically on every OS.
+	for _, exe := range []string{
+		`/home/nick/bin/weird"dir/warden`,
+		`/home/nick/bin/it's/warden`,
+		`/home/nick/bin/back\slash/warden`,
+		`/home/nick/bin/$dollar/warden`,
+		`  /usr/local/bin/warden`,
+		"/usr/local/bin/warden\n",
+		"a\x00b",
+	} {
+		if _, err := resolveExecutable(exe); err == nil {
+			t.Fatalf("unsafe executable path accepted: %q", exe)
+		}
+	}
+	// The rejection is independent of whether such a file exists.
+	if _, err := resolveExecutable(`/tmp/no such "${file}"`); err == nil {
+		t.Fatal("path with leading/trailing whitespace accepted")
+	}
+}
+
+func TestClassifySystemdFailure(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Failed to restart warden.service: Unit warden.service has a bad unit file setting.", "generated unit is invalid"},
+		{"warden.service: Unit configuration has fatal error, unit will not be started.", "generated unit is invalid"},
+		{"WorkingDirectory= path is not absolute: \"/usr/local/bin\"", "generated unit is invalid"},
+		{"warden.service: Unknown key 'Foo' in section [Service], ignoring.", "generated unit is invalid"},
+		{"warden.service: Invalid argument", "generated unit is invalid"},
+		{"warden.service: Start request repeated too quickly.", "start rate limit exceeded"},
+		{"Failed to connect to bus: No such file or directory", "systemd bus unavailable"},
+		{"Some other failure", ""},
+	}
+	for _, c := range cases {
+		if got := classifySystemdFailure(c.in); got != c.want {
+			t.Fatalf("classifySystemdFailure(%q)=%q want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestSystemctlTolerantMissingDoesNotExist(t *testing.T) {
+	fr := &fakeRunner{out: "Failed to disable unit warden.service: Unit warden.service does not exist.", code: 1}
+	m := &serviceManager{unitName: "warden.service", run: fr}
+	if err := m.systemctlTolerantMissing("disable", m.unitName); err != nil {
+		t.Fatalf("'does not exist' must be tolerated as an absent unit: %v", err)
+	}
+	fr = &fakeRunner{out: "Failed to stop unit warden.service: Unit warden.service not loaded.", code: 1}
+	m.run = fr
+	if err := m.systemctlTolerantMissing("stop", m.unitName); err != nil {
+		t.Fatalf("'not loaded' must be tolerated: %v", err)
+	}
+	fr = &fakeRunner{out: "systemd is broken", code: 1}
+	m.run = fr
+	if err := m.systemctlTolerantMissing("stop", m.unitName); err == nil {
+		t.Fatal("a genuine failure must not be tolerated")
 	}
 }
 
@@ -470,9 +850,22 @@ func (f *fakeSystemd) runner() *fakeRunner {
 			if f.mask || f.maskRT {
 				return "Failed to start unit: masked", 1, nil
 			}
+			if fail {
+				// A refused/unsuccessful start leaves the prior state intact.
+				return verb + " failed", 1, nil
+			}
 			f.active = "active"
+			f.overrideActive = ""
 		case "stop":
+			// Real systemd keeps a start-limited (failed) unit reporting failed
+			// after stop, so stop preserves the overrideActive failure word.
 			f.active = "inactive"
+		case "reset-failed":
+			if fail {
+				return "reset-failed failed", 1, nil
+			}
+			f.active = "inactive"
+			f.overrideActive = ""
 		}
 		if fail {
 			return verb + " failed", 1, nil
@@ -651,22 +1044,32 @@ func TestInstallRollbackMatrix(t *testing.T) {
 	pairs := []struct {
 		enabled, active string
 		restorable      bool
+		failAt          string
 	}{
-		{"enabled", "active", true}, {"enabled", "inactive", true},
-		{"enabled-runtime", "active", true}, {"enabled-runtime", "inactive", true},
-		{"disabled", "active", true}, {"disabled", "inactive", true},
-		{"masked", "inactive", true}, {"masked-runtime", "inactive", true},
-		{"enabled", "dead", false}, {"enabled", "unknown", false}, {"enabled", "not-found", false},
-		{"enabled-runtime", "failed", false}, {"enabled-runtime", "reloading", false},
-		{"disabled", "refreshing", false}, {"disabled", "activating", false},
-		{"disabled", "deactivating", false}, {"disabled", "maintenance", false},
-		{"masked", "active", false}, {"masked-runtime", "active", false},
-		{"masked", "failed", false},
-		{"not-found", "active", false}, {"not-found", "inactive", false},
-		{"static", "active", false}, {"alias", "active", false}, {"indirect", "active", false},
-		{"generated", "active", false}, {"linked", "active", false},
-		{"linked-runtime", "active", false}, {"transient", "active", false},
-		{"unknown", "active", false},
+		{"enabled", "active", true, "restart"}, {"enabled", "inactive", true, "restart"},
+		{"enabled-runtime", "active", true, "restart"}, {"enabled-runtime", "inactive", true, "restart"},
+		{"disabled", "active", true, "restart"}, {"disabled", "inactive", true, "restart"},
+		// A start-limited failed unit is restorable exactly: systemctl stop
+		// leaves it reporting failed. The injected failure happens at enable,
+		// before the install's reset-failed clears the failure, so rollback's
+		// stop reproduces the exact prior "failed" word.
+		{"enabled", "failed", true, "enable"}, {"enabled-runtime", "failed", true, "enable"},
+		{"disabled", "failed", true, "enable"},
+		// Refused: masked states (the install itself cannot enable a masked
+		// unit), not exact (dead/unknown/not-found active, not-found enabled),
+		// transient, and unit-file enablement states.
+		{"enabled", "dead", false, "restart"}, {"enabled", "unknown", false, "restart"}, {"enabled", "not-found", false, "restart"},
+		{"enabled-runtime", "reloading", false, "restart"},
+		{"disabled", "refreshing", false, "restart"}, {"disabled", "activating", false, "restart"},
+		{"disabled", "deactivating", false, "restart"}, {"disabled", "maintenance", false, "restart"},
+		{"masked", "inactive", false, "restart"}, {"masked-runtime", "inactive", false, "restart"},
+		{"masked", "active", false, "restart"}, {"masked-runtime", "active", false, "restart"},
+		{"masked", "failed", false, "restart"},
+		{"not-found", "active", false, "restart"}, {"not-found", "inactive", false, "restart"},
+		{"static", "active", false, "restart"}, {"alias", "active", false, "restart"}, {"indirect", "active", false, "restart"},
+		{"generated", "active", false, "restart"}, {"linked", "active", false, "restart"},
+		{"linked-runtime", "active", false, "restart"}, {"transient", "active", false, "restart"},
+		{"unknown", "active", false, "restart"},
 	}
 	for _, p := range pairs {
 		t.Run("enabled="+p.enabled+"/active="+p.active, func(t *testing.T) {
@@ -688,17 +1091,19 @@ func TestInstallRollbackMatrix(t *testing.T) {
 				if string(after) != string(priorUnit) {
 					t.Fatal("refusal changed the unit file")
 				}
-				for _, forbid := range []string{"daemon-reload", "enable ", "mask ", "disable ", "restart ", "start ", "stop "} {
+				for _, forbid := range []string{"daemon-reload", "enable ", "mask ", "disable ", "restart ", "start ", "stop ", "reset-failed"} {
 					if fs.callsContain(forbid) {
 						t.Fatalf("refusal performed a lifecycle mutation (%q)\ncalls: %v", forbid, fs.calls)
 					}
 				}
 				return
 			}
-			fs.failVerb = "restart"
+			// Restorable: fail a lifecycle step, run rollback, and assert
+			// the final raw state exactly matches the prior raw state.
+			fs.failVerb = p.failAt
 			err := m.install(testOpts("/configY", "127.0.0.1:8083", "/"), os.Stderr)
 			if err == nil {
-				t.Fatalf("install should fail at restart for restorable pair (%q/%q)", p.enabled, p.active)
+				t.Fatalf("install should fail at %s for restorable pair (%q/%q)", p.failAt, p.enabled, p.active)
 			}
 			after, _ := os.ReadFile(m.unitPath)
 			if string(after) != string(priorUnit) {
@@ -761,9 +1166,9 @@ func TestInstallRestoresEnablementLayers(t *testing.T) {
 // that can never succeed.
 func TestInstallReachesInstalledStateForAcceptedPriors(t *testing.T) {
 	for _, p := range [][2]string{
-		{"enabled", "active"}, {"enabled", "inactive"},
-		{"enabled-runtime", "active"}, {"enabled-runtime", "inactive"},
-		{"disabled", "active"}, {"disabled", "inactive"},
+		{"enabled", "active"}, {"enabled", "inactive"}, {"enabled", "failed"},
+		{"enabled-runtime", "active"}, {"enabled-runtime", "inactive"}, {"enabled-runtime", "failed"},
+		{"disabled", "active"}, {"disabled", "inactive"}, {"disabled", "failed"},
 	} {
 		t.Run(p[0]+"/"+p[1], func(t *testing.T) {
 			m, _, _ := newFakeManager(t)
@@ -783,6 +1188,83 @@ func TestInstallReachesInstalledStateForAcceptedPriors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestInstallResetFailedRecovery proves the install clears a prior start-limit
+// failed state with reset-failed before starting, so a crash-looped unit can be
+// reinstalled without manual systemctl intervention. A reset-failed failure on
+// an unloaded unit (fresh install) is tolerated and reported distinctly when it
+// fails for a real reason.
+func TestInstallResetFailedRecovery(t *testing.T) {
+	t.Run("reinstall over a start-limited unit clears the failure", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		m.run = fs.runner()
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fs.setState("enabled", "failed")
+		fs.calls = nil
+		if err := m.install(testOpts("/config", "127.0.0.1:8081", "/"), os.Stderr); err != nil {
+			t.Fatalf("reinstall over a failed unit failed: %v", err)
+		}
+		if !fs.callsContain("reset-failed warden.service") {
+			t.Fatalf("install did not reset the failed state\ncalls: %v", fs.calls)
+		}
+		if fs.activeWord() != "active" {
+			t.Fatalf("service did not reach active after reset-failed recovery, got %q", fs.activeWord())
+		}
+	})
+	t.Run("unchanged unit on a failed unit resets then starts", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		m.run = fs.runner()
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fs.setState("enabled", "failed")
+		fs.calls = nil
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+			t.Fatalf("unchanged install over a failed unit failed: %v", err)
+		}
+		if !fs.callsContain("reset-failed warden.service") || !fs.callsContain("start warden.service") {
+			t.Fatalf("unchanged install did not reset and start\ncalls: %v", fs.calls)
+		}
+		if fs.callsContain("daemon-reload") {
+			t.Fatalf("unchanged install reloaded systemd needlessly\ncalls: %v", fs.calls)
+		}
+	})
+	t.Run("fresh install tolerates reset-failed on an unloaded unit", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		m.run = fs.runner()
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+			t.Fatalf("fresh install failed: %v", err)
+		}
+		if !fs.callsContain("reset-failed warden.service") {
+			t.Fatalf("fresh install did not call reset-failed\ncalls: %v", fs.calls)
+		}
+		if fs.activeWord() != "active" {
+			t.Fatalf("fresh install did not reach active, got %q", fs.activeWord())
+		}
+	})
+	t.Run("reset-failed hard failure is reported distinctly", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		m.run = fs.runner()
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fs.setState("enabled", "inactive")
+		fs.failVerb = "reset-failed"
+		err := m.install(testOpts("/config", "127.0.0.1:8081", "/"), os.Stderr)
+		if err == nil {
+			t.Fatal("install did not report the reset-failed failure")
+		}
+		if !strings.Contains(err.Error(), "clearing previous failed state") {
+			t.Fatalf("reset-failed failure not attributed to the reset step: %v", err)
+		}
+	})
 }
 
 func TestInstallFailureRestoresPriorState(t *testing.T) {
@@ -884,6 +1366,42 @@ func TestInstallFailureRestoresPriorState(t *testing.T) {
 	})
 }
 
+// TestInstallInvalidUnitCleanRollback reproduces the real Ubuntu failure: a
+// generated unit that systemd refuses to load. The install fails at restart
+// with "bad unit file setting", the rollback's stop/disable see the unloadable
+// unit as "does not exist" and must be tolerated as a clean absence, and the
+// reported error must distinguish the invalid generated unit while leaving a
+// retryable (unit-file-removed) state.
+func TestInstallInvalidUnitCleanRollback(t *testing.T) {
+	m, fr, _ := newFakeManager(t)
+	fr.handler = func(name string, args ...string) (string, int, error) {
+		switch {
+		case fr.contains(args, "daemon-reload"):
+			return "", 0, nil
+		case fr.contains(args, "enable"):
+			return "Created symlink", 0, nil
+		case fr.contains(args, "restart"):
+			return "Failed to restart warden.service: Unit warden.service has a bad unit file setting.", 1, nil
+		case fr.contains(args, "stop"), fr.contains(args, "disable"):
+			return "Failed to disable unit warden.service: Unit warden.service does not exist.", 1, nil
+		}
+		return "", 0, nil
+	}
+	err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr)
+	if err == nil {
+		t.Fatal("install with an unloadable unit did not fail")
+	}
+	if !strings.Contains(err.Error(), "generated unit is invalid") {
+		t.Fatalf("install did not classify the invalid generated unit: %v", err)
+	}
+	if strings.Contains(err.Error(), "rollback incomplete") {
+		t.Fatalf("rollback over an unloadable unit must be reported as clean: %v", err)
+	}
+	if _, statErr := os.Stat(m.unitPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatal("failed install left the unit file behind (state not retryable)")
+	}
+}
+
 func TestInstallRefusesForeignUnit(t *testing.T) {
 	m, _, _ := newFakeManager(t)
 	if err := os.MkdirAll(filepath.Dir(m.unitPath), 0700); err != nil {
@@ -930,6 +1448,375 @@ func TestActionsRequireManagedUnit(t *testing.T) {
 	}
 	if len(fr.calls) != 0 {
 		t.Fatalf("lifecycle command ran against a modified unit: %v", fr.calls)
+	}
+}
+
+// TestActionsResetFailedBeforeStartRestart proves the deliberate activation
+// paths (`service start`, `service restart`) clear accumulated failed state
+// with reset-failed immediately before the activation and surface a real reset
+// failure, and that `service stop` verifies the service actually stopped.
+func TestActionsResetFailedBeforeStartRestart(t *testing.T) {
+	t.Run("start clears failed state before activating", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		m.run = fs.runner()
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fs.setState("enabled", "failed")
+		fs.calls = nil
+		if err := m.action("start", os.Stderr); err != nil {
+			t.Fatalf("start over a failed unit failed: %v", err)
+		}
+		if !fs.callsContain("reset-failed warden.service") || !fs.callsContain("start warden.service") {
+			t.Fatalf("start did not reset then activate\ncalls: %v", fs.calls)
+		}
+		if fs.activeWord() != "active" {
+			t.Fatalf("service not active after start, got %q", fs.activeWord())
+		}
+	})
+	t.Run("restart clears failed state before restarting", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		m.run = fs.runner()
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fs.setState("enabled", "failed")
+		fs.calls = nil
+		if err := m.action("restart", os.Stderr); err != nil {
+			t.Fatalf("restart over a failed unit failed: %v", err)
+		}
+		if !fs.callsContain("reset-failed warden.service") || !fs.callsContain("restart warden.service") {
+			t.Fatalf("restart did not reset then restart\ncalls: %v", fs.calls)
+		}
+	})
+	t.Run("reset-failed failure prevents start", func(t *testing.T) {
+		m, fr, _ := newFakeManager(t)
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fr.calls = nil
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "reset-failed") {
+				return "reset-failed failed", 1, nil
+			}
+			return "", 0, nil
+		}
+		err := m.action("start", os.Stderr)
+		if err == nil {
+			t.Fatal("start succeeded despite a reset-failed failure")
+		}
+		if !strings.Contains(err.Error(), "clearing previous failed state") {
+			t.Fatalf("reset failure not attributed to the reset step: %v", err)
+		}
+		if strings.Contains(strings.Join(fr.calls, "\n"), "start warden.service") {
+			t.Fatal("start ran after a reset-failed failure")
+		}
+	})
+	t.Run("stop verifies the service actually stopped", func(t *testing.T) {
+		m, fr, _ := newFakeManager(t)
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fr.calls = nil
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			switch {
+			case fr.contains(args, "is-active"):
+				return "active", 0, nil
+			}
+			return "", 0, nil
+		}
+		err := m.action("stop", os.Stderr)
+		if err == nil {
+			t.Fatal("stop succeeded although the service still reports active")
+		}
+		if !strings.Contains(err.Error(), "still reports") {
+			t.Fatalf("stop verification failure not reported: %v", err)
+		}
+	})
+}
+
+// TestInstallHealthGate covers the install-time readiness verification: after
+// start/restart the install must require a valid active state and a successful
+// /api/setup/status response within a bounded deadline, and must roll the
+// install transaction back for every failure class (immediate failure,
+// state-query failure, health timeout, invalid health response, not-found
+// state). The real health probe is exercised against an httptest server at the
+// end.
+func TestInstallHealthGate(t *testing.T) {
+	origProbe, origDeadline, origInterval := healthProbe, installHealthDeadline, installHealthPollInterval
+	t.Cleanup(func() {
+		healthProbe, installHealthDeadline, installHealthPollInterval = origProbe, origDeadline, origInterval
+	})
+	installHealthPollInterval = time.Millisecond
+	installHealthDeadline = 80 * time.Millisecond
+
+	t.Run("delayed successful startup waits for active and health", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		fr := fs.runner()
+		orig := fr.handler
+		healthCalls := 0
+		healthProbe = func(string) error { healthCalls++; return nil }
+		// Simulate delayed readiness: the first three is-active polls report a
+		// transitional state before the service becomes active.
+		activeCalls := 0
+		m.run = fr
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "is-active") {
+				activeCalls++
+				if activeCalls < 3 {
+					return "activating", exitForActive("activating"), nil
+				}
+				return "active", 0, nil
+			}
+			return orig(name, args...)
+		}
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+			t.Fatalf("delayed startup should install successfully: %v", err)
+		}
+		if healthCalls == 0 {
+			t.Fatal("health probe was never invoked after the service became active")
+		}
+	})
+
+	t.Run("immediate process failure after start fails and rolls back", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		fr := fs.runner()
+		orig := fr.handler
+		healthProbe = func(string) error { return nil }
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "is-active") {
+				return "failed", exitForActive("failed"), nil
+			}
+			return orig(name, args...)
+		}
+		m.run = fr
+		err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr)
+		if err == nil {
+			t.Fatal("install reported success for a service that failed immediately")
+		}
+		if !strings.Contains(err.Error(), "immediately after start") {
+			t.Fatalf("immediate failure not attributed to the health gate: %v", err)
+		}
+		if _, statErr := os.Stat(m.unitPath); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatal("failed fresh install did not roll back the unit file")
+		}
+	})
+
+	t.Run("not-found state after start fails and rolls back", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		fr := fs.runner()
+		orig := fr.handler
+		healthProbe = func(string) error { return nil }
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "is-active") {
+				return "not-found", exitForActive("not-found"), nil
+			}
+			return orig(name, args...)
+		}
+		m.run = fr
+		err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr)
+		if err == nil {
+			t.Fatal("install reported success for a not-found unit")
+		}
+		if _, statErr := os.Stat(m.unitPath); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatal("failed install did not roll back the unit file")
+		}
+	})
+
+	t.Run("active service with failing health fails and rolls back", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		fr := fs.runner()
+		orig := fr.handler
+		healthProbe = func(string) error { return errors.New("boom: not healthy") }
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "is-active") {
+				return "active", 0, nil
+			}
+			return orig(name, args...)
+		}
+		m.run = fr
+		err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr)
+		if err == nil {
+			t.Fatal("install reported success with a failing health check")
+		}
+		if !strings.Contains(err.Error(), "health check failed") {
+			t.Fatalf("failing health not reported: %v", err)
+		}
+		if _, statErr := os.Stat(m.unitPath); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatal("failed install did not roll back the unit file")
+		}
+	})
+
+	t.Run("health timeout fails and rolls back", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		fr := fs.runner()
+		orig := fr.handler
+		healthProbe = func(string) error { return nil }
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "is-active") {
+				return "activating", exitForActive("activating"), nil
+			}
+			return orig(name, args...)
+		}
+		m.run = fr
+		err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr)
+		if err == nil {
+			t.Fatal("install reported success for a service that never became ready")
+		}
+		if !strings.Contains(err.Error(), "did not become active and healthy") {
+			t.Fatalf("timeout not reported: %v", err)
+		}
+		if _, statErr := os.Stat(m.unitPath); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatal("timed-out install did not roll back the unit file")
+		}
+	})
+
+	t.Run("state-query failure fails and rolls back", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		fr := fs.runner()
+		orig := fr.handler
+		healthProbe = func(string) error { return nil }
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			if fr.contains(args, "is-active") {
+				return "", -1, errors.New("systemctl not found")
+			}
+			return orig(name, args...)
+		}
+		m.run = fr
+		err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr)
+		if err == nil {
+			t.Fatal("install reported success despite a state-query failure")
+		}
+		if !strings.Contains(err.Error(), "cannot verify warden.service state after start") {
+			t.Fatalf("state-query failure not reported: %v", err)
+		}
+		if _, statErr := os.Stat(m.unitPath); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatal("failed install did not roll back the unit file")
+		}
+	})
+
+	t.Run("reinstall health failure restores the prior working install", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		m.run = fs.runner()
+		if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		priorUnit, _ := os.ReadFile(m.unitPath)
+		fs.setState("enabled", "active")
+		healthProbe = func(string) error { return errors.New("health broken") }
+		err := m.install(testOpts("/config", "127.0.0.1:8081", "/"), os.Stderr)
+		if err == nil {
+			t.Fatal("reinstall reported success despite failing health")
+		}
+		after, _ := os.ReadFile(m.unitPath)
+		if string(after) != string(priorUnit) {
+			t.Fatal("failed reinstall did not restore the prior working unit")
+		}
+		ew, _, _ := m.systemctl("is-enabled", m.unitName)
+		aw, _, _ := m.systemctl("is-active", m.unitName)
+		if strings.TrimSpace(ew) != "enabled" || strings.TrimSpace(aw) != "active" {
+			t.Fatalf("rollback final state %q/%q want enabled/active", ew, aw)
+		}
+	})
+
+	t.Run("real health probe succeeds against a live endpoint", func(t *testing.T) {
+		hit := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == wardenHealthPath {
+				hit = true
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"required":false,"legacyPasswordRequired":false,"tokenRequired":true,"googleEnabled":false}`))
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		t.Cleanup(srv.Close)
+		m, _, _ := newFakeManager(t)
+		fs := newFakeSystemd(m.unitPath)
+		m.run = fs.runner()
+		healthProbe = healthCheck
+		opts := testOpts("/config", strings.TrimPrefix(srv.URL, "http://"), "/")
+		if err := m.install(opts, os.Stderr); err != nil {
+			t.Fatalf("install with a live healthy endpoint failed: %v", err)
+		}
+		if !hit {
+			t.Fatal("the install health gate never probed the live endpoint")
+		}
+	})
+}
+
+// TestHealthCheckRequiresWardenContract verifies the identity contract of the
+// install health gate: only a 2xx JSON object carrying the `required` boolean
+// that /api/setup/status always emits is accepted, so a foreign JSON-speaking
+// process cannot impersonate Warden on a configured port.
+func TestHealthCheckRequiresWardenContract(t *testing.T) {
+	probe := func(code int, body, ct string) error {
+		srv := jsonServer(t, code, body, ct)
+		return healthCheck(srv.URL + wardenHealthPath)
+	}
+	if err := probe(200, `{"required":false}`, "application/json"); err != nil {
+		t.Fatalf("the real Warden health contract must pass: %v", err)
+	}
+	if err := probe(200, `{"required":true,"legacyPasswordRequired":false,"tokenRequired":true,"googleEnabled":false}`, "application/json"); err != nil {
+		t.Fatalf("a setup-required Warden response must pass: %v", err)
+	}
+	if err := probe(200, `{"required":false,"extra":1}`, "application/json"); err != nil {
+		t.Fatalf("an object containing required:<bool> must pass: %v", err)
+	}
+	for _, c := range []struct {
+		code     int
+		body, ct string
+	}{
+		{200, `{}`, "application/json"},
+		{200, `{"ok":true}`, "application/json"},
+		{200, `{"required":"false"}`, "application/json"},
+		{200, `{"required":1}`, "application/json"},
+		{200, `[1,2,3]`, "application/json"},
+		{200, `{"required":false}`, "text/plain"},
+		{200, `not json at all`, "application/json"},
+		{500, `{"required":false}`, "application/json"},
+		{404, `{"required":false}`, "application/json"},
+	} {
+		if err := probe(c.code, c.body, c.ct); err == nil {
+			t.Fatalf("health check accepted an impostor response %d %q %q", c.code, c.body, c.ct)
+		}
+	}
+}
+
+// TestInstallIdenticalEnabledActiveUnhealthy proves the identical no-op install
+// still requires the Warden readiness contract: an enabled, active but wedged
+// (or incorrectly listening) service is reported as an install failure without
+// any systemd mutation, because the no-op path made no changes and needs no
+// rollback.
+func TestInstallIdenticalEnabledActiveUnhealthy(t *testing.T) {
+	origProbe := healthProbe
+	t.Cleanup(func() { healthProbe = origProbe })
+	m, _, _ := newFakeManager(t)
+	fs := newFakeSystemd(m.unitPath)
+	m.run = fs.runner()
+	if err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	fs.setState("enabled", "active")
+	fs.calls = nil
+	healthProbe = func(string) error { return errors.New("wedged: /api/setup/status not answering") }
+	err := m.install(testOpts("/config", "127.0.0.1:8080", "/"), os.Stderr)
+	if err == nil {
+		t.Fatal("identical install reported success despite a wedged health endpoint")
+	}
+	for _, forbid := range []string{"daemon-reload", "enable ", "restart ", "start ", "stop ", "reset-failed"} {
+		if fs.callsContain(forbid) {
+			t.Fatalf("identical-unhealthy install mutated systemd (%q)\ncalls: %v", forbid, fs.calls)
+		}
 	}
 }
 
@@ -1291,7 +2178,7 @@ func TestStatus(t *testing.T) {
 }
 
 func TestStatusReportsListenerURL(t *testing.T) {
-	srv := jsonServer(t, 200, `{"ok":true}`, "application/json")
+	srv := jsonServer(t, 200, `{"required":false}`, "application/json")
 	listen := strings.TrimPrefix(srv.URL, "http://")
 	m, fr, base := newFakeManager(t)
 	configDir := filepath.Join(base, "config")
@@ -1351,7 +2238,7 @@ func TestWardenListenModeMarkers(t *testing.T) {
 func TestStatusUsesExplicitUnitListenerOverConfig(t *testing.T) {
 	// A new host/port unit records an authoritative listener; status must
 	// report and health-check it even when config.json holds an older address.
-	srv := jsonServer(t, 200, `{"ok":true}`, "application/json")
+	srv := jsonServer(t, 200, `{"required":false}`, "application/json")
 	unitListen := strings.TrimPrefix(srv.URL, "http://")
 	host, port := splitListen(t, unitListen)
 	m, fr, base := newFakeManager(t)
@@ -1380,7 +2267,7 @@ func TestStatusUsesExplicitUnitListenerOverConfig(t *testing.T) {
 
 func TestStatusLegacyUsesDurableConfig(t *testing.T) {
 	// A legacy --listen unit resolves its effective listener from config.json.
-	srv := jsonServer(t, 200, `{"ok":true}`, "application/json")
+	srv := jsonServer(t, 200, `{"required":false}`, "application/json")
 	configListen := strings.TrimPrefix(srv.URL, "http://")
 	m, fr, base := newFakeManager(t)
 	configDir := filepath.Join(base, "config")
@@ -1472,7 +2359,7 @@ func TestInstallHonorsLegacyWardenListenEnv(t *testing.T) {
 func TestStatusIgnoresMalformedListenerEnv(t *testing.T) {
 	// Non-install service commands must ignore malformed WARDEN_HOST/WARDEN_PORT
 	// in the invoking shell.
-	srv := jsonServer(t, 200, `{"ok":true}`, "application/json")
+	srv := jsonServer(t, 200, `{"required":false}`, "application/json")
 	listen := strings.TrimPrefix(srv.URL, "http://")
 	t.Setenv("WARDEN_HOST", "not a host")
 	t.Setenv("WARDEN_PORT", "not-a-port")

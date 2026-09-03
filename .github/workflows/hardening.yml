@@ -1,0 +1,46 @@
+name: Hardening gates
+
+# Read-only verification of the Warden service contract against a real systemd
+# user manager on Linux. The only permission is contents:read.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  service-lifecycle:
+    # Exercises the real systemd user-service contract: the script boots an
+    # isolated user manager when the runner has no usable login session, then
+    # installs, reloads, enables/starts, verifies active state and the
+    # Warden-specific /api/setup/status health contract, stops/starts/restarts,
+    # exercises the finite crash-loop policy and reset-failed recovery, runs the
+    # install-time health gate against a foreign JSON server, uninstalls, and
+    # reinstalls. It also runs systemd-analyze --user verify over the generated
+    # unit so a malformed directive fails CI. A dedicated lifecycle binary path
+    # and collision-resistant temporary config/root paths keep a developer's
+    # real Warden binary, unit, service and data untouched.
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to the same immutable commit SHAs trusted by ci.yml and release.yml.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: install systemd analyze tooling
+        run: |
+          if ! command -v systemd-analyze >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y systemd-analyze
+          fi
+      - name: build warden binary
+        run: |
+          mkdir -p "$HOME/.warden-lifecycle-bin"
+          go build -trimpath -o "$HOME/.warden-lifecycle-bin/warden" ./cmd/warden
+      - name: real systemd service lifecycle
+        run: tests/service-lifecycle.sh
+      - name: git diff --check
+        run: git diff --check
