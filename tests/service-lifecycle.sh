@@ -135,9 +135,8 @@ for _i in $(seq 1 300); do
   sleep 0.2
 done
 systemctl --user is-system-running >/dev/null 2>&1 || {
-  echo "--- systemd --user boot log ---"
-  cat "$WORK/systemd-boot.log" 2>/dev/null || true
-  die "isolated user manager did not become ready"
+  BOOTLOG=$(tail -c 2000 "$WORK/systemd-boot.log" 2>/dev/null | tr '\n' ' ' | cut -c1-1200)
+  die "isolated user manager did not become ready${BOOTLOG:+ (systemd --user: $BOOTLOG)}"
 }
 
 wait_active() {

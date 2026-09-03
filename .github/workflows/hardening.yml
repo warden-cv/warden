@@ -37,7 +37,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/sysd"
           printf '%s\n' \
             'FROM ubuntu:24.04' \
-            'RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus && rm -f /usr/sbin/policy-rc.d' \
+            'RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus systemd-analyze && rm -f /usr/sbin/policy-rc.d && dbus-uuidgen --ensure' \
             'CMD ["/sbin/init"]' \
             > "$RUNNER_TEMP/sysd/Dockerfile"
           docker build -t warden-sysd-ubuntu "$RUNNER_TEMP/sysd"
@@ -64,6 +64,15 @@ jobs:
           done
           if ! docker exec "warden-lc-${{ github.run_id }}" systemctl is-system-running >/dev/null 2>&1; then
             echo "container did not become ready; dumping container logs:"
+            docker logs --tail 60 "warden-lc-${{ github.run_id }}" 2>&1
+            exit 1
+          fi
+          # The system manager needs its system D-Bus bus for user managers to
+          # register with PID 1; ensure it is up before the lifecycle runs.
+          docker exec "warden-lc-${{ github.run_id }}" bash -c \
+            "systemctl start dbus.socket dbus.service 2>/dev/null || true"
+          if ! docker exec "warden-lc-${{ github.run_id }}" test -S /run/dbus/system_bus_socket; then
+            echo "system D-Bus socket missing; dumping container logs:"
             docker logs --tail 60 "warden-lc-${{ github.run_id }}" 2>&1
             exit 1
           fi
