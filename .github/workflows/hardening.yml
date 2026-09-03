@@ -37,11 +37,17 @@ jobs:
           mkdir -p "$RUNNER_TEMP/sysd"
           printf '%s\n' \
             'FROM ubuntu:24.04' \
-            'RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus systemd-analyze && rm -f /usr/sbin/policy-rc.d && dbus-uuidgen --ensure' \
+            'RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus systemd-analyze && rm -f /usr/sbin/policy-rc.d' \
             'CMD ["/sbin/init"]' \
             > "$RUNNER_TEMP/sysd/Dockerfile"
-          docker build -t warden-sysd-ubuntu "$RUNNER_TEMP/sysd"
-          # systemd-analyze ships in the systemd package; verify it is present.
+          set +e
+          out=$(docker build -t warden-sysd-ubuntu "$RUNNER_TEMP/sysd" 2>&1)
+          code=$?
+          printf '%s\n' "$out" | tail -25
+          if [ $code -ne 0 ]; then
+            printf '%s\n' "$out" | sed 's/^/::error::/' | tail -25
+            exit $code
+          fi
           docker run --rm warden-sysd-ubuntu bash -c 'command -v systemd-analyze && command -v dbus-daemon' \
             || { echo "systemd tooling missing from image" >&2; exit 1; }
       - name: start isolated systemd container
