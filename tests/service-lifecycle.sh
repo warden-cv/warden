@@ -117,18 +117,9 @@ trap cleanup EXIT
 # Boot an isolated session D-Bus and systemd user manager on the private
 # runtime directory. systemctl --user resolves the manager through the exported
 # XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS, so nothing here touches the ambient
-# user manager.
-SYSTEMD_BIN=$(command -v systemd 2>/dev/null || true)
-[ -n "$SYSTEMD_BIN" ] || SYSTEMD_BIN=/usr/lib/systemd/systemd
-[ -x "$SYSTEMD_BIN" ] || die "cannot find a systemd user manager binary to boot"
-
-# Boot an isolated session D-Bus and systemd user manager on the private
-# runtime directory. systemctl --user resolves the manager through the exported
-# XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS, so nothing here touches the ambient
-# user manager. A single boot failure is a hard failure: an environment that
-# cannot host an isolated user manager (for example a CI runner that already
-# has an ambient user manager) must be reported rather than retried into a
-# false pass.
+# user manager. This is a strict host-level integration test, not a GitHub-
+# hosted CI test. A single boot failure is a hard failure; there are no retries
+# and no best-effort result.
 SYSTEMD_BIN=$(command -v systemd 2>/dev/null || true)
 [ -n "$SYSTEMD_BIN" ] || SYSTEMD_BIN=/usr/lib/systemd/systemd
 [ -x "$SYSTEMD_BIN" ] || die "cannot find a systemd user manager binary to boot"
@@ -139,8 +130,7 @@ dbus-daemon --session --address="$DBUS_ADDR" >"$WORK/dbus-boot.log" 2>&1 &
 DBUS_PID=$!
 "$SYSTEMD_BIN" --user >"$WORK/systemd-boot.log" 2>&1 &
 SYSTEMD_PID=$!
-# A freshly booted user manager can take tens of seconds to become ready on a
-# loaded CI runner, so the readiness deadline is generous (60s).
+# Give the newly booted manager one bounded readiness window.
 ready=0
 for _i in $(seq 1 300); do
   systemctl --user is-system-running >/dev/null 2>&1 && { ready=1; break; }

@@ -32,6 +32,7 @@ BEGIN {
   required_inline["node tests/reload-guard.test.js"]=1
   required_inline["node tests/markdown-render-smoke.js"]=1
   required_inline["node tests/frontend-security-smoke.js"]=1
+  required_inline["sh -n tests/service-lifecycle.sh"]=1
   required_inline["scripts/workflow-contract.sh"]=1
   required_inline["scripts/git-history-hygiene.sh"]=1
   required_block["gofmt -l"]=1

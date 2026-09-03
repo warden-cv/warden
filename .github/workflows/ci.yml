@@ -66,6 +66,8 @@ jobs:
         run: node tests/markdown-render-smoke.js
       - name: frontend security smoke
         run: node tests/frontend-security-smoke.js
+      - name: service lifecycle shell syntax
+        run: sh -n tests/service-lifecycle.sh
       - name: generated asset byte parity
         run: |
           diff -q content/assets/js/script.js public/assets/js/script.js

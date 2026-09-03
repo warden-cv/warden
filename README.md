@@ -72,6 +72,19 @@ The generated unit uses the approved finite crash-loop policy (`StartLimitInterv
 
 `service install --system` (system-wide units) is a documented follow-up and is not yet supported; user mode is the default.
 
+### Service lifecycle verification
+
+The full service lifecycle exercise is a strict host-level integration test:
+
+```sh
+go build -o "$HOME/.warden-lifecycle-bin/warden" ./cmd/warden
+sh tests/service-lifecycle.sh
+```
+
+It creates a private temporary home, configuration directory, runtime directory, D-Bus session and systemd user manager; exercises install, health, stop/start/restart, crash-loop limiting, recovery, rollback and uninstall; then removes only that invocation's temporary files. It requires a Linux host that permits a separate `systemd --user` manager. One manager-boot failure fails the exercise immediately.
+
+GitHub-hosted CI does not run this host-level test because its runner environment is not a reliable nested-systemd host. The mandatory CI suite still runs the complete Go service tests, race detector, vet, builds, frontend checks, generated-asset parity and a shell-syntax check of the lifecycle script. The real lifecycle command above is deliberately neither retried nor marked best-effort.
+
 ### Persistence and lingering
 
 The installed service runs independently of the terminal that launched it. Closing that terminal does not stop the service; `warden service uninstall` (or `systemctl --user stop warden.service`) is how you stop it deliberately.
