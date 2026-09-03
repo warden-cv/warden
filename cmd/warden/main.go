@@ -17,11 +17,18 @@ import (
 	"github.com/warden-app/warden/internal/server"
 )
 
-var version = "0.1.0-dev"
+var version = "0.1.0"
 
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "version", "--version":
+			if len(os.Args) != 2 {
+				fmt.Fprintln(os.Stderr, "warden:", os.Args[1], "takes no arguments")
+				os.Exit(2)
+			}
+			fmt.Fprintln(os.Stdout, version)
+			return
 		case "service":
 			os.Exit(runService(os.Args[2:], version))
 		case "serve":
@@ -37,6 +44,11 @@ func main() {
 			}
 			fmt.Println(h)
 			return
+		default:
+			if os.Args[1][0] != '-' {
+				fmt.Fprintln(os.Stderr, "warden: unknown command", os.Args[1])
+				os.Exit(2)
+			}
 		}
 	}
 	fs := flag.NewFlagSet("warden", flag.ExitOnError)
@@ -47,6 +59,10 @@ func main() {
 	root := fs.String("root", env("WARDEN_FILE_ROOT", "/"), "filesystem root used when creating a new config (terminal is not sandboxed by this)")
 	static := fs.String("static", env("WARDEN_STATIC_DIR", ""), "optional Nift-built frontend directory override")
 	fs.Parse(os.Args[1:])
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "warden: unexpected arguments:", fs.Args())
+		os.Exit(2)
+	}
 	addr, err := resolveListener(*host, *port, *listen, flagProvided(fs, "host"), flagProvided(fs, "port"), flagProvided(fs, "listen"))
 	if err != nil {
 		fatal(err)

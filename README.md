@@ -1,5 +1,19 @@
 # Warden
 
+Warden is a self-hosted Linux server console with files, editing, terminals, source control and coding-agent workflows.
+
+## Command line
+
+```sh
+warden version
+warden --version
+warden service status
+```
+
+Unknown commands and unsupported options fail with a non-zero exit status.
+Run the binary without a subcommand to start the integrated server, or use
+`warden serve` where that compatibility alias is supported.
+
 Warden is a dark, security-first web console for Linux servers. Nift owns the frontend build; a small Go service owns authentication, monitoring, filesystem operations and the interactive PTY terminal.
 
 ## v1 development slice

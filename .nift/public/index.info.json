@@ -16,8 +16,5 @@
     "templates/partials/head.html",
     "templates/template.html"
   ],
-  "reqs": [
-    "public/assets/css/style.css",
-    "public/assets/js/script.js"
-  ]
+  "reqs": []
 }
