@@ -2,8 +2,8 @@ const fs = require('fs');
 const vm = require('vm');
 
 const html = fs.readFileSync('content/index.html', 'utf8');
-const css = fs.readFileSync('content/assets/css/style.css', 'utf8');
-const js = fs.readFileSync('content/assets/js/script.js', 'utf8');
+const css = fs.readFileSync('public/assets/css/style.css', 'utf8');
+const js = fs.readFileSync('public/assets/js/script.js', 'utf8');
 
 for (const required of ['class="skip-link"', 'id="workspace-main"', 'aria-live="polite"']) {
   if (!html.includes(required)) throw new Error(`missing accessibility contract: ${required}`);

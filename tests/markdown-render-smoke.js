@@ -24,7 +24,7 @@ function byClass(node,cls,out=[]){
   for(const c of node.children||[])byClass(c,cls,out);
   return out;
 }
-const src=fs.readFileSync('content/assets/js/script.js','utf8');
+const src=fs.readFileSync('public/assets/js/script.js','utf8');
 const page=fs.readFileSync('content/index.html','utf8');
 if(page.includes('Implement, investigate')||page.includes('drop or paste images'))throw new Error('agent prompt placeholder returned');
 

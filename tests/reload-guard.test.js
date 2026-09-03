@@ -1,5 +1,5 @@
 // Reload-confirmation guard contract tests, driven against the real
-// content/assets/js/script.js reload-guard region in a minimal DOM/event
+// public/assets/js/script.js reload-guard region in a minimal DOM/event
 // sandbox. Covers keyboard reload interception, Warden's own confirmation,
 // the one-use beforeunload bypass, and login/setup non-activation.
 //
@@ -9,7 +9,7 @@ const fs = require('fs');
 const vm = require('vm');
 const assert = require('assert');
 
-const SCRIPT = fs.readFileSync('content/assets/js/script.js', 'utf8');
+const SCRIPT = fs.readFileSync('public/assets/js/script.js', 'utf8');
 const REGION_START = SCRIPT.indexOf('let reloadGuardActive=false;');
 const REGION_END = SCRIPT.indexOf('// END reload guard');
 if (REGION_START < 0 || REGION_END < 0) throw new Error('reload-guard region not found');
@@ -228,7 +228,7 @@ test('synchronous reload failure clears the bypass and keeps the guard active', 
 });
 
 test('reload-confirm actions share the confirmation action-row styling', () => {
-  const css = fs.readFileSync('content/assets/css/style.css', 'utf8');
+  const css = fs.readFileSync('public/assets/css/style.css', 'utf8');
   assert(/\.password-confirm-actions,\.reload-confirm-actions\{display:flex;justify-content:flex-end;gap:7px;margin-top:14px\}/.test(css), 'reload-confirm-actions must share the action-row contract');
 });
 

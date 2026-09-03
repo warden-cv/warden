@@ -1,14 +1,14 @@
 // Embedded editor/agent layout contract: the embedded agent must share the
 // editor's declared row heights so the header, empty-file/workspace row and
 // session-tabs boundary align exactly, and the split renders as one clean
-// border line. Runs against the real content/assets/css/style.css.
+// border line. Runs against the real public/assets/css/style.css.
 //
 // Run with: node tests/editor-layout.test.js
 
 const fs = require('fs');
 const assert = require('assert');
 
-const css = fs.readFileSync('content/assets/css/style.css', 'utf8');
+const css = fs.readFileSync('public/assets/css/style.css', 'utf8');
 const html = fs.readFileSync('content/index.html', 'utf8');
 
 function blocks(selPrefix) {

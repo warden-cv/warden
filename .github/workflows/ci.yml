@@ -52,9 +52,7 @@ jobs:
         run: go test -race ./...
       - name: go build -trimpath
         run: go build -trimpath ./...
-      - name: node --check source JavaScript
-        run: node --check content/assets/js/script.js
-      - name: node --check generated JavaScript
+      - name: node --check canonical JavaScript
         run: node --check public/assets/js/script.js
       - name: agent UX suite
         run: node tests/agent-ux.test.js
@@ -68,10 +66,6 @@ jobs:
         run: node tests/frontend-security-smoke.js
       - name: service lifecycle shell syntax
         run: sh -n tests/service-lifecycle.sh
-      - name: generated asset byte parity
-        run: |
-          diff -q content/assets/js/script.js public/assets/js/script.js
-          diff -q content/assets/css/style.css public/assets/css/style.css
       - name: workflow contract
         run: scripts/workflow-contract.sh
       - name: git history hygiene

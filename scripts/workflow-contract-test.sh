@@ -37,8 +37,8 @@ expect_reject "mutable action tag" "$tmp/m3.yml"
 sed '/^[[:space:]]*pull_request:[[:space:]]*$/d' "$BASE" > "$tmp/m4.yml"
 expect_reject "pull_request trigger removed" "$tmp/m4.yml"
 
-# 5. Remove one command from the generated-asset parity block.
-sed '/^[[:space:]]*diff -q content\/assets\/css\/style\.css public\/assets\/css\/style\.css$/d' "$BASE" > "$tmp/m5.yml"
-expect_reject "parity command removed" "$tmp/m5.yml"
+# 5. Remove the canonical JavaScript syntax check.
+sed '/^[[:space:]]*run: node --check public\/assets\/js\/script\.js$/d' "$BASE" > "$tmp/m5.yml"
+expect_reject "canonical JavaScript check removed" "$tmp/m5.yml"
 
 echo "ci workflow contract mutation tests: ok"

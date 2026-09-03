@@ -25,7 +25,6 @@ BEGIN {
   required_inline["go test ./..."]=1
   required_inline["go test -race ./..."]=1
   required_inline["go build -trimpath ./..."]=1
-  required_inline["node --check content/assets/js/script.js"]=1
   required_inline["node --check public/assets/js/script.js"]=1
   required_inline["node tests/agent-ux.test.js"]=1
   required_inline["node tests/editor-layout.test.js"]=1
@@ -36,8 +35,6 @@ BEGIN {
   required_inline["scripts/workflow-contract.sh"]=1
   required_inline["scripts/git-history-hygiene.sh"]=1
   required_block["gofmt -l"]=1
-  required_block["diff -q content/assets/js/script.js public/assets/js/script.js"]=1
-  required_block["diff -q content/assets/css/style.css public/assets/css/style.css"]=1
   in_on=0; in_permissions=0; in_jobs=0
   in_push=0; in_branches=0; in_block=0
   push_main=0; seen_pull_request=0; perms_read=0; perms_write=0

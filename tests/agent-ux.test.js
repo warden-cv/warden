@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const SCRIPT = fs.readFileSync(path.join(__dirname, '..', 'content', 'assets', 'js', 'script.js'), 'utf8');
+const SCRIPT = fs.readFileSync(path.join(__dirname, '..', 'public', 'assets', 'js', 'script.js'), 'utf8');
 
 class Node {
   constructor(tag = '') {
