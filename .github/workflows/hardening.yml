@@ -37,7 +37,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/sysd"
           printf '%s\n' \
             'FROM ubuntu:24.04' \
-            'RUN apt-get update -o Acquire::Retries=5 && apt-get install -y --no-install-recommends -o Acquire::Retries=5 systemd systemd-sysv dbus systemd-analyze && rm -f /usr/sbin/policy-rc.d' \
+            'RUN apt-get update -o Acquire::Retries=5 && apt-get install -y --no-install-recommends -o Acquire::Retries=5 systemd systemd-sysv dbus && rm -f /usr/sbin/policy-rc.d' \
             'CMD ["/sbin/init"]' \
             > "$RUNNER_TEMP/sysd/Dockerfile"
           set +e
