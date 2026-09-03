@@ -122,9 +122,10 @@ SYSTEMD_BIN=$(command -v systemd 2>/dev/null || true)
 [ -n "$SYSTEMD_BIN" ] || SYSTEMD_BIN=/usr/lib/systemd/systemd
 [ -x "$SYSTEMD_BIN" ] || die "cannot find a systemd user manager binary to boot"
 
-# The isolated user manager can fail to become ready on a loaded CI runner
-# (system manager contention, slow first boot), so the boot is retried with a
-# fresh D-Bus bus and systemd instance each attempt until it converges.
+# The isolated user manager can fail to become ready on a loaded CI runner, so
+# the boot is retried once with a fresh D-Bus bus and systemd instance. Two
+# failures mean the environment cannot host an isolated user manager at all,
+# so the exercise fails rather than hiding that with more retries.
 DBUS_ADDR="unix:path=$XDG_RUNTIME_DIR/bus"
 export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
 DBUS_PID=0
@@ -145,18 +146,18 @@ while :; do
     sleep 0.2
   done
   [ "$ready" = 1 ] && break
-  echo "service-lifecycle: isolated user manager attempt $attempt did not become ready; retrying"
+  echo "service-lifecycle: isolated user manager attempt $attempt did not become ready"
   kill "$SYSTEMD_PID" 2>/dev/null || true
   wait "$SYSTEMD_PID" 2>/dev/null || true
   kill "$DBUS_PID" 2>/dev/null || true
   wait "$DBUS_PID" 2>/dev/null || true
   SYSTEMD_PID=0
   DBUS_PID=0
-  sleep 1
-  if [ "$attempt" -ge 8 ]; then
+  if [ "$attempt" -ge 2 ]; then
     BOOTLOG=$(tail -c 2000 "$WORK/systemd-boot.log" 2>/dev/null | tr '\n' ' ' | cut -c1-1200)
-    die "isolated user manager did not become ready after $attempt attempts${BOOTLOG:+ (systemd --user: $BOOTLOG)}"
+    die "isolated user manager did not become ready after $attempt attempts; the environment cannot host an isolated user manager${BOOTLOG:+ (systemd --user: $BOOTLOG)}"
   fi
+  sleep 1
 done
 
 wait_active() {
