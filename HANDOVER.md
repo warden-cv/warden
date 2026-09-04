@@ -341,3 +341,24 @@ Once Auth, Monitor, Explorer, Editor and Terminal are mature and security-tested
 - The System submenu contains structured administration pages for Certificates, Cron jobs, Docker, Fail2ban, Firewall, Services, SSH and Users. Prefer typed fields, tables, state pills, summaries and deliberate actions over dumping command stdout into a textarea.
 - System mutations are now enabled during v1 development because an authenticated Warden session already exposes an intentionally privileged terminal. They still travel through authenticated + CSRF-protected APIs, emit audit events, validate structured inputs and return controlled failures; do not replace them with arbitrary browser-supplied shell command execution.
 - This does **not** mean the current auth model is ready for Internet exposure. Before recommending public deployment, design real roles/authority boundaries, session revocation/2FA as appropriate, and attack the admin mutation surfaces adversarially.
+# Release procedure
+
+Warden releases are created by pushing a reviewed `vX.Y.Z` tag. The release
+workflow verifies Go and frontend tests, builds six checksum-verified archives,
+attests them, and publishes the GitHub Release with least-privilege jobs.
+
+Before tagging, push and deploy any website installer changes, then fetch
+`https://warden.cv/install.sh`, `/download.sh`, and `/update.sh` back from the
+public domain and compare them with the generated website repository. Run
+formatting, the full Go suite and race suite, vet, all Node contracts, six-target
+cross-compilation, history hygiene, and a clean-tree check. Confirm the binary
+version, documentation, release notes and tag agree.
+
+Use a release-candidate tag for the first complete rehearsal. Verify the exact
+six archives and `checksums.txt`, all checksums, and GitHub build provenance.
+On a clean Linux host exercise public download, per-user install, update and
+rollback, plus first-run authentication, one terminal, one agent task, restart,
+and user-service install/status/restart/uninstall. Publish a stable tag only
+after that evidence is accepted, then repeat the public installation smoke.
+
+Never edit an existing tag or replace release assets in place.
