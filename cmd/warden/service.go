@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/warden-app/warden/internal/server"
+	"github.com/warden-cv/warden/internal/server"
 )
 
 // wardenUnitMarker marks unit files written by `warden service`.

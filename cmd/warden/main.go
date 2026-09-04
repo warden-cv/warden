@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"strings"
 
-	wardenassets "github.com/warden-app/warden"
-	"github.com/warden-app/warden/internal/server"
+	wardenassets "github.com/warden-cv/warden"
+	"github.com/warden-cv/warden/internal/server"
 )
 
 var version = "0.1.0"

@@ -1,4 +1,4 @@
-module github.com/warden-app/warden
+module github.com/warden-cv/warden
 
 go 1.25.0
 

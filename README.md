@@ -150,4 +150,4 @@ Coding-agent conversations, events and run state are stored server-side in Warde
 
 ## Install
 
-Release binaries embed the Nift-built frontend. On Linux or macOS, install per-user with `curl -fsSL https://warden-deck.github.io/install.sh | sh`, or system-wide with `curl -fsSL https://warden-deck.github.io/install.sh | sudo sh -s -- --system`. `go install github.com/warden-app/warden/cmd/warden@latest` is also supported.
+Release binaries embed the Nift-built frontend. On Linux or macOS, install per-user with `curl -fsSL https://warden.cv/install.sh | sh`, or system-wide with `curl -fsSL https://warden.cv/install.sh | sudo sh -s -- --system`. `go install github.com/warden-cv/warden/cmd/warden@latest` is also supported.
