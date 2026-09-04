@@ -341,6 +341,13 @@ Once Auth, Monitor, Explorer, Editor and Terminal are mature and security-tested
 - The System submenu contains structured administration pages for Certificates, Cron jobs, Docker, Fail2ban, Firewall, Services, SSH and Users. Prefer typed fields, tables, state pills, summaries and deliberate actions over dumping command stdout into a textarea.
 - System mutations are now enabled during v1 development because an authenticated Warden session already exposes an intentionally privileged terminal. They still travel through authenticated + CSRF-protected APIs, emit audit events, validate structured inputs and return controlled failures; do not replace them with arbitrary browser-supplied shell command execution.
 - This does **not** mean the current auth model is ready for Internet exposure. Before recommending public deployment, design real roles/authority boundaries, session revocation/2FA as appropriate, and attack the admin mutation surfaces adversarially.
+## Current release state
+
+- Released stable: **v0.1.0** (stable public preview).
+- Current development: **0.1.1** on `main`. An ordinary development build
+  reports 0.1.1 with commit `unknown`; release builds override the default via
+  `-ldflags -X main.version` and are never confused with the released version.
+
 # Release procedure
 
 Warden releases are created by pushing a reviewed `vX.Y.Z` tag. The release
