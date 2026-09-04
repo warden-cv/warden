@@ -176,6 +176,69 @@ test('task panel renders validated todowrite snapshot', async () => {
   if (progress !== '1 of 2 completed') throw new Error('progress = ' + progress);
 });
 
+test('agent task panel preserves exact model order for a mixed-status snapshot (both surfaces)', async () => {
+  const ctx = loadContext();
+  const s = { followBottom: true, events: [{ kind: 'task', text: '[{"content":"first","status":"completed"},{"content":"second","status":"in_progress"},{"content":"third","status":"pending"}]' }] };
+  run(ctx, 'renderAgentTaskPanel(S)', { S: s });
+  const standalone = run(ctx, "Array.from($('#agentTaskList').children).map(r=>r.children[1].textContent)");
+  if (standalone.join('|') !== 'first|second|third') throw new Error('standalone mixed order = ' + standalone.join('|'));
+  const editor = run(ctx, "Array.from($('#editorAgentTaskList').children).map(r=>r.children[1].textContent)");
+  if (editor.join('|') !== 'first|second|third') throw new Error('editor mixed order = ' + editor.join('|'));
+});
+
+test('agent task panel does not regroup a deliberately reverse-status snapshot', async () => {
+  const ctx = loadContext();
+  const s = { followBottom: true, events: [{ kind: 'task', text: '[{"content":"done","status":"completed"},{"content":"active","status":"in_progress"},{"content":"queued","status":"pending"}]' }] };
+  run(ctx, 'renderAgentTaskPanel(S)', { S: s });
+  const labels = run(ctx, "Array.from($('#agentTaskList').children).map(r=>r.children[1].textContent)");
+  if (labels.join('|') !== 'done|active|queued') throw new Error('reverse-status order was regrouped: ' + labels.join('|'));
+});
+
+test('agent task panel uses the latest snapshot order, not a prior one', async () => {
+  const ctx = loadContext();
+  const s = { followBottom: true, events: [] };
+  run(ctx, `(function(){const s=S;s.events.push({kind:'task',text:'[{"content":"old-a","status":"pending"},{"content":"old-b","status":"completed"}]'});renderAgentTaskPanel(s);})()`, { S: s });
+  run(ctx, `(function(){const s=S;s.events.push({kind:'task',text:'[{"content":"new-1","status":"completed"},{"content":"new-2","status":"in_progress"},{"content":"new-3","status":"pending"}]'});renderAgentTaskPanel(s);})()`, { S: s });
+  const labels = run(ctx, "Array.from($('#agentTaskList').children).map(r=>r.children[1].textContent)");
+  if (labels.join('|') !== 'new-1|new-2|new-3') throw new Error('latest-snapshot order = ' + labels.join('|'));
+  const progress = run(ctx, "$('#agentTaskProgress').textContent");
+  if (progress !== '1 of 3 completed') throw new Error('latest-snapshot progress = ' + progress);
+});
+
+test('agent task panel preserves order for a restored session snapshot', async () => {
+  const ctx = loadContext();
+  const s = { followBottom: true, events: [{ kind: 'task', text: '[{"content":"restored-a","status":"in_progress"},{"content":"restored-b","status":"completed"},{"content":"restored-c","status":"in_progress"}]' }] };
+  run(ctx, 'renderAgentTaskPanel(S)', { S: s });
+  const labels = run(ctx, "Array.from($('#agentTaskList').children).map(r=>r.children[1].textContent)");
+  if (labels.join('|') !== 'restored-a|restored-b|restored-c') throw new Error('restored order = ' + labels.join('|'));
+  const progress = run(ctx, "$('#agentTaskProgress').textContent");
+  if (progress !== '1 of 3 completed') throw new Error('restored progress = ' + progress);
+});
+
+test('agent task panel collapsed and reopen behavior is unchanged', async () => {
+  const ctx = loadContext();
+  const s = { followBottom: true, events: [], tasksCollapsed: true };
+  run(ctx, `(function(){const s=S;s.events.push({kind:'task',text:'[{"content":"hidden-a","status":"completed"},{"content":"hidden-b","status":"pending"}]'});renderAgentTaskPanel(s);})()`, { S: s });
+  if (!run(ctx, "$('#agentTaskPanel').hidden")) throw new Error('collapsed panel should stay hidden');
+  if (!run(ctx, "$('#editorAgentTaskPanel').hidden")) throw new Error('collapsed editor panel should stay hidden');
+  // Reopening renders the same order.
+  run(ctx, `(function(){const s=S;s.tasksCollapsed=false;renderAgentTaskPanel(s);})()`, { S: s });
+  const labels = run(ctx, "Array.from($('#agentTaskList').children).map(r=>r.children[1].textContent)");
+  if (labels.join('|') !== 'hidden-a|hidden-b') throw new Error('reopened order = ' + labels.join('|'));
+});
+
+test('agent task panel status styling and completed count are preserved with model order', async () => {
+  const ctx = loadContext();
+  const s = { followBottom: true, events: [{ kind: 'task', text: '[{"content":"a","status":"in_progress"},{"content":"b","status":"completed"},{"content":"c","status":"completed"}]' }] };
+  run(ctx, 'renderAgentTaskPanel(S)', { S: s });
+  const classes = run(ctx, "Array.from($('#agentTaskList').children).map(r=>r.className)");
+  if (classes.join('|') !== 'agent-task-row in_progress|agent-task-row completed|agent-task-row completed') {
+    throw new Error('status classes not preserved with order: ' + classes.join('|'));
+  }
+  const progress = run(ctx, "$('#agentTaskProgress').textContent");
+  if (progress !== '2 of 3 completed') throw new Error('completed count = ' + progress);
+});
+
 test('task panel ignores malformed text', async () => {
   const ctx = loadContext();
   const s = { followBottom: true, events: [{ kind: 'task', text: 'nope' }] };
