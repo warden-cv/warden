@@ -128,7 +128,7 @@
         </div>
         <div id="editor-agent-resizer" class="editor-agent-resizer" title="Drag to resize coding agent"></div>
         <aside id="editor-agent-panel" class="editor-agent-panel" hidden>
-          <div class="editor-agent-head"><div><strong>Warden Agent</strong><span id="editor-agent-state">Ready</span></div><button id="editor-agent-collapse" title="Collapse coding agent">×</button></div>
+          <div class="editor-agent-head"><strong>Warden Agent</strong><div class="editor-agent-head-actions"><div class="editor-agent-state"><span id="editor-agent-state-dot" class="status-dot"></span><span id="editor-agent-state">Ready</span></div><button id="editor-agent-collapse" title="Collapse coding agent">×</button></div></div>
           <button id="editor-agent-workspace" class="editor-agent-workspace" type="button" title="Choose agent workspace">Default workspace</button>
           <div class="agent-sessionbar compact"><div id="editor-agent-session-tabs" class="agent-session-tabs"></div><div class="agent-new-wrap"><button id="editor-agent-new" class="agent-new-button" type="button">＋⌄</button><div id="editor-agent-session-menu" class="agent-session-menu" hidden></div></div></div>
           <div class="agent-body compact">
@@ -146,7 +146,6 @@
         </aside>
       </div>
     </section>
-
     <section class="view" id="view-agent">
       <div class="agent-layout">
         <section class="panel agent-panel">
@@ -187,6 +186,15 @@
     <div class="agent-workspace-path"><button id="agent-workspace-up" class="secondary-button compact" type="button">↑</button><span id="agent-workspace-path"></span></div>
     <div id="agent-workspace-dirs" class="agent-workspace-dirs"></div>
     <footer><button id="agent-workspace-cancel" class="secondary-button" type="button">Cancel</button><button id="agent-workspace-use" class="primary-small" type="button">Use this directory</button></footer>
+  </section>
+</div>
+<div id="agent-history-modal" class="agent-history-modal" hidden>
+  <div class="agent-history-backdrop" data-close-agent-history></div>
+  <section class="agent-history-dialog" role="dialog" aria-modal="true" aria-labelledby="agent-history-title">
+    <header><div><p class="eyebrow">Agent</p><h3 id="agent-history-title">Recent sessions</h3><p>Restore a previous coding-agent conversation into this browser tab.</p></div><button id="agent-history-close" class="secondary-button compact" type="button" aria-label="Close recent sessions">×</button></header>
+    <div id="agent-history-list" class="agent-history-list"></div>
+    <div class="agent-history-pagination"><button id="agent-history-prev" class="secondary-button" type="button">Previous</button><span id="agent-history-page"></span><button id="agent-history-next" class="secondary-button" type="button">Next</button></div>
+    <footer><button id="agent-history-cancel" class="secondary-button" type="button">Cancel</button></footer>
   </section>
 </div>
 <div id="toast-root" aria-live="polite"></div>

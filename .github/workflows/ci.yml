@@ -60,6 +60,8 @@ jobs:
         run: node tests/editor-layout.test.js
       - name: reload guard contract
         run: node tests/reload-guard.test.js
+      - name: session navigation contract
+        run: node tests/session-navigation.test.js
       - name: markdown render smoke
         run: node tests/markdown-render-smoke.js
       - name: frontend security smoke

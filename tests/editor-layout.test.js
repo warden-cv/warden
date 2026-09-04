@@ -81,6 +81,19 @@ assert(
 // raised to match the editor toolbar row.
 assert(ws.body.includes('display:flex') && ws.body.includes('align-items:center'), 'agent workspace row must vertically centre its content');
 
+// Both agent surfaces show a concise readiness label. The embedded state is
+// grouped at the right edge and has the same status dot as the standalone view.
+assert(html.includes('id="editor-agent-state-dot"'), 'embedded agent status dot is missing');
+assert(html.includes('class="editor-agent-head-actions"'), 'embedded agent status/actions group is missing');
+assert(
+  blocks('.editor-agent-head-actions').some((b) => b.body.includes('justify-content:flex-end')),
+  'embedded agent status/actions must be right aligned'
+);
+assert(
+  blocks('.agent-panel>.agent-body').some((b) => b.body.includes('flex:1 1 auto')),
+  'standalone agent body must fill the panel so its prompt stays at the bottom'
+);
+
 // Composer contract: the provider occupies its own centred row. Copy session
 // and Tasks form the left action group, while Run remains right aligned on the
 // row below. This protects the intended two-row layout at narrow panel widths.

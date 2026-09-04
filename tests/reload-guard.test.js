@@ -40,6 +40,7 @@ function loadGuard(opts) {
   const ctx = {
     console,
     setTimeout,
+    agentSessions: opts.agentSessions || { running: { busy: true } },
     esc: (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
     document: { createElement: makeNode, body },
     location: { reload() { reloadCalls++; if (opts.reloadThrows) throw new Error('reload blocked'); } },
@@ -81,6 +82,16 @@ test('plain Ctrl+R is intercepted and shows the confirmation', () => {
   assert.strictEqual(ev._stopped, true, 'must stop propagation');
   assert(g.modal(), 'confirmation must be shown');
   assert(g.modal().innerHTML.includes('Reload Warden? Unsaved edits and active work may be lost.'), 'confirmation text must be Warden-owned');
+});
+
+test('idle agent tabs do not intercept refresh', () => {
+  const g = loadGuard({ agentSessions: { idle: { busy: false } } });
+  g.run('installReloadGuard()');
+  const key = g.fire('keydown', { key: 'r', ctrlKey: true });
+  const unload = g.fire('beforeunload', {});
+  assert.strictEqual(key._prevented, undefined);
+  assert.strictEqual(unload._prevented, undefined);
+  assert.strictEqual(g.modal(), undefined);
 });
 
 test('shifted Ctrl+R is intercepted', () => {
