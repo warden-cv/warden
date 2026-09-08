@@ -7,30 +7,20 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	coreterminal "github.com/gantry-dev/gantry-core/terminal"
 )
 
-type terminalSession struct {
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	CWD        string `json:"cwd"`
-	State      string `json:"state"`
-	CreatedAt  int64  `json:"createdAt"`
-	UpdatedAt  int64  `json:"updatedAt"`
-	ClosedAt   int64  `json:"closedAt,omitempty"`
-	Scrollback string `json:"scrollback,omitempty"`
-}
+type terminalSession = coreterminal.Session
 
-const maxTerminalSessionsPerAccount = 16
+const maxTerminalSessionsPerAccount = coreterminal.DefaultSessionLimit
 
 func (a *app) ensureTerminalSessionCapacity(accountID, id string) error {
 	var exists, count int
 	if err := a.db.QueryRow("SELECT EXISTS(SELECT 1 FROM terminal_sessions WHERE account_id=? AND id=?), COUNT(*) FROM terminal_sessions WHERE account_id=?", accountID, id, accountID).Scan(&exists, &count); err != nil {
 		return err
 	}
-	if exists == 0 && count >= maxTerminalSessionsPerAccount {
-		return errors.New("terminal session limit reached")
-	}
-	return nil
+	return coreterminal.CheckCapacity(exists != 0, count, maxTerminalSessionsPerAccount)
 }
 
 func (a *app) terminalSessionsAPI(w http.ResponseWriter, r *http.Request) {
@@ -76,9 +66,11 @@ func (a *app) terminalSessionsAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) saveTerminalSession(accountID string, s *terminalSession) error {
-	if accountID == "" || !validAgentSessionID(s.ID) || len(s.Title) > 200 || len(s.CWD) > 4096 {
+	normalized, normalizeErr := coreterminal.Normalize(*s)
+	if accountID == "" || normalizeErr != nil {
 		return errors.New("invalid terminal session")
 	}
+	*s = normalized
 	_, err := a.files.resolve(s.CWD, false)
 	if err != nil {
 		return errors.New("invalid terminal cwd")
@@ -89,12 +81,6 @@ func (a *app) saveTerminalSession(accountID string, s *terminalSession) error {
 	now := time.Now().UnixMilli()
 	if s.CreatedAt <= 0 {
 		s.CreatedAt = now
-	}
-	if strings.TrimSpace(s.Title) == "" {
-		s.Title = "Terminal"
-	}
-	if s.State == "" {
-		s.State = "disconnected"
 	}
 	var closed any
 	if s.ClosedAt > 0 {
@@ -150,7 +136,7 @@ func (a *app) appendTerminalScrollback(accountID, id string, p []byte) {
 		return
 	}
 	// PTY output is byte-oriented; invalid UTF-8 is safely normalized for the browser.
-	p = []byte(strings.ToValidUTF8(string(p), "�"))
+	p = coreterminal.NormalizeOutput(p)
 	_, _ = a.db.Exec(`INSERT INTO terminal_scrollback(account_id,session_id,output,updated_at) VALUES(?,?,?,?)
 		ON CONFLICT(account_id,session_id) DO UPDATE SET output=substr(output || excluded.output,-262144),updated_at=excluded.updated_at`, accountID, id, p, time.Now().UnixMilli())
 }

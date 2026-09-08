@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	coreeditor "github.com/gantry-dev/gantry-core/editor"
 )
 
 type workspaceMatch struct {
@@ -310,24 +312,8 @@ func (f *fileAPI) searchWorkspace(q workspaceQuery, limit int) ([]workspaceMatch
 	return out, err
 }
 func compileWorkspacePattern(q workspaceQuery) (*regexp.Regexp, error) {
-	pattern := q.Query
-	if !q.Regex {
-		pattern = regexp.QuoteMeta(pattern)
-	}
-	if !q.CaseSensitive {
-		pattern = "(?i)" + pattern
-	}
-	return regexp.Compile(pattern)
+	return coreeditor.Compile(coreeditor.Query{Pattern: q.Query, Regex: q.Regex, CaseSensitive: q.CaseSensitive})
 }
 func looksBinary(b []byte) bool {
-	n := len(b)
-	if n > 8192 {
-		n = 8192
-	}
-	for _, c := range b[:n] {
-		if c == 0 {
-			return true
-		}
-	}
-	return false
+	return coreeditor.LooksBinary(b)
 }

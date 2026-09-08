@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	coreagent "github.com/gantry-dev/gantry-core/agent"
 )
 
 const (
@@ -911,31 +913,7 @@ func boundedTail(s string, n int) string {
 // persist and whether recovery should be suppressed entirely (the complete
 // response is already present). See Cortex equivalent for the exact policy.
 func reconcileRecovered(streamed, recovered string) (text string, suppressed, replace bool) {
-	s := strings.TrimSpace(streamed)
-	r := strings.TrimSpace(recovered)
-	if r == "" {
-		return "", true, false
-	}
-	if s == "" {
-		return r, false, false
-	}
-	if r == s || strings.Contains(s, r) {
-		return "", true, false
-	}
-	if strings.HasPrefix(r, s) {
-		return strings.TrimSpace(r[len(s):]), false, false
-	}
-	// Streamed is a suffix of recovered: a missing prefix cannot be appended
-	// after the existing suffix; the full recovered response replaces it.
-	if strings.HasSuffix(r, s) {
-		return r, false, true
-	}
-	for i := len(s); i > 0; i-- {
-		if strings.HasPrefix(r, s[len(s)-i:]) {
-			return strings.TrimSpace(r[i:]), false, false
-		}
-	}
-	return r, false, false
+	return coreagent.ReconcileRecovered(streamed, recovered)
 }
 
 // sanitizeImageURL validates or rewrites an unsafe file URL before persistence.
@@ -1326,14 +1304,7 @@ func zenProviderConfig(selected string) map[string]any {
 // separator: "--file" is an array option in opencode run, so bare words placed
 // after it would otherwise be consumed as further file paths.
 func agentRunArgs(workspace, modelRef, session string, files []string, prompt string) []string {
-	args := []string{"--print-logs", "--log-level", "WARN", "run", "--format", "json", "--auto", "--dir", workspace, "--model", modelRef}
-	if s := strings.TrimSpace(session); s != "" {
-		args = append(args, "--session", s)
-	}
-	for _, p := range files {
-		args = append(args, "--file", p)
-	}
-	return append(args, "--", prompt)
+	return coreagent.RunArgs(workspace, modelRef, strings.TrimSpace(session), files, prompt)
 }
 
 // openCodeVersion returns the installed OpenCode version captured at first

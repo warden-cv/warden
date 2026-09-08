@@ -11,10 +11,14 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	coreeditor "github.com/gantry-dev/gantry-core/editor"
+	coreworkspace "github.com/gantry-dev/gantry-core/workspace"
 )
 
 type fileAPI struct {
 	root           string
+	resolver       *coreworkspace.Resolver
 	workspaceMu    sync.Mutex
 	workspaceUndos map[string]*workspaceUndo
 }
@@ -58,38 +62,22 @@ func (f *fileAPI) shellStart(home string) string {
 func (f *fileAPI) virtualRootLabel() string { return f.root }
 
 func newFiles(root string) (*fileAPI, error) {
-	abs, e := filepath.Abs(root)
+	resolver, e := coreworkspace.New(root)
 	if e != nil {
 		return nil, e
 	}
-	real, e := filepath.EvalSymlinks(abs)
-	if e != nil {
-		return nil, e
-	}
-	return &fileAPI{root: real, workspaceUndos: make(map[string]*workspaceUndo)}, nil
+	return &fileAPI{root: resolver.Root(), resolver: resolver, workspaceUndos: make(map[string]*workspaceUndo)}, nil
 }
 func (f *fileAPI) resolve(rel string, allowMissing bool) (string, error) {
-	rel = filepath.Clean("/" + rel)
-	candidate := filepath.Join(f.root, strings.TrimPrefix(rel, "/"))
-	if !allowMissing {
-		real, e := filepath.EvalSymlinks(candidate)
-		if e != nil {
-			return "", e
-		}
-		candidate = real
+	virtual := strings.TrimPrefix(filepath.Clean("/"+rel), "/")
+	var resolved string
+	var e error
+	if allowMissing {
+		resolved, e = f.resolver.ResolveForCreate(virtual)
 	} else {
-		parent := filepath.Dir(candidate)
-		real, e := filepath.EvalSymlinks(parent)
-		if e != nil {
-			return "", e
-		}
-		candidate = filepath.Join(real, filepath.Base(candidate))
+		resolved, e = f.resolver.Resolve(virtual)
 	}
-	r, e := filepath.Rel(f.root, candidate)
-	if e != nil || r == ".." || strings.HasPrefix(r, ".."+string(os.PathSeparator)) {
-		return "", errors.New("path escapes configured root")
-	}
-	return candidate, nil
+	return resolved, e
 }
 func (f *fileAPI) list(w http.ResponseWriter, r *http.Request) {
 	p, e := f.resolve(r.URL.Query().Get("path"), false)
@@ -284,23 +272,5 @@ func copyFile(src, dst string) error {
 }
 
 func writeAtomicPath(p string, body []byte, mode fs.FileMode) error {
-	tmp, e := os.CreateTemp(filepath.Dir(p), ".warden-save-*")
-	if e != nil {
-		return e
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if e = tmp.Chmod(mode); e == nil {
-		_, e = tmp.Write(body)
-	}
-	if e == nil {
-		e = tmp.Sync()
-	}
-	if ce := tmp.Close(); e == nil {
-		e = ce
-	}
-	if e == nil {
-		e = os.Rename(name, p)
-	}
-	return e
+	return coreeditor.WriteAtomicMode(p, body, mode)
 }

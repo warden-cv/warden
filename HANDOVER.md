@@ -369,3 +369,13 @@ and user-service install/status/restart/uninstall. Publish a stable tag only
 after that evidence is accepted, then repeat the public installation smoke.
 
 Never edit an existing tag or replace release assets in place.
+
+## Gantry Core dogfood
+
+Warden delegates provider-neutral agent state/outcome/recovery behavior,
+conversation merge contracts, filesystem-root resolution, editor matching and
+atomic-write primitives, and terminal session policy to the sibling
+`gantry-core` checkout through the local replacement in `go.mod`. Keep PTY,
+WebSocket, SQL, authorization and privileged Warden policy here. During the
+extraction phase, run `../../gantry-core/scripts/test-workspace.sh` so shared
+changes are exercised through Warden and Cortex together.

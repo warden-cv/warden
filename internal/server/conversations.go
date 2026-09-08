@@ -5,20 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
+
+	coreconversations "github.com/gantry-dev/gantry-core/conversations"
 )
 
-type durableAgentEvent struct {
-	Kind      string `json:"kind"`
-	Text      string `json:"text"`
-	Name      string `json:"name,omitempty"`
-	CreatedAt int64  `json:"createdAt,omitempty"`
-	// RunID preserves task ownership across reloads so stale task snapshots from
-	// an earlier run cannot repopulate a newer run's task panel.
-	RunID string `json:"runId,omitempty"`
-}
+type durableAgentEvent = coreconversations.Event
 
 type durableConversation struct {
 	ID              string              `json:"id"`
@@ -214,30 +207,7 @@ func durableEventSignature(e durableAgentEvent) string {
 }
 
 func mergeDurableEvents(server, client []durableAgentEvent) []durableAgentEvent {
-	available := map[string]int{}
-	serverSig := map[string]bool{}
-	for _, e := range server {
-		available[durableEventSignature(e)]++
-		serverSig[durableEventSignature(e)] = true
-	}
-	out := append([]durableAgentEvent{}, server...)
-	for _, e := range client {
-		sig := durableEventSignature(e)
-		if available[sig] > 0 {
-			available[sig]--
-			continue
-		}
-		out = append(out, e)
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].CreatedAt != out[j].CreatedAt {
-			return out[i].CreatedAt < out[j].CreatedAt
-		}
-		return serverSig[durableEventSignature(out[i])] && !serverSig[durableEventSignature(out[j])]
-	})
-	// Terminal-event supersession: the latest durable terminal marker per run
-	// is authoritative; earlier markers are delivery history only.
-	return supersedeDurableTerminalMarkers(supersedeDurableAssistantPrefixes(out))
+	return coreconversations.MergeEvents(server, client)
 }
 
 func durableRunMarkerRunID(name string) string {
