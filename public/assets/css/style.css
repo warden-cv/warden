@@ -112,9 +112,9 @@ textarea.editor-surface:not(:disabled){cursor:text}
 
 .code-editor .editor-highlight,.code-editor textarea.editor-surface,.code-editor pre.editor-occurrences{white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;overflow-x:hidden}
 
-.monitor-layout .primary-metric #cpu-chart{top:112px;bottom:10px;height:auto}
+.monitor-layout .primary-metric #cpu-chart{top:130px;bottom:10px;height:auto}
 .monitor-layout .metric-card .metric-spark{position:absolute;left:0;right:0;top:130px;bottom:10px;width:100%;height:auto}
-.monitor-layout .network-metric .metric-spark{top:112px;height:auto}
+.monitor-layout .network-metric .metric-spark{top:130px;height:auto}
 
 .media-count{color:#707477!important;font:9px var(--mono)!important;flex:0 0 auto}
 
