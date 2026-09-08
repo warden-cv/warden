@@ -88,6 +88,8 @@ function makeContext(fetchImpl) {
     agentServerReady: false,
     agentSaveTimers: new Map(),
     agentUiPrefs: { activeId: '', collapsed: {} },
+    activeAgentSurface: 'standalone',
+    activeAgentSessionIds: { standalone: '', editor: '' },
     currentAccountId: 'anonymous',
     crypto: { randomUUID: () => 'sid-'+Math.random().toString(36).slice(2) },
     agentSessionsStorageKey: () => 'warden.agentSessions.test.' + (ctx.window && ctx.window.currentAccountId ? ctx.window.currentAccountId : 'anonymous'),

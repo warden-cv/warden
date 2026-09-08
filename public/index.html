@@ -89,6 +89,10 @@
 		          <div class="card-title-row"><h3>Storage</h3><span>ROOT</span></div>
 		          <strong id="disk-value">—</strong><p id="disk-detail">— of —</p><canvas id="disk-chart" class="metric-spark"></canvas><div class="radial"><svg viewBox="0 0 120 120"><circle class="radial-track" cx="60" cy="60" r="51"/><circle id="disk-ring" class="radial-value disk" cx="60" cy="60" r="51"/></svg><span id="disk-percent">0%</span></div>
 		        </article>
+		        <article class="metric-card network-metric">
+		          <div class="card-title-row"><h3>Network</h3><span class="metric-tag">LIVE</span></div>
+		          <strong id="network-value">↓ 0 B/s</strong><p id="network-detail">↑ 0 B/s</p><canvas id="network-chart" class="metric-spark"></canvas>
+		        </article>
 		        <article class="panel system-panel">
 		          <div class="card-title-row"><h3>Machine</h3><span class="online-badge">● Online</span></div>
 		          <dl class="system-list"><div><dt>Hostname</dt><dd id="host-value">—</dd></div><div><dt>Uptime</dt><dd id="uptime-value">—</dd></div><div><dt>Processes</dt><dd id="proc-value">—</dd></div><div><dt>Load average</dt><dd id="loads-value">—</dd></div><div><dt>Warden runtime</dt><dd id="goroutine-value">—</dd></div></dl>
@@ -174,7 +178,7 @@
 		          <form id="agent-form" class="agent-compose">
 		            <textarea id="agent-prompt" spellcheck="true"></textarea>
 		            <div id="agent-attachments" class="agent-attachments" hidden></div>
-		            <div><select id="agent-provider" class="agent-provider-select" aria-label="Agent provider"></select><span id="agent-model"></span><button id="agent-copy-session" type="button" class="secondary-button">Copy session</button><button id="agentTaskReopen" type="button" class="secondary-button" hidden aria-expanded="false" aria-controls="agentTaskPanel">Tasks</button><span id="agent-activity" class="agent-activity" hidden><i></i></span><button id="agent-stop" type="button" class="secondary-button" hidden>Stop</button><button id="agent-run" type="submit" class="primary-small">Run agent</button></div>
+		            <div class="agent-compose-toolbar"><div class="agent-provider-group"><select id="agent-provider" class="agent-provider-select" aria-label="Agent provider"></select><span id="agent-model"></span></div><div class="agent-compose-actions"><button id="agent-copy-session" type="button" class="secondary-button">Copy session</button><button id="agentTaskReopen" type="button" class="secondary-button" hidden aria-expanded="false" aria-controls="agentTaskPanel">Tasks</button></div><div class="agent-compose-run"><span id="agent-activity" class="agent-activity" hidden><i></i></span><button id="agent-stop" type="button" class="secondary-button" hidden>Stop</button><button id="agent-run" type="submit" class="primary-small">Run agent</button></div></div>
 		          </form>
 		        </section>
 		      </div>

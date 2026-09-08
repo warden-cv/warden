@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"encoding/json"
+	"io"
 	"os"
 	"runtime"
 	"strconv"
@@ -24,8 +25,14 @@ type monitorSnapshot struct {
 	CPU        float64    `json:"cpu"`
 	Memory     usagePair  `json:"memory"`
 	Disk       usagePair  `json:"disk"`
+	Network    networkIO  `json:"network"`
 	Processes  int        `json:"processes"`
 	GoRoutines int        `json:"goRoutines"`
+}
+
+type networkIO struct {
+	Received    uint64 `json:"received"`
+	Transmitted uint64 `json:"transmitted"`
 }
 
 var lastCPU struct {
@@ -52,6 +59,10 @@ func monitor(root string) monitorSnapshot {
 	s.CPU = cpuUsage()
 	readMem(&s)
 	s.Disk = diskUsage(root)
+	if f, e := os.Open("/proc/net/dev"); e == nil {
+		s.Network = parseNetworkIO(f)
+		_ = f.Close()
+	}
 	if ds, e := os.ReadDir("/proc"); e == nil {
 		for _, d := range ds {
 			if d.IsDir() {
@@ -62,6 +73,35 @@ func monitor(root string) monitorSnapshot {
 		}
 	}
 	return s
+}
+
+func parseNetworkIO(r io.Reader) networkIO {
+	var total networkIO
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := scanner.Text()
+		colon := strings.IndexByte(line, ':')
+		if colon < 0 {
+			continue
+		}
+		name := strings.TrimSpace(line[:colon])
+		if name == "" || name == "lo" {
+			continue
+		}
+		fields := strings.Fields(line[colon+1:])
+		if len(fields) < 9 {
+			continue
+		}
+		received, errRX := strconv.ParseUint(fields[0], 10, 64)
+		transmitted, errTX := strconv.ParseUint(fields[8], 10, 64)
+		if errRX == nil {
+			total.Received += received
+		}
+		if errTX == nil {
+			total.Transmitted += transmitted
+		}
+	}
+	return total
 }
 func cpuUsage() float64 {
 	lastCPU.Lock()

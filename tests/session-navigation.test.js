@@ -4,7 +4,7 @@ const assert = require('assert');
 const js = fs.readFileSync('public/assets/js/script.js', 'utf8');
 const html = fs.readFileSync('content/index.html', 'utf8');
 
-assert(js.includes("function startFreshAgentSession(){agentSessions={};agentClosedSessions=[];activeAgentSessionId='';agentServerReady=false"), 'authenticated load must create a fresh agent session');
+assert(js.includes("function startFreshAgentSession(){agentSessions={};agentClosedSessions=[];activeAgentSessionId='';activeAgentSurface='standalone';activeAgentSessionIds={standalone:'',editor:''};agentServerReady=false"), 'authenticated load must create a fresh standalone agent session and reset both surface identities');
 const showApp = js.split('\n').find(line => line.startsWith('function showApp(')) || '';
 assert(showApp.includes('startFreshAgentSession()'), 'authenticated app load must use the fresh-session path');
 assert(!showApp.includes('syncAgentConversations()'), 'authenticated app load must not restore server conversations');
@@ -14,6 +14,8 @@ assert(html.includes('id="agent-history-modal"') && html.includes('id="agent-his
 assert(html.includes('id="agent-history-prev"') && html.includes('id="agent-history-next"'), 'history pagination controls are missing');
 assert(js.includes("item('New workspace','Choose another directory',newAgentWorkspace);item('Recent sessions','Restore a previous conversation',openAgentHistoryPicker)"), 'recent sessions must appear directly beneath New workspace in both Agent menus');
 assert(js.includes('closeAgentHistoryPicker();renderAgentSession();loadAgentStatus()'), 'restoring a session must close the overlay without forcing a different Agent surface');
+assert(js.includes("return(activeAgentSurface==='editor'?'editor-':'agent-')+raw"), 'editor and standalone conversations must have durable, distinguishable session identities');
+assert(js.includes("activateAgentSurface('editor')") && js.includes("activateAgentSurface('standalone')"), 'navigation must activate the independent session selected for each agent surface');
 const terminalLoad = js.split('\n').find(line => line.startsWith('async function loadTerminalSessions()')) || '';
 assert(terminalLoad.includes('createTerminalSession(homePath,false)'), 'authenticated load must create a fresh terminal session');
 assert(!terminalLoad.includes('terminalSessions.set(item.id,item)'), 'authenticated load must not restore previous terminal sessions');
