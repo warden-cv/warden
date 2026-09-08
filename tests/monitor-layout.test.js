@@ -9,8 +9,9 @@ assert(html.includes('id="network-chart"'), 'overview must expose a network acti
 assert(js.includes("s.network.received-lastNetworkSample.received"), 'network chart must derive a rate from cumulative receive counters');
 assert(js.includes("s.network.transmitted-lastNetworkSample.transmitted"), 'network chart must derive a rate from cumulative transmit counters');
 assert(css.includes('grid-template-columns:repeat(3,minmax(0,1fr))'), 'wide overview must give metric cards three balanced columns');
-assert(css.includes('.monitor-layout .metric-card .metric-spark') && css.includes('height:96px'), 'metric sparklines must use a substantial part of their cards');
+assert(css.includes('.monitor-layout .metric-card .metric-spark') && css.includes('top:130px;bottom:10px') && css.includes('height:auto'), 'metric sparklines must fill the card below its text with bottom padding');
 assert(html.includes('class="agent-compose-toolbar"'), 'standalone agent actions must use the stable toolbar grouping');
-assert(css.includes('grid-template-columns:minmax(0,1fr) auto minmax(0,1fr)'), 'copy-session action must occupy a stable center track');
+assert(css.includes('grid-template-columns:auto minmax(0,1fr) minmax(0,1fr)'), 'copy-session action must occupy the fixed left track before provider controls');
+assert(html.indexOf('id="agent-copy-session"') < html.indexOf('id="agent-provider"'), 'copy-session action must precede the model/provider selector');
 
 console.log('warden monitor and standalone agent toolbar contract: ok');

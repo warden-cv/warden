@@ -9,7 +9,7 @@
 .card-title-row h3{margin:0;color:var(--muted2);font-size:10px;line-height:1.2;text-transform:uppercase;letter-spacing:.1em;font-weight:750}
 .monitor-layout .metric-card>strong{font-size:31px;margin-top:10px}
 .monitor-layout .metric-card>p{margin:2px 0}
-.monitor-layout .radial{right:16px;bottom:14px;width:66px;height:66px}
+.monitor-layout .radial{right:16px;top:66px;bottom:auto;width:54px;height:54px}
 .monitor-layout .system-panel{grid-column:2/4;padding:16px 18px}
 .monitor-layout .system-list{margin:7px 0 0;display:grid;grid-template-columns:1fr;gap:0}
 .monitor-layout .system-list div{padding:7px 0}
@@ -112,10 +112,9 @@ textarea.editor-surface:not(:disabled){cursor:text}
 
 .code-editor .editor-highlight,.code-editor textarea.editor-surface,.code-editor pre.editor-occurrences{white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;overflow-x:hidden}
 
-.monitor-layout .primary-metric #cpu-chart{height:112px}
-.monitor-layout .metric-card .metric-spark{position:absolute;left:0;right:0;bottom:0;width:100%;height:96px}
-.monitor-layout .metric-card:not(.primary-metric) .radial{bottom:104px}
-.monitor-layout .network-metric .metric-spark{height:112px}
+.monitor-layout .primary-metric #cpu-chart{top:92px;bottom:10px;height:auto}
+.monitor-layout .metric-card .metric-spark{position:absolute;left:0;right:0;top:130px;bottom:10px;width:100%;height:auto}
+.monitor-layout .network-metric .metric-spark{top:92px;height:auto}
 
 .media-count{color:#707477!important;font:9px var(--mono)!important;flex:0 0 auto}
 
@@ -536,13 +535,13 @@ textarea.editor-surface::selection{background:#4ecb7152!important;-webkit-text-f
 .agent-md-quote{color:#b8c987}
 .agent-compose>div #agent-copy-session{margin-left:auto}
 .agent-compose>div #agent-copy-session+.agent-activity{margin-left:0}
-.agent-compose>.agent-compose-toolbar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:10px}
+.agent-compose>.agent-compose-toolbar{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,1fr);align-items:center;gap:10px}
 .agent-compose-toolbar .agent-provider-group,.agent-compose-toolbar .agent-compose-actions,.agent-compose-toolbar .agent-compose-run{display:flex;align-items:center;gap:8px;min-width:0}
 .agent-compose-toolbar .agent-provider-group span{margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.agent-compose-toolbar .agent-compose-actions{justify-content:center}
+.agent-compose-toolbar .agent-compose-actions{justify-content:flex-start}
 .agent-compose-toolbar .agent-compose-run{justify-content:flex-end}
 .agent-compose-toolbar #agent-copy-session,.agent-compose-toolbar .agent-activity{margin-left:0;margin-right:0}
-@media(max-width:760px){.agent-compose>.agent-compose-toolbar{grid-template-columns:1fr auto}.agent-compose-toolbar .agent-provider-group{grid-column:1/-1}.agent-compose-toolbar .agent-compose-actions{justify-content:flex-start}.agent-compose-toolbar .agent-compose-run{justify-content:flex-end}}
+@media(max-width:760px){.agent-compose>.agent-compose-toolbar{grid-template-columns:auto 1fr}.agent-compose-toolbar .agent-provider-group{grid-column:auto}.agent-compose-toolbar .agent-compose-run{grid-column:1/-1;justify-content:flex-end}}
 /* Integrated coding agent beside Editor. Shared row heights so the embedded
    agent header/workspace/sessionbar align exactly with the editor header rows
    and the split renders as one clean border line. */

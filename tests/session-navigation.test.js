@@ -16,6 +16,8 @@ assert(js.includes("item('New workspace','Choose another directory',newAgentWork
 assert(js.includes('closeAgentHistoryPicker();renderAgentSession();loadAgentStatus()'), 'restoring a session must close the overlay without forcing a different Agent surface');
 assert(js.includes("return(activeAgentSurface==='editor'?'editor-':'agent-')+raw"), 'editor and standalone conversations must have durable, distinguishable session identities');
 assert(js.includes("activateAgentSurface('editor')") && js.includes("activateAgentSurface('standalone')"), 'navigation must activate the independent session selected for each agent surface');
+assert(js.includes('function agentShouldPromptForWorkspace(s)') && js.includes('!s.workspacePromptDismissed&&!(s.events||[]).length'), 'workspace selection must only auto-open for untouched, non-dismissed sessions');
+assert(js.includes('if(s)s.workspacePromptDismissed=true'), 'closing workspace selection must suppress repeat prompts for that session');
 const terminalLoad = js.split('\n').find(line => line.startsWith('async function loadTerminalSessions()')) || '';
 assert(terminalLoad.includes('createTerminalSession(homePath,false)'), 'authenticated load must create a fresh terminal session');
 assert(!terminalLoad.includes('terminalSessions.set(item.id,item)'), 'authenticated load must not restore previous terminal sessions');
