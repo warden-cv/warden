@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	coreterminal "github.com/gantry-dev/gantry-core/terminal"
+	coreterminal "github.com/gantry-tools/gantry-core/terminal"
 )
 
 type terminalSession = coreterminal.Session

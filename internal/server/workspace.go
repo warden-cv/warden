@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	coreeditor "github.com/gantry-dev/gantry-core/editor"
+	coreeditor "github.com/gantry-tools/gantry-core/editor"
 )
 
 type workspaceMatch struct {

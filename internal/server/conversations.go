@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	coreconversations "github.com/gantry-dev/gantry-core/conversations"
+	coreconversations "github.com/gantry-tools/gantry-core/conversations"
 )
 
 type durableAgentEvent = coreconversations.Event

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"sync"
 
-	coreeditor "github.com/gantry-dev/gantry-core/editor"
-	coreworkspace "github.com/gantry-dev/gantry-core/workspace"
+	coreeditor "github.com/gantry-tools/gantry-core/editor"
+	coreworkspace "github.com/gantry-tools/gantry-core/workspace"
 )
 
 type fileAPI struct {
