@@ -2,9 +2,6 @@ package server
 
 import (
 	"crypto/hmac"
-	"crypto/rand"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,45 +12,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	coreauth "github.com/gantry-tools/gantry-core/auth"
 )
 
-type loginIdentity struct {
-	ID                 string   `json:"id"`
-	Type               string   `json:"type"`
-	Username           string   `json:"username,omitempty"`
-	Email              string   `json:"email,omitempty"`
-	ProviderSubject    string   `json:"provider_subject,omitempty"`
-	PasswordHash       string   `json:"password_hash,omitempty"`
-	TOTPEnabled        bool     `json:"totp_enabled,omitempty"`
-	RecoveryCodeHashes []string `json:"recovery_code_hashes,omitempty"`
-	Enabled            bool     `json:"enabled"`
-}
-
-type account struct {
-	ID          string          `json:"id"`
-	DisplayName string          `json:"display_name"`
-	Enabled     bool            `json:"enabled"`
-	Roles       []string        `json:"roles"`
-	Identities  []loginIdentity `json:"identities"`
-	CreatedAt   time.Time       `json:"created_at"`
-}
-
-type accountsFile struct {
-	Version  int       `json:"version"`
-	Accounts []account `json:"accounts"`
-}
-
-type role struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Capabilities []string `json:"capabilities"`
-	BuiltIn      bool     `json:"built_in,omitempty"`
-}
-
-type rolesFile struct {
-	Version int    `json:"version"`
-	Roles   []role `json:"roles"`
-}
+type loginIdentity = coreauth.Identity
+type account = coreauth.Account
+type accountsFile = coreauth.AccountsFile
+type role = coreauth.Role
+type rolesFile = coreauth.RolesFile
 
 type accountStore struct {
 	mu       sync.RWMutex
@@ -119,95 +86,7 @@ func (s *accountStore) reload() error {
 }
 
 func validateAccounts(users accountsFile, roles rolesFile) error {
-	if users.Version != configSchemaVersion || roles.Version != configSchemaVersion {
-		return errors.New("unsupported users/roles schema version")
-	}
-	roleIDs := map[string]bool{}
-	for _, r := range roles.Roles {
-		if r.ID == "" || roleIDs[r.ID] {
-			return fmt.Errorf("duplicate/empty role id %q", r.ID)
-		}
-		roleIDs[r.ID] = true
-		if r.ID == "administrator" && (len(r.Capabilities) != 1 || r.Capabilities[0] != "*") {
-			return errors.New("administrator role must retain all capabilities")
-		}
-		for _, c := range r.Capabilities {
-			if c != "*" && !knownCapability(c) {
-				return fmt.Errorf("role %s has unknown capability %q", r.ID, c)
-			}
-		}
-	}
-	if !roleIDs["administrator"] {
-		return errors.New("administrator role is required")
-	}
-	accountIDs := map[string]bool{}
-	identityIDs := map[string]bool{}
-	usernames := map[string]bool{}
-	googleSubjects := map[string]bool{}
-	passwordBackedAdmins := 0
-	for _, a := range users.Accounts {
-		if a.ID == "" || accountIDs[a.ID] {
-			return fmt.Errorf("duplicate/empty account id %q", a.ID)
-		}
-		accountIDs[a.ID] = true
-		if strings.TrimSpace(a.DisplayName) == "" {
-			return fmt.Errorf("account %s has no display_name", a.ID)
-		}
-		for _, rid := range a.Roles {
-			if !roleIDs[rid] {
-				return fmt.Errorf("account %s references unknown role %s", a.ID, rid)
-			}
-		}
-		isAdmin := false
-		for _, rid := range a.Roles {
-			if rid == "administrator" {
-				isAdmin = true
-				break
-			}
-		}
-		hasEnabledPassword := false
-		for _, id := range a.Identities {
-			if id.ID == "" || identityIDs[id.ID] {
-				return fmt.Errorf("duplicate/empty identity id %q", id.ID)
-			}
-			identityIDs[id.ID] = true
-			switch id.Type {
-			case "password":
-				u := strings.ToLower(strings.TrimSpace(id.Username))
-				if a.Enabled && id.Enabled {
-					hasEnabledPassword = true
-				}
-				if u == "" || id.PasswordHash == "" {
-					return fmt.Errorf("password identity %s is incomplete", id.ID)
-				}
-				if usernames[u] {
-					return fmt.Errorf("duplicate username %q", id.Username)
-				}
-				usernames[u] = true
-			case "email":
-				if strings.TrimSpace(id.Email) == "" {
-					return fmt.Errorf("email identity %s has no email", id.ID)
-				}
-			case "google":
-				if id.ProviderSubject == "" {
-					return fmt.Errorf("google identity %s has no provider_subject", id.ID)
-				}
-				if googleSubjects[id.ProviderSubject] {
-					return fmt.Errorf("duplicate Google subject")
-				}
-				googleSubjects[id.ProviderSubject] = true
-			default:
-				return fmt.Errorf("identity %s has unsupported type %q", id.ID, id.Type)
-			}
-		}
-		if a.Enabled && isAdmin && hasEnabledPassword {
-			passwordBackedAdmins++
-		}
-	}
-	if len(users.Accounts) > 0 && passwordBackedAdmins == 0 {
-		return errors.New("Warden must retain at least one enabled administrator with a password login")
-	}
-	return nil
+	return coreauth.ValidateAccounts(users, roles, coreauth.AccountPolicy{SchemaVersion: configSchemaVersion, ProductName: "Warden", KnownCapability: knownCapability})
 }
 
 func (s *accountStore) empty() bool {
@@ -286,24 +165,14 @@ func (s *accountStore) createInitialAdmin(display, username, password string) (a
 }
 
 func newID(prefix string) string {
-	b := make([]byte, 12)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return prefix + "_" + base64.RawURLEncoding.EncodeToString(b)
+	return coreauth.NewID(prefix)
 }
 
 func hashPassword(password string) (string, error) {
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return "", err
-	}
-	iter := 310000
-	dk := pbkdf2([]byte(password), salt, iter, 32)
-	return fmt.Sprintf("pbkdf2-sha256$%d$%s$%s", iter, hex.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(dk)), nil
+	return coreauth.HashPassword(password)
 }
 
-type capabilityInfo struct{ Key, Group, Label string }
+type capabilityInfo = coreauth.CapabilityInfo
 
 var capabilityCatalog = []capabilityInfo{
 	{"monitor.read", "Workspace", "View monitoring"},
@@ -351,33 +220,10 @@ func (s *accountStore) capabilities(accountID string) []string {
 	if acct == nil || !acct.Enabled {
 		return nil
 	}
-	set := map[string]bool{}
-	for _, rid := range acct.Roles {
-		for _, r := range s.roles.Roles {
-			if r.ID == rid {
-				for _, c := range r.Capabilities {
-					if c == "*" {
-						return []string{"*"}
-					}
-					set[c] = true
-				}
-			}
-		}
-	}
-	out := make([]string, 0, len(set))
-	for c := range set {
-		out = append(out, c)
-	}
-	sort.Strings(out)
-	return out
+	return coreauth.EffectiveCapabilities(*acct, s.roles.Roles)
 }
 func (s *accountStore) hasCapability(accountID, key string) bool {
-	for _, c := range s.capabilities(accountID) {
-		if c == "*" || c == key {
-			return true
-		}
-	}
-	return false
+	return coreauth.HasCapability(s.capabilities(accountID), key)
 }
 
 func (s *accountStore) createAccount(display, username, password string, roles []string) (account, error) {
@@ -771,17 +617,7 @@ func countEnabledAdmins(accounts []account) int {
 	return n
 }
 func dedupeStrings(in []string) []string {
-	seen := map[string]bool{}
-	out := []string{}
-	for _, v := range in {
-		v = strings.TrimSpace(v)
-		if v != "" && !seen[v] {
-			seen[v] = true
-			out = append(out, v)
-		}
-	}
-	sort.Strings(out)
-	return out
+	return coreauth.DedupeStrings(in)
 }
 
 type identityView struct {

@@ -13,10 +13,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	coreauth "github.com/gantry-tools/gantry-core/auth"
 )
 
 type Config struct {
@@ -240,31 +241,18 @@ func (a *app) auditEvent(r *http.Request, event, detail string) {
 			accountID, identityID = s.AccountID, s.IdentityID
 		}
 	}
-	detail = redactAuditDetail(detail)
-	outcome := "success"
-	if strings.Contains(event, "failed") || strings.Contains(event, "error") || strings.Contains(event, "denied") {
-		outcome = "denied"
-	}
-	target := r.URL.Path
-	requestID := requestIDFrom(r)
+	entry := coreauth.NewAuditEvent(requestIDFrom(r), event, r.URL.Path, accountID, identityID, clientIP(r), detail)
 	if a.audit != nil {
-		a.audit.Printf("schema=1 request=%s action=%s target=%s outcome=%s account=%s identity=%s ip=%s detail=%q", requestID, event, target, outcome, accountID, identityID, clientIP(r), detail)
+		a.audit.Printf("schema=%d request=%s action=%s target=%s outcome=%s account=%s identity=%s ip=%s detail=%q", entry.SchemaVersion, entry.RequestID, entry.Action, entry.Target, entry.Outcome, entry.AccountID, entry.IdentityID, entry.RemoteIP, entry.Detail)
 	}
 	if a.db != nil {
-		_, _ = a.db.Exec("INSERT INTO audit_events(event,account_id,identity_id,remote_ip,detail,created_at,schema_version,request_id,action,target,outcome) VALUES(?,?,?,?,?,?,1,?,?,?,?)", event, accountID, identityID, clientIP(r), detail, time.Now().UnixMilli(), requestID, event, target, outcome)
+		_, _ = a.db.Exec("INSERT INTO audit_events(event,account_id,identity_id,remote_ip,detail,created_at,schema_version,request_id,action,target,outcome) VALUES(?,?,?,?,?,?,?,?,?,?,?)", entry.Action, entry.AccountID, entry.IdentityID, entry.RemoteIP, entry.Detail, entry.CreatedAt, entry.SchemaVersion, entry.RequestID, entry.Action, entry.Target, entry.Outcome)
 		_, _ = a.db.Exec("DELETE FROM audit_events WHERE id <= COALESCE((SELECT id FROM audit_events ORDER BY id DESC LIMIT 1 OFFSET 100000),0)")
 	}
 }
 
-var auditSecretPattern = regexp.MustCompile(`(?i)(password|token|secret|credential|authorization|recovery|totp|api[_-]?key|session)\s*=\s*("[^"]*"|[^\s]+)`)
-
 func redactAuditDetail(detail string) string {
-	detail = strings.ToValidUTF8(strings.TrimSpace(detail), "�")
-	detail = auditSecretPattern.ReplaceAllString(detail, "$1=[redacted]")
-	if len(detail) > 4096 {
-		detail = detail[:4096] + "[truncated]"
-	}
-	return detail
+	return coreauth.RedactAuditDetail(detail)
 }
 
 func (a *app) exportConfiguration(w http.ResponseWriter, r *http.Request) {
@@ -392,7 +380,7 @@ func (a *app) require(capability string, next http.HandlerFunc) http.HandlerFunc
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Warden-CSRF") != s.CSRF {
+		if !a.auth.validCSRF(r, s) {
 			a.auditEvent(r, "authorization_denied", "reason=csrf")
 			http.Error(w, "csrf", http.StatusForbidden)
 			return
