@@ -61,11 +61,11 @@ func (a *app) launcherRoot(static http.Handler) http.HandlerFunc {
 		if r.URL.Query().Has("config") {
 			sess, ok := a.auth.get(r)
 			if !ok {
-				corelauncher.WriteAccessError(w, http.StatusUnauthorized, "Warden", "W")
+				corelauncher.WriteAccessError(w, http.StatusUnauthorized, "Warden", "W", "#4ecb71")
 				return
 			}
 			if !a.accounts.hasCapability(sess.AccountID, "launcher.configure.all") {
-				corelauncher.WriteAccessError(w, http.StatusForbidden, "Warden", "W")
+				corelauncher.WriteAccessError(w, http.StatusForbidden, "Warden", "W", "#4ecb71")
 				return
 			}
 			a.serveLauncher(static, w, r)
