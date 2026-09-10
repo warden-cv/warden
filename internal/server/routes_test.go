@@ -27,7 +27,7 @@ func TestEveryAPIRouteHasUniqueSecurityClassification(t *testing.T) {
 			t.Fatalf("%s has unknown boundary %q", p.Path, p.Boundary)
 		}
 	}
-	if len(seen) != 41 {
-		t.Fatalf("classified routes=%d, want 41", len(seen))
+	if len(seen) != 45 {
+		t.Fatalf("classified routes=%d, want 45", len(seen))
 	}
 }

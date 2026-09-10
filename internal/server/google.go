@@ -78,7 +78,7 @@ func (a *app) googleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	verifier := token(48)
 	returnTo := r.URL.Query().Get("return")
-	if returnTo != "/?config" {
+	if returnTo != "/?config" && returnTo != "/manage/" {
 		returnTo = ""
 	}
 	state := oauthState{Mode: mode, ReturnTo: returnTo, CodeVerifier: verifier, Expires: time.Now().Add(10 * time.Minute)}

@@ -1,0 +1,16 @@
+{
+  "name": "assets/js/manage",
+  "title": "manage",
+  "template": "",
+  "content": "content/assets/js/manage.js",
+  "output": "public/assets/js/manage.js",
+  "minify": false,
+  "minify-version": 0,
+  "pagination": false,
+  "pagination-items-per-page": 0,
+  "pagination-template": "",
+  "pagination-separator": "",
+  "pagination-pages": 0,
+  "dependencies": ["content/assets/js/manage.js"],
+  "reqs": []
+}

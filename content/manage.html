@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#101214">
+  <title>Warden management</title>
+  <link rel="icon" href="/assets/images/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/css/manage.css">
+  <script defer src="/assets/js/manage.js"></script>
+</head>
+<body>
+<main class="manage-shell">
+  <header class="manage-header">
+    <div><p class="eyebrow">Gantry management</p><h1>Warden</h1></div>
+    <a class="button secondary" href="/app/">Back to Warden</a>
+  </header>
+  <nav class="manage-tabs" aria-label="Management sections">
+    <button type="button" data-section-tab="users">Users</button>
+    <button type="button" data-section-tab="roles">Roles &amp; permissions</button>
+    <button type="button" data-section-tab="launcher">Launcher</button>
+  </nav>
+  <p class="status" data-status hidden role="status"></p>
+
+  <section class="manage-section" data-section="users" hidden>
+    <div class="section-heading"><div><p class="eyebrow">Access</p><h2>Users</h2><p>Create accounts, assign existing roles and control access.</p></div><button type="button" class="button primary" data-add-user>Add user</button></div>
+    <div class="cards" data-users></div>
+  </section>
+
+  <section class="manage-section" data-section="roles" hidden>
+    <div class="section-heading"><div><p class="eyebrow">Authorization</p><h2>Roles &amp; permissions</h2><p>Combine action-oriented capabilities into reusable roles.</p></div><button type="button" class="button primary" data-add-role>Add role</button></div>
+    <div class="cards" data-roles></div>
+  </section>
+
+  <section class="manage-section" data-section="launcher" hidden>
+    <div class="section-heading"><div><p class="eyebrow">Instances</p><h2>Launcher</h2><p>Manage the shared Warden instance catalogue stored on this installation.</p></div><div class="actions"><button type="button" class="button secondary" data-import>Import</button><button type="button" class="button secondary" data-export>Export</button><button type="button" class="button primary" data-add-instance>Add instance</button></div></div>
+    <input type="file" accept="application/json,.json" data-import-file hidden>
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Domain or IP</th><th>Port</th><th></th></tr></thead><tbody data-instances></tbody></table><p class="empty" data-instance-empty hidden>No instances configured. The bare origin opens this installation directly.</p></div>
+  </section>
+</main>
+
+<div class="modal" data-modal hidden><button class="modal-backdrop" type="button" data-close-modal aria-label="Close"></button><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title" data-dialog-title></h2><button type="button" data-close-modal aria-label="Close">×</button></div><form data-dialog-form></form></section></div>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "assets/css/manage",
+  "title": "manage",
+  "template": "",
+  "content": "content/assets/css/manage.css",
+  "output": "public/assets/css/manage.css",
+  "minify": false,
+  "minify-version": 0,
+  "pagination": false,
+  "pagination-items-per-page": 0,
+  "pagination-template": "",
+  "pagination-separator": "",
+  "pagination-pages": 0,
+  "dependencies": ["content/assets/css/manage.css"],
+  "reqs": []
+}

@@ -80,6 +80,22 @@ Instance entries describe origins rather than application paths. Warden always
 opens the selected installation at `/app/`, preventing adaptive launcher chains
 or redirect loops.
 
+### Management
+
+Warden's installation-wide management shell is available at `/manage/`.
+Sections are displayed and enforced independently:
+
+- Users requires `accounts.manage`;
+- Roles & permissions requires `roles.manage`;
+- Launcher requires `launcher.configure.all`.
+
+The built-in administrator receives all capabilities. Custom roles can grant
+only the administration required for a person's responsibilities; product
+settings access alone does not grant launcher access. The existing in-app
+administration remains available during the transition, while `/manage/`
+establishes the shared route and interaction contract for the other Gantry Go
+applications.
+
 Warden binds to loopback by default. Loopback development automatically uses a non-Secure session cookie so plain `http://127.0.0.1` works correctly. Non-loopback listeners default to Secure cookies; behind an HTTPS reverse proxy enable `WARDEN_TRUST_PROXY=true`; Warden accepts forwarded scheme/client headers only from a loopback proxy and marks HTTPS sessions Secure.
 
 The listener is configured with `--host`/`--port` and the `WARDEN_HOST`/`WARDEN_PORT` environment variables, in that precedence order:

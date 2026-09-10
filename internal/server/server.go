@@ -134,6 +134,8 @@ func (a *app) routes(static http.Handler) *http.ServeMux {
 	mux.Handle("/assets/", static)
 	mux.Handle("/app/", http.StripPrefix("/app", static))
 	mux.HandleFunc("/app", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/app/", http.StatusFound) })
+	mux.HandleFunc("/manage", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/manage/", http.StatusFound) })
+	mux.HandleFunc("/manage/", a.manageRoot(static))
 	mux.HandleFunc("/", a.launcherRoot(static))
 	return mux
 }

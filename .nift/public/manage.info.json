@@ -1,0 +1,16 @@
+{
+  "name": "manage",
+  "title": "manage",
+  "template": "",
+  "content": "content/manage.html",
+  "output": "public/manage.html",
+  "minify": false,
+  "minify-version": 0,
+  "pagination": false,
+  "pagination-items-per-page": 0,
+  "pagination-template": "",
+  "pagination-separator": "",
+  "pagination-pages": 0,
+  "dependencies": ["content/manage.html"],
+  "reqs": []
+}

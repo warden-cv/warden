@@ -187,6 +187,7 @@ var capabilityCatalog = []capabilityInfo{
 	{"system.read", "System", "View system administration pages"},
 	{"system.manage", "System", "Change system services/settings"},
 	{"accounts.manage", "Warden", "Manage Warden accounts and roles"},
+	{"roles.manage", "Warden", "Manage roles and capability assignments"},
 	{"launcher.configure.self", "Launcher", "Manage own launcher additions"},
 	{"launcher.configure.all", "Launcher", "Manage shared launcher catalogue"},
 	{"launcher.propagate", "Launcher", "Propagate launcher catalogue to trusted Warden peers"},

@@ -19,6 +19,21 @@
       "name": "assets/js/launcher",
       "title": "launcher",
       "template": ""
+    },
+    {
+      "name": "manage",
+      "title": "manage",
+      "template": ""
+    },
+    {
+      "name": "assets/css/manage",
+      "title": "manage",
+      "template": ""
+    },
+    {
+      "name": "assets/js/manage",
+      "title": "manage",
+      "template": ""
     }
   ]
 }
