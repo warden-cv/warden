@@ -56,7 +56,7 @@ func TestSessionRevocationIsAccountOwned(t *testing.T) {
 	if a.auth.revokeSession("different-account", id) {
 		t.Fatal("cross-account revocation succeeded")
 	}
-	if _, ok := a.auth.sessions[id]; !ok || other.AccountID != user.ID {
+	if _, ok := a.auth.snapshotSessions()[id]; !ok || other.AccountID != user.ID {
 		t.Fatal("target session was altered")
 	}
 }

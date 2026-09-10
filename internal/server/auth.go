@@ -63,9 +63,11 @@ func (s *accountStore) SessionPrincipalActive(accountID, identityID string) bool
 
 type authStore struct{ core *coreauth.SessionStore }
 
+const maxSessionsPerAccount = 32
+
 func newAuth(accounts *accountStore, secure bool, configDir string) *authStore {
 	options := coreauth.SessionOptions{
-		CookieName: "warden_session", CSRFHeader: "X-Warden-CSRF", SecureCookies: secure,
+		CookieName: "warden_session", CSRFHeader: "X-Warden-CSRF", SecureCookies: secure, MaxSessionsPerAccount: maxSessionsPerAccount,
 		ClientIP: clientIP, RequestScheme: requestScheme,
 	}
 	store, err := coreauth.NewSessionStore(accounts, sessionFilePersistence{path: filepath.Join(configDir, "sessions.json")}, options)
@@ -78,8 +80,12 @@ func newAuth(accounts *accountStore, secure bool, configDir string) *authStore {
 
 func token(size int) string { return coreauth.Token(size) }
 
+func pbkdf2(password, salt []byte, iterations, size int) []byte {
+	return coreauth.PBKDF2SHA256(password, salt, iterations, size)
+}
+
 func (a *authStore) limited(ip string) bool { return a.core.Limited(ip) }
-func (a *authStore) fail(ip string) { a.core.Fail(ip) }
+func (a *authStore) fail(ip string)         { a.core.Fail(ip) }
 func (a *authStore) authenticatePassword(r *http.Request, username, password string) (account, loginIdentity, error) {
 	return a.core.AuthenticatePassword(r, username, password)
 }
@@ -96,10 +102,12 @@ func (a *authStore) takeChallenge(r *http.Request, id string) (loginChallenge, b
 	return a.core.TakeChallenge(r, id)
 }
 func (a *authStore) logout(w http.ResponseWriter, r *http.Request) { a.core.Logout(w, r) }
-func (a *authStore) get(r *http.Request) (session, bool) { return a.core.Get(r) }
-func (a *authStore) revokeAll() { a.core.RevokeAll() }
-func (a *authStore) revokeAccount(accountID string) { a.core.RevokeAccount(accountID) }
-func (a *authStore) listSessions(accountID string) []sessionView { return a.core.ListSessions(accountID) }
+func (a *authStore) get(r *http.Request) (session, bool)           { return a.core.Get(r) }
+func (a *authStore) revokeAll()                                    { a.core.RevokeAll() }
+func (a *authStore) revokeAccount(accountID string)                { a.core.RevokeAccount(accountID) }
+func (a *authStore) listSessions(accountID string) []sessionView {
+	return a.core.ListSessions(accountID)
+}
 func (a *authStore) countSessions(accountID string) int { return a.core.CountSessions(accountID) }
 func (a *authStore) revokeSession(accountID, sessionID string) bool {
 	return a.core.RevokeSession(accountID, sessionID)
@@ -108,7 +116,8 @@ func (a *authStore) revokeIdentity(identityID string) { a.core.RevokeIdentity(id
 func (a *authStore) revokeIdentityExcept(identityID, keepSessionID string) {
 	a.core.RevokeIdentityExcept(identityID, keepSessionID)
 }
-func (a *authStore) currentSessionID(r *http.Request) string { return a.core.CurrentSessionID(r) }
+func (a *authStore) currentSessionID(r *http.Request) string      { return a.core.CurrentSessionID(r) }
 func (a *authStore) validCSRF(r *http.Request, sess session) bool { return a.core.ValidCSRF(r, sess) }
+func (a *authStore) snapshotSessions() map[string]session         { return a.core.SnapshotSessions() }
 
 func verifyPassword(encoded, password string) bool { return coreauth.VerifyPassword(encoded, password) }

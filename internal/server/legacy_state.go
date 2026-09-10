@@ -65,12 +65,7 @@ func (a *app) syncLegacyState() error {
 	accounts := append([]account(nil), a.accounts.accounts.Accounts...)
 	roles := append([]role(nil), a.accounts.roles.Roles...)
 	a.accounts.mu.RUnlock()
-	a.auth.mu.Lock()
-	sessions := make(map[string]session, len(a.auth.sessions))
-	for id, s := range a.auth.sessions {
-		sessions[id] = s
-	}
-	a.auth.mu.Unlock()
+	sessions := a.auth.snapshotSessions()
 	a.aiUsage.mu.RLock()
 	usageBytes, err := json.Marshal(a.aiUsage.data)
 	a.aiUsage.mu.RUnlock()

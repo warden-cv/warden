@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,9 +23,11 @@ func TestLegacyStateMigratesIntoSQLite(t *testing.T) {
 	accounts.accounts.Accounts = []account{{ID: "account-a", DisplayName: "Admin", Enabled: true, Roles: []string{"administrator"}, CreatedAt: time.Unix(100, 0), Identities: []loginIdentity{{ID: "identity-a", Type: "password", Username: "admin", PasswordHash: "hash", Enabled: true}}}}
 	accounts.mu.Unlock()
 	auth := newAuth(accounts, false, dir)
-	auth.mu.Lock()
-	auth.sessions["session-a"] = session{AccountID: "account-a", IdentityID: "identity-a", CSRF: "csrf", Created: time.Unix(200, 0), Expires: time.Now().Add(time.Hour)}
-	auth.mu.Unlock()
+	req := httptest.NewRequest("POST", "http://warden/api/login", nil)
+	req.RemoteAddr = "127.0.0.1:1"
+	if _, err := auth.createSession(httptest.NewRecorder(), req, "account-a", "identity-a"); err != nil {
+		t.Fatal(err)
+	}
 	usage, err := loadAIUsageStore(dir)
 	if err != nil {
 		t.Fatal(err)

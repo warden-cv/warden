@@ -8,7 +8,11 @@ import (
 )
 
 func TestTOTPChallengeIsSingleUseAndIPBound(t *testing.T) {
-	auth := &authStore{sessions: map[string]session{}, failures: map[string][]time.Time{}, challenges: map[string]loginChallenge{}}
+	accounts, err := loadAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := newAuth(accounts, false, t.TempDir())
 	req := httptest.NewRequest(http.MethodPost, "http://warden/api/login/totp", nil)
 	req.RemoteAddr = "127.0.0.1:1"
 	id := auth.beginChallenge(req, "acct", "identity")
