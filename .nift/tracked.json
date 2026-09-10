@@ -4,6 +4,21 @@
       "name": "/",
       "title": "index",
       "template": "templates/template.html"
+    },
+    {
+      "name": "launcher",
+      "title": "launcher",
+      "template": ""
+    },
+    {
+      "name": "assets/css/launcher",
+      "title": "launcher",
+      "template": ""
+    },
+    {
+      "name": "assets/js/launcher",
+      "title": "launcher",
+      "template": ""
     }
   ]
 }

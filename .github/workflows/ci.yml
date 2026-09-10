@@ -54,6 +54,8 @@ jobs:
         run: go build -trimpath ./...
       - name: node --check canonical JavaScript
         run: node --check public/assets/js/script.js
+      - name: node --check launcher JavaScript
+        run: node --check public/assets/js/launcher.js
       - name: agent UX suite
         run: node tests/agent-ux.test.js
       - name: editor layout contract

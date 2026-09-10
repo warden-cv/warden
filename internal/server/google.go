@@ -18,6 +18,7 @@ import (
 type oauthState struct {
 	Mode         string
 	AccountID    string
+	ReturnTo     string
 	CodeVerifier string
 	Expires      time.Time
 }
@@ -76,7 +77,11 @@ func (a *app) googleStart(w http.ResponseWriter, r *http.Request) {
 		mode = "login"
 	}
 	verifier := token(48)
-	state := oauthState{Mode: mode, CodeVerifier: verifier, Expires: time.Now().Add(10 * time.Minute)}
+	returnTo := r.URL.Query().Get("return")
+	if returnTo != "/?config" {
+		returnTo = ""
+	}
+	state := oauthState{Mode: mode, ReturnTo: returnTo, CodeVerifier: verifier, Expires: time.Now().Add(10 * time.Minute)}
 	if mode == "link" {
 		sess, ok := a.auth.get(r)
 		if !ok {
@@ -143,7 +148,7 @@ func (a *app) googleCallback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.audit.Printf("google_identity_linked account=%s subject=%s ip=%s", st.AccountID, profile.Sub, clientIP(r))
-		http.Redirect(w, r, "/?oauth=linked", http.StatusFound)
+		http.Redirect(w, r, "/app/?oauth=linked", http.StatusFound)
 		return
 	}
 	acct, identity, found := a.accounts.findGoogle(profile.Sub)
@@ -157,11 +162,15 @@ func (a *app) googleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.audit.Printf("auth_login_google account=%s identity=%s ip=%s", sess.AccountID, sess.IdentityID, clientIP(r))
-	http.Redirect(w, r, "/", http.StatusFound)
+	target := "/app/"
+	if st.ReturnTo != "" {
+		target = st.ReturnTo
+	}
+	http.Redirect(w, r, target, http.StatusFound)
 }
 
 func (a *app) oauthRedirectError(w http.ResponseWriter, r *http.Request, message string) {
-	http.Redirect(w, r, "/?oauth_error="+url.QueryEscape(message), http.StatusFound)
+	http.Redirect(w, r, "/app/?oauth_error="+url.QueryEscape(message), http.StatusFound)
 }
 
 type googleProfile struct {

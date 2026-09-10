@@ -113,19 +113,29 @@ func Run(cfg Config) error {
 	if accounts.empty() {
 		log.Printf("Warden first-run setup is required. Remote setup token: %s", a.setupToken)
 	}
-	mux := http.NewServeMux()
-	for _, route := range a.apiRoutes() {
-		mux.HandleFunc(route.Policy.Path, route.Handler)
-	}
+	var static http.Handler
 	if cfg.StaticFS != nil {
-		mux.Handle("/", http.FileServer(http.FS(cfg.StaticFS)))
+		static = http.FileServer(http.FS(cfg.StaticFS))
 	} else {
-		mux.Handle("/", http.FileServer(http.Dir(cfg.StaticDir)))
+		static = http.FileServer(http.Dir(cfg.StaticDir))
 	}
+	mux := a.routes(static)
 	srv := &http.Server{Addr: cfg.Listen, Handler: securityHeaders(httpBoundary(proxyTrust(cfg.TrustProxy, mux))), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	log.Printf("Warden %s listening on http://%s (root %s)", cfg.Version, cfg.Listen, f.root)
 	defer a.stopActiveRuns()
 	return srv.ListenAndServe()
+}
+
+func (a *app) routes(static http.Handler) *http.ServeMux {
+	mux := http.NewServeMux()
+	for _, route := range a.apiRoutes() {
+		mux.HandleFunc(route.Policy.Path, route.Handler)
+	}
+	mux.Handle("/assets/", static)
+	mux.Handle("/app/", http.StripPrefix("/app", static))
+	mux.HandleFunc("/app", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/app/", http.StatusFound) })
+	mux.HandleFunc("/", a.launcherRoot(static))
+	return mux
 }
 func (a *app) setupStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

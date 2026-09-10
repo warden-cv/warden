@@ -54,6 +54,31 @@ export WARDEN_PASSWORD_HASH='pbkdf2-sha256$...'
 
 Open `http://127.0.0.1:7332`. Explorer and Terminal start in the server user's home directory, while the default Explorer/Editor filesystem boundary remains `/`, so the root breadcrumb can navigate to the whole machine. Use `--root /some/subtree` (or `WARDEN_FILE_ROOT`) when you intentionally want a narrower **file-management** view. This does not sandbox the PTY shell; terminal privilege must be controlled separately when Warden gains user/role levels.
 
+### Adaptive instance launcher
+
+The bare Warden origin is an adaptive entry point and the application itself is
+always available at `/app/`:
+
+- with no configured instances, `/` redirects to this installation's `/app/`;
+- with one configured instance, `/` redirects directly to that instance's
+  `/app/`;
+- with two or more configured instances, `/` displays the shared instance
+  launcher;
+- `/?config` always opens launcher administration after Warden administrator
+  authentication.
+
+Launcher configuration is stored in `warden.db`, so it is shared between
+browsers and users of the installation. Its JSON import/export format is the
+same versioned `warden-instances.json` format used by `my.warden.cv`: each entry
+contains a name, domain or IP, and optional port. Browser-local IDs are not
+exported, imports are validated completely before the existing catalogue is
+replaced, and launcher mutations require the `settings.manage` capability plus
+the normal Warden CSRF token.
+
+Instance entries describe origins rather than application paths. Warden always
+opens the selected installation at `/app/`, preventing adaptive launcher chains
+or redirect loops.
+
 Warden binds to loopback by default. Loopback development automatically uses a non-Secure session cookie so plain `http://127.0.0.1` works correctly. Non-loopback listeners default to Secure cookies; behind an HTTPS reverse proxy enable `WARDEN_TRUST_PROXY=true`; Warden accepts forwarded scheme/client headers only from a loopback proxy and marks HTTPS sessions Secure.
 
 The listener is configured with `--host`/`--port` and the `WARDEN_HOST`/`WARDEN_PORT` environment variables, in that precedence order:

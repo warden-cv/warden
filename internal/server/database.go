@@ -315,6 +315,21 @@ var databaseMigrations = []databaseMigration{
 		name:    "client conversation event run identity",
 		sql:     `ALTER TABLE conversation_events ADD COLUMN run_id TEXT NOT NULL DEFAULT '';`,
 	},
+	{
+		version: 11,
+		name:    "self-hosted instance launcher",
+		sql: `CREATE TABLE launcher_instances (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			domain TEXT NOT NULL,
+			port INTEGER,
+			sort_order INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			CHECK(port IS NULL OR (port >= 1 AND port <= 65535))
+		);
+		CREATE UNIQUE INDEX launcher_instances_sort_idx ON launcher_instances(sort_order);`,
+	},
 }
 
 func openDatabase(configDir string) (*sql.DB, error) {
