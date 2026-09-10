@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	corelauncher "github.com/gantry-tools/gantry-core/launcher"
 )
 
 const launcherConfigVersion = 1
@@ -59,11 +61,11 @@ func (a *app) launcherRoot(static http.Handler) http.HandlerFunc {
 		if r.URL.Query().Has("config") {
 			sess, ok := a.auth.get(r)
 			if !ok {
-				http.Redirect(w, r, "/app/?return=%2F%3Fconfig", http.StatusFound)
+				corelauncher.WriteAccessError(w, http.StatusUnauthorized, "Warden", "W")
 				return
 			}
 			if !a.accounts.hasCapability(sess.AccountID, "launcher.configure.all") {
-				http.Error(w, "forbidden", http.StatusForbidden)
+				corelauncher.WriteAccessError(w, http.StatusForbidden, "Warden", "W")
 				return
 			}
 			a.serveLauncher(static, w, r)

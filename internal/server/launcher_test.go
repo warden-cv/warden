@@ -98,8 +98,8 @@ func TestAdaptiveLauncherRoot(t *testing.T) {
 	if response := request("http://warden.example/"); response.Code != http.StatusOK || response.Body.String() != "launcher" {
 		t.Fatalf("multi-instance response = %d %q", response.Code, response.Body.String())
 	}
-	if response := request("http://warden.example/?config"); response.Code != http.StatusFound || response.Header().Get("Location") != "/app/?return=%2F%3Fconfig" {
-		t.Fatalf("unauthenticated config response = %d %q", response.Code, response.Header().Get("Location"))
+	if response := request("http://warden.example/?config"); response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "Authentication required") || strings.Contains(response.Body.String(), "Current instances") {
+		t.Fatalf("unauthenticated config response = %d %q", response.Code, response.Body.String())
 	}
 }
 
