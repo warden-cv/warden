@@ -27,7 +27,7 @@ func (a *app) apiRoutes() []registeredRoute {
 		public("/api/setup/status", a.setupStatus), public("/api/setup", a.setup),
 		public("/api/login", a.login), public("/api/login/totp", a.loginTOTP),
 		public("/api/oauth/google/start", a.googleStart), public("/api/oauth/google/callback", a.googleCallback),
-		public("/api/launcher/instances", a.launcherInstances), capability("/api/launcher/config", "settings.manage", a.launcherConfig),
+		public("/api/launcher/instances", a.launcherInstances), capability("/api/launcher/config", "launcher.configure.all", a.launcherConfig),
 		session("/api/security", a.security), session("/api/ai", a.aiSettings),
 		capability("/api/agent/status", "agent.run", a.agentStatus), capability("/api/agent/run", "agent.run", a.agentRun),
 		capability("/api/agent/cancel", "agent.run", a.agentCancel), capability("/api/agent/run-diagnostics", "agent.run", a.agentRunDiagnostics),

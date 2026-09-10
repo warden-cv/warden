@@ -62,7 +62,7 @@ func (a *app) launcherRoot(static http.Handler) http.HandlerFunc {
 				http.Redirect(w, r, "/app/?return=%2F%3Fconfig", http.StatusFound)
 				return
 			}
-			if !a.accounts.hasCapability(sess.AccountID, "settings.manage") {
+			if !a.accounts.hasCapability(sess.AccountID, "launcher.configure.all") {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}

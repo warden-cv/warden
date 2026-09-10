@@ -145,7 +145,7 @@ func TestLauncherConfigRequiresAdminCSRFAndReplacesAtomically(t *testing.T) {
 		t.Fatalf("login = %#v, %v", sess, err)
 	}
 	cookie := loginResponse.Result().Cookies()[0]
-	handler := a.require("settings.manage", a.launcherConfig)
+	handler := a.require("launcher.configure.all", a.launcherConfig)
 	body := `{"version":1,"product":"warden","instances":[{"name":"Production","domain":"warden.example.com"}]}`
 
 	withoutCSRF := httptest.NewRequest(http.MethodPut, "http://warden/api/launcher/config", strings.NewReader(body))
@@ -180,5 +180,32 @@ func TestLauncherConfigRequiresAdminCSRFAndReplacesAtomically(t *testing.T) {
 	after, err := a.loadLauncherInstances(t.Context())
 	if err != nil || len(after) != 1 || after[0].Name != "Production" {
 		t.Fatalf("invalid replacement changed stored catalogue: %#v, %v", after, err)
+	}
+}
+
+func TestProductSettingsPermissionDoesNotGrantLauncherAdministration(t *testing.T) {
+	a := launcherTestApp(t)
+	if _, err := a.accounts.createInitialAdmin("Admin", "admin", "administrator-password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.accounts.setRole("settings-only", "Settings only", []string{"settings.manage"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.accounts.createAccount("Settings", "settings", "settings-password", []string{"settings-only"}); err != nil {
+		t.Fatal(err)
+	}
+	loginRequest := httptest.NewRequest(http.MethodPost, "http://warden/api/login", nil)
+	loginResponse := httptest.NewRecorder()
+	sess, err := a.auth.login(loginResponse, loginRequest, "settings", "settings-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPut, "http://warden/api/launcher/config", strings.NewReader(`{"version":1,"product":"warden","instances":[]}`))
+	request.AddCookie(loginResponse.Result().Cookies()[0])
+	request.Header.Set("X-Warden-CSRF", sess.CSRF)
+	response := httptest.NewRecorder()
+	a.require("launcher.configure.all", a.launcherConfig).ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("settings-only launcher status = %d, want 403", response.Code)
 	}
 }

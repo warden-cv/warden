@@ -72,7 +72,8 @@ browsers and users of the installation. Its JSON import/export format is the
 same versioned `warden-instances.json` format used by `my.warden.cv`: each entry
 contains a name, domain or IP, and optional port. Browser-local IDs are not
 exported, imports are validated completely before the existing catalogue is
-replaced, and launcher mutations require the `settings.manage` capability plus
+replaced, and launcher mutations require the dedicated
+`launcher.configure.all` capability plus
 the normal Warden CSRF token.
 
 Instance entries describe origins rather than application paths. Warden always
