@@ -96,6 +96,24 @@ administration remains available during the transition, while `/manage/`
 establishes the shared route and interaction contract for the other Gantry Go
 applications.
 
+### Upgrade and account recovery guarantees
+
+Existing `users.json`, `roles.json` and `sessions.json` files retain their
+version-1 wire format while their validation, password, session and CSRF
+mechanics are supplied by Gantry Core. Existing sessions therefore survive the
+upgrade; invalid, expired, disabled-account and disabled-identity sessions are
+still rejected.
+
+SQLite migration 11 adds the launcher catalogue transactionally. The migration
+suite opens every historical schema prefix and checks that pre-existing data is
+preserved before the new empty catalogue becomes active.
+
+A fresh installation still creates its first password-backed administrator at
+`/app/`. Warden prevents removal of the final enabled password-backed
+administrator, supports one-use TOTP recovery codes, and supports encrypted
+configuration backups. An authenticated administrator can reset authentication
+to return the installation to first-run setup without deleting workspace files.
+
 Warden binds to loopback by default. Loopback development automatically uses a non-Secure session cookie so plain `http://127.0.0.1` works correctly. Non-loopback listeners default to Secure cookies; behind an HTTPS reverse proxy enable `WARDEN_TRUST_PROXY=true`; Warden accepts forwarded scheme/client headers only from a loopback proxy and marks HTTPS sessions Secure.
 
 The listener is configured with `--host`/`--port` and the `WARDEN_HOST`/`WARDEN_PORT` environment variables, in that precedence order:

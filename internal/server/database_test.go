@@ -24,6 +24,10 @@ func TestDatabaseFoundation(t *testing.T) {
 	if version != len(databaseMigrations) {
 		t.Fatalf("schema version = %d, want %d", version, len(databaseMigrations))
 	}
+	var launcherRows int
+	if err := db.QueryRow("SELECT COUNT(*) FROM launcher_instances").Scan(&launcherRows); err != nil || launcherRows != 0 {
+		t.Fatalf("fresh launcher catalogue = %d rows, err=%v", launcherRows, err)
+	}
 	info, err := os.Stat(filepath.Join(dir, "warden.db"))
 	if err != nil {
 		t.Fatal(err)

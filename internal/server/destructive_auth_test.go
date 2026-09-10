@@ -65,7 +65,11 @@ func TestAuthenticationResetRequiresActingAdministratorPassword(t *testing.T) {
 	if _, err := accounts.createInitialAdmin("Admin", "admin", "administrator-password"); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: cfg, config: store, accounts: accounts}
+	secrets, err := loadSecretStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: cfg, config: store, accounts: accounts, secrets: secrets}
 	a.auth = newAuth(accounts, false, dir)
 	reqLogin := httptest.NewRequest(http.MethodPost, "http://warden/api/login", nil)
 	reqLogin.RemoteAddr = "127.0.0.1:1"
@@ -89,5 +93,16 @@ func TestAuthenticationResetRequiresActingAdministratorPassword(t *testing.T) {
 	}
 	if accounts.empty() {
 		t.Fatal("accounts reset despite wrong password")
+	}
+	if got := call("administrator-password"); got != http.StatusOK {
+		t.Fatalf("correct password status=%d", got)
+	}
+	if !accounts.empty() {
+		t.Fatal("accounts remained after authorized authentication reset")
+	}
+	status := httptest.NewRecorder()
+	a.setupStatus(status, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/setup/status", nil))
+	if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte(`"required":true`)) {
+		t.Fatalf("reset did not restore first-run setup: %d %s", status.Code, status.Body.String())
 	}
 }
