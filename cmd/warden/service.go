@@ -1406,6 +1406,7 @@ func runService(args []string, version string) int {
 			fmt.Fprintln(os.Stderr, "warden:", err)
 			return 1
 		}
+		fmt.Fprintln(os.Stdout, serviceLifecycleSuccess(cmd))
 		return 0
 	case "status":
 		if err := m.status(os.Stdout, version); err != nil {
@@ -1429,4 +1430,11 @@ func runService(args []string, version string) int {
 		fmt.Fprintf(os.Stderr, "warden: unknown service command %q\n\nUsage: warden service <install|start|stop|restart|status|logs|uninstall> [flags]\n", cmd)
 		return 2
 	}
+}
+
+func serviceLifecycleSuccess(verb string) string {
+	words := map[string]string{
+		"start": "started", "stop": "stopped", "restart": "restarted",
+	}
+	return "warden.service " + words[verb] + "."
 }

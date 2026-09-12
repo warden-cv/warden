@@ -28,6 +28,19 @@ func init() {
 	installHealthDeadline = 100 * time.Millisecond
 }
 
+func TestServiceLifecycleSuccessGrammar(t *testing.T) {
+	want := map[string]string{
+		"start":   "warden.service started.",
+		"stop":    "warden.service stopped.",
+		"restart": "warden.service restarted.",
+	}
+	for verb, expected := range want {
+		if got := serviceLifecycleSuccess(verb); got != expected {
+			t.Fatalf("%s message = %q, want %q", verb, got, expected)
+		}
+	}
+}
+
 // healthIdentityBody is a valid Warden liveness body: the setup-status shape
 // plus the exact identity values (ok:true, service:"warden") the checker now
 // requires. A plausible setup-shaped body without that identity must be
