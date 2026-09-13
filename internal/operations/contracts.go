@@ -84,7 +84,7 @@ var specs = []spec{
 	s("warden.terminal-sessions.delete", "DELETE", "/api/terminal/sessions", "terminal-sessions", "delete", operation.Destructive, "internal/server/terminal_sessions_test.go"),
 }
 
-func init() {
+func prepareSpecs() {
 	for _, kind := range []string{"certs", "cron", "docker", "fail2ban", "firewall", "services", "ssh", "users", "warden", "access", "audit"} {
 		cap := "system.read"
 		if kind == "warden" {
@@ -117,7 +117,7 @@ func init() {
 	}
 }
 
-var Contracts = buildContracts()
+var Contracts = func() []operation.Contract { prepareSpecs(); return buildContracts() }()
 
 func buildContracts() []operation.Contract {
 	inventory := map[string]server.OperationRoute{}

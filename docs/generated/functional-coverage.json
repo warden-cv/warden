@@ -3,6 +3,310 @@
   "project": "warden",
   "operations": [
     {
+      "operation": "warden.admin.access.action",
+      "website": true,
+      "method": "POST",
+      "route": "/api/admin/access/action",
+      "cli": "admin-access action",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "accounts.manage",
+      "input_schema": "warden.admin.access.action.request.v1",
+      "output_schema": "warden.admin.access.action.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.access.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/admin/access",
+      "cli": "admin-access get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "accounts.manage",
+      "output_schema": "warden.admin.access.read.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.audit.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/admin/audit",
+      "cli": "admin-audit get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "audit.read",
+      "output_schema": "warden.admin.audit.read.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.certs.action",
+      "website": true,
+      "method": "POST",
+      "route": "/api/admin/certs/action",
+      "cli": "admin-certs action",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.manage",
+      "input_schema": "warden.admin.certs.action.request.v1",
+      "output_schema": "warden.admin.certs.action.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.certs.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/admin/certs",
+      "cli": "admin-certs get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.read",
+      "output_schema": "warden.admin.certs.read.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.cron.action",
+      "website": true,
+      "method": "POST",
+      "route": "/api/admin/cron/action",
+      "cli": "admin-cron action",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.manage",
+      "input_schema": "warden.admin.cron.action.request.v1",
+      "output_schema": "warden.admin.cron.action.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.cron.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/admin/cron",
+      "cli": "admin-cron get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.read",
+      "output_schema": "warden.admin.cron.read.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.docker.action",
+      "website": true,
+      "method": "POST",
+      "route": "/api/admin/docker/action",
+      "cli": "admin-docker action",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.manage",
+      "input_schema": "warden.admin.docker.action.request.v1",
+      "output_schema": "warden.admin.docker.action.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.docker.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/admin/docker",
+      "cli": "admin-docker get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.read",
+      "output_schema": "warden.admin.docker.read.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.fail2ban.action",
+      "website": true,
+      "method": "POST",
+      "route": "/api/admin/fail2ban/action",
+      "cli": "admin-fail2ban action",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.manage",
+      "input_schema": "warden.admin.fail2ban.action.request.v1",
+      "output_schema": "warden.admin.fail2ban.action.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.fail2ban.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/admin/fail2ban",
+      "cli": "admin-fail2ban get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.read",
+      "output_schema": "warden.admin.fail2ban.read.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.firewall.action",
+      "website": true,
+      "method": "POST",
+      "route": "/api/admin/firewall/action",
+      "cli": "admin-firewall action",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.manage",
+      "input_schema": "warden.admin.firewall.action.request.v1",
+      "output_schema": "warden.admin.firewall.action.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.firewall.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/admin/firewall",
+      "cli": "admin-firewall get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.read",
+      "output_schema": "warden.admin.firewall.read.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.services.action",
+      "website": true,
+      "method": "POST",
+      "route": "/api/admin/services/action",
+      "cli": "admin-services action",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.manage",
+      "input_schema": "warden.admin.services.action.request.v1",
+      "output_schema": "warden.admin.services.action.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.services.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/admin/services",
+      "cli": "admin-services get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.read",
+      "output_schema": "warden.admin.services.read.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.ssh.action",
+      "website": true,
+      "method": "POST",
+      "route": "/api/admin/ssh/action",
+      "cli": "admin-ssh action",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.manage",
+      "input_schema": "warden.admin.ssh.action.request.v1",
+      "output_schema": "warden.admin.ssh.action.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.ssh.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/admin/ssh",
+      "cli": "admin-ssh get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.read",
+      "output_schema": "warden.admin.ssh.read.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.users.action",
+      "website": true,
+      "method": "POST",
+      "route": "/api/admin/users/action",
+      "cli": "admin-users action",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.manage",
+      "input_schema": "warden.admin.users.action.request.v1",
+      "output_schema": "warden.admin.users.action.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.users.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/admin/users",
+      "cli": "admin-users get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.read",
+      "output_schema": "warden.admin.users.read.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.warden.action",
+      "website": true,
+      "method": "POST",
+      "route": "/api/admin/warden/action",
+      "cli": "admin-warden action",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "settings.manage",
+      "input_schema": "warden.admin.warden.action.request.v1",
+      "output_schema": "warden.admin.warden.action.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
+      "operation": "warden.admin.warden.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/admin/warden",
+      "cli": "admin-warden get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "settings.manage",
+      "output_schema": "warden.admin.warden.read.response.v1",
+      "tests": [
+        "internal/server/admin_test.go"
+      ]
+    },
+    {
       "operation": "warden.agent.cancel",
       "website": true,
       "method": "POST",

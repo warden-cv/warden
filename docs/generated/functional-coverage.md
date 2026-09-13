@@ -4,6 +4,27 @@ Generated from the tested operation manifest. Do not edit by hand.
 
 | Operation | Website | API | CLI | Permission | Schemas | Tests |
 | --- | :---: | --- | --- | --- | --- | --- |
+| `warden.admin.access.action` | yes | `POST /api/admin/access/action` | `admin-access action` | `capability:accounts.manage` | `warden.admin.access.action.request.v1 → warden.admin.access.action.response.v1` | internal/server/admin_test.go |
+| `warden.admin.access.read` | yes | `GET /api/admin/access` | `admin-access get` | `capability:accounts.manage` | `— → warden.admin.access.read.response.v1` | internal/server/admin_test.go |
+| `warden.admin.audit.read` | yes | `GET /api/admin/audit` | `admin-audit get` | `capability:audit.read` | `— → warden.admin.audit.read.response.v1` | internal/server/admin_test.go |
+| `warden.admin.certs.action` | yes | `POST /api/admin/certs/action` | `admin-certs action` | `capability:system.manage` | `warden.admin.certs.action.request.v1 → warden.admin.certs.action.response.v1` | internal/server/admin_test.go |
+| `warden.admin.certs.read` | yes | `GET /api/admin/certs` | `admin-certs get` | `capability:system.read` | `— → warden.admin.certs.read.response.v1` | internal/server/admin_test.go |
+| `warden.admin.cron.action` | yes | `POST /api/admin/cron/action` | `admin-cron action` | `capability:system.manage` | `warden.admin.cron.action.request.v1 → warden.admin.cron.action.response.v1` | internal/server/admin_test.go |
+| `warden.admin.cron.read` | yes | `GET /api/admin/cron` | `admin-cron get` | `capability:system.read` | `— → warden.admin.cron.read.response.v1` | internal/server/admin_test.go |
+| `warden.admin.docker.action` | yes | `POST /api/admin/docker/action` | `admin-docker action` | `capability:system.manage` | `warden.admin.docker.action.request.v1 → warden.admin.docker.action.response.v1` | internal/server/admin_test.go |
+| `warden.admin.docker.read` | yes | `GET /api/admin/docker` | `admin-docker get` | `capability:system.read` | `— → warden.admin.docker.read.response.v1` | internal/server/admin_test.go |
+| `warden.admin.fail2ban.action` | yes | `POST /api/admin/fail2ban/action` | `admin-fail2ban action` | `capability:system.manage` | `warden.admin.fail2ban.action.request.v1 → warden.admin.fail2ban.action.response.v1` | internal/server/admin_test.go |
+| `warden.admin.fail2ban.read` | yes | `GET /api/admin/fail2ban` | `admin-fail2ban get` | `capability:system.read` | `— → warden.admin.fail2ban.read.response.v1` | internal/server/admin_test.go |
+| `warden.admin.firewall.action` | yes | `POST /api/admin/firewall/action` | `admin-firewall action` | `capability:system.manage` | `warden.admin.firewall.action.request.v1 → warden.admin.firewall.action.response.v1` | internal/server/admin_test.go |
+| `warden.admin.firewall.read` | yes | `GET /api/admin/firewall` | `admin-firewall get` | `capability:system.read` | `— → warden.admin.firewall.read.response.v1` | internal/server/admin_test.go |
+| `warden.admin.services.action` | yes | `POST /api/admin/services/action` | `admin-services action` | `capability:system.manage` | `warden.admin.services.action.request.v1 → warden.admin.services.action.response.v1` | internal/server/admin_test.go |
+| `warden.admin.services.read` | yes | `GET /api/admin/services` | `admin-services get` | `capability:system.read` | `— → warden.admin.services.read.response.v1` | internal/server/admin_test.go |
+| `warden.admin.ssh.action` | yes | `POST /api/admin/ssh/action` | `admin-ssh action` | `capability:system.manage` | `warden.admin.ssh.action.request.v1 → warden.admin.ssh.action.response.v1` | internal/server/admin_test.go |
+| `warden.admin.ssh.read` | yes | `GET /api/admin/ssh` | `admin-ssh get` | `capability:system.read` | `— → warden.admin.ssh.read.response.v1` | internal/server/admin_test.go |
+| `warden.admin.users.action` | yes | `POST /api/admin/users/action` | `admin-users action` | `capability:system.manage` | `warden.admin.users.action.request.v1 → warden.admin.users.action.response.v1` | internal/server/admin_test.go |
+| `warden.admin.users.read` | yes | `GET /api/admin/users` | `admin-users get` | `capability:system.read` | `— → warden.admin.users.read.response.v1` | internal/server/admin_test.go |
+| `warden.admin.warden.action` | yes | `POST /api/admin/warden/action` | `admin-warden action` | `capability:settings.manage` | `warden.admin.warden.action.request.v1 → warden.admin.warden.action.response.v1` | internal/server/admin_test.go |
+| `warden.admin.warden.read` | yes | `GET /api/admin/warden` | `admin-warden get` | `capability:settings.manage` | `— → warden.admin.warden.read.response.v1` | internal/server/admin_test.go |
 | `warden.agent.cancel` | yes | `POST /api/agent/cancel` | `agent cancel` | `capability:agent.run` | `warden.agent.cancel.request.v1 → warden.agent.cancel.response.v1` | internal/server/agent_test.go |
 | `warden.agent.diagnostics` | yes | `GET /api/agent/run-diagnostics` | `agent diagnostics` | `capability:agent.run` | `— → warden.agent.diagnostics.response.v1` | internal/server/agent_test.go |
 | `warden.agent.image` | yes | `GET /api/agent/image` | `agent image` | `capability:agent.run` | `— → warden.agent.image.response.v1` | internal/server/agent_test.go |
