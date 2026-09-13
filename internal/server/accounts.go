@@ -180,6 +180,16 @@ func (s *accountStore) createInitialAdmin(display, username, password string) (a
 	return a, nil
 }
 
+// SetupAdministrator performs first-run setup for trusted local automation.
+func SetupAdministrator(dir, display, username, password string) error {
+	accounts, err := loadAccountStore(dir)
+	if err != nil {
+		return err
+	}
+	_, err = accounts.createInitialAdmin(display, username, password)
+	return err
+}
+
 func newID(prefix string) string {
 	return coreauth.NewID(prefix)
 }

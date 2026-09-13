@@ -204,3 +204,7 @@ Coding-agent conversations, events and run state are stored server-side in Warde
 ## Install
 
 Release binaries embed the Nift-built frontend. On Linux or macOS, install per-user with `curl -fsSL https://warden.cv/install.sh | sh`, or system-wide with `curl -fsSL https://warden.cv/install.sh | sudo sh -s -- --system`. `go install github.com/warden-cv/warden/cmd/warden@latest` is also supported.
+
+## Headless administration
+
+Use `warden setup --password-file FILE`, `warden config show --json`, and `warden service ...` for scripted provisioning. Stop the service before `warden reset --auth` or `warden reset --all`; the commands require `WARDEN AUTH` or `WARDEN ALL` interactively or through `--confirm`, retain timestamped backups, and never delete the configured workspace root.
