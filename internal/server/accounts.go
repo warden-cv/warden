@@ -25,6 +25,7 @@ type rolesFile = coreauth.RolesFile
 type accountStore struct {
 	mu       sync.RWMutex
 	dir      string
+	model    *coreauth.Model
 	accounts accountsFile
 	roles    rolesFile
 }
@@ -51,7 +52,35 @@ func loadAccountStore(dir string) (*accountStore, error) {
 	if err := s.reload(); err != nil {
 		return nil, err
 	}
+	model, err := coreauth.NewModel(accountFilePersistence{dir: dir}, wardenAccountPolicy())
+	if err != nil {
+		return nil, err
+	}
+	s.model = model
 	return s, nil
+}
+
+type accountFilePersistence struct{ dir string }
+
+func (p accountFilePersistence) LoadAccounts() (accountsFile, error) {
+	var value accountsFile
+	err := readJSONStrict(filepath.Join(p.dir, "users.json"), &value)
+	return value, err
+}
+func (p accountFilePersistence) LoadRoles() (rolesFile, error) {
+	var value rolesFile
+	err := readJSONStrict(filepath.Join(p.dir, "roles.json"), &value)
+	return value, err
+}
+func (p accountFilePersistence) SaveAccounts(value accountsFile) error {
+	return writeJSONAtomic(filepath.Join(p.dir, "users.json"), value, true)
+}
+func (p accountFilePersistence) SaveRoles(value rolesFile) error {
+	return writeJSONAtomic(filepath.Join(p.dir, "roles.json"), value, true)
+}
+
+func wardenAccountPolicy() coreauth.AccountPolicy {
+	return coreauth.AccountPolicy{SchemaVersion: configSchemaVersion, ProductName: "Warden", KnownCapability: knownCapability}
 }
 
 func (s *accountStore) readCandidate() (accountsFile, rolesFile, error) {
@@ -82,30 +111,25 @@ func (s *accountStore) reload() error {
 		return err
 	}
 	s.applyCandidate(users, roles)
+	if s.model != nil {
+		return s.model.Reload()
+	}
 	return nil
 }
 
 func validateAccounts(users accountsFile, roles rolesFile) error {
-	return coreauth.ValidateAccounts(users, roles, coreauth.AccountPolicy{SchemaVersion: configSchemaVersion, ProductName: "Warden", KnownCapability: knownCapability})
+	return coreauth.ValidateAccounts(users, roles, wardenAccountPolicy())
 }
 
 func (s *accountStore) empty() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.accounts.Accounts) == 0
+	return s.model.Empty()
 }
 
 func (s *accountStore) findPassword(username string) (account, loginIdentity, bool) {
-	u := strings.ToLower(strings.TrimSpace(username))
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, a := range s.accounts.Accounts {
-		if !a.Enabled {
-			continue
-		}
-		for _, id := range a.Identities {
-			if id.Enabled && id.Type == "password" && strings.ToLower(id.Username) == u {
-				return a, id, true
+	for _, candidate := range s.model.Accounts() {
+		for _, identity := range candidate.Identities {
+			if candidate.Enabled && identity.Enabled && identity.Type == "password" && strings.EqualFold(identity.Username, strings.TrimSpace(username)) {
+				return candidate, identity, true
 			}
 		}
 	}
@@ -113,26 +137,15 @@ func (s *accountStore) findPassword(username string) (account, loginIdentity, bo
 }
 
 func (s *accountStore) accountByID(id string) (account, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, a := range s.accounts.Accounts {
-		if a.ID == id {
-			return a, true
-		}
-	}
-	return account{}, false
+	return s.model.Account(id)
 }
 func (s *accountStore) listAccounts() []account {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := append([]account(nil), s.accounts.Accounts...)
+	out := s.model.Accounts()
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].DisplayName) < strings.ToLower(out[j].DisplayName) })
 	return out
 }
 func (s *accountStore) listRoles() []role {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return append([]role(nil), s.roles.Roles...)
+	return s.model.Roles()
 }
 
 func (s *accountStore) createInitialAdmin(display, username, password string) (account, error) {
@@ -158,6 +171,9 @@ func (s *accountStore) createInitialAdmin(display, username, password string) (a
 		return account{}, err
 	}
 	if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
+		return account{}, err
+	}
+	if err := s.model.Reload(); err != nil {
 		return account{}, err
 	}
 	s.accounts = next
@@ -212,19 +228,7 @@ func defaultUserCapabilities() []string {
 }
 
 func (s *accountStore) capabilities(accountID string) []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var acct *account
-	for i := range s.accounts.Accounts {
-		if s.accounts.Accounts[i].ID == accountID {
-			acct = &s.accounts.Accounts[i]
-			break
-		}
-	}
-	if acct == nil || !acct.Enabled {
-		return nil
-	}
-	return coreauth.EffectiveCapabilities(*acct, s.roles.Roles)
+	return s.model.Capabilities(accountID)
 }
 func (s *accountStore) hasCapability(accountID, key string) bool {
 	return coreauth.HasCapability(s.capabilities(accountID), key)
@@ -252,6 +256,9 @@ func (s *accountStore) createAccount(display, username, password string, roles [
 		return account{}, err
 	}
 	if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
+		return account{}, err
+	}
+	if err := s.model.Reload(); err != nil {
 		return account{}, err
 	}
 	s.accounts = next
@@ -283,6 +290,9 @@ func (s *accountStore) updateAccount(id, display string, enabled bool, roles []s
 		return err
 	}
 	if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
+		return err
+	}
+	if err := s.model.Reload(); err != nil {
 		return err
 	}
 	s.accounts = next
@@ -345,6 +355,9 @@ func (s *accountStore) addIdentity(accountID string, id loginIdentity) error {
 		return err
 	}
 	if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
+		return err
+	}
+	if err := s.model.Reload(); err != nil {
 		return err
 	}
 	s.accounts = next
@@ -422,6 +435,9 @@ func (s *accountStore) setIdentityPassword(accountID, identityID, password strin
 	if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
 		return err
 	}
+	if err := s.model.Reload(); err != nil {
+		return err
+	}
 	s.accounts = next
 	return nil
 }
@@ -458,6 +474,9 @@ func (s *accountStore) setIdentityTOTP(accountID, identityID string, enabled boo
 	if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
 		return err
 	}
+	if err := s.model.Reload(); err != nil {
+		return err
+	}
 	s.accounts = next
 	return nil
 }
@@ -481,6 +500,9 @@ func (s *accountStore) consumeRecoveryCode(accountID, identityID, hash string) b
 				if hmac.Equal([]byte(saved), []byte(hash)) {
 					id.RecoveryCodeHashes = append(append([]string(nil), id.RecoveryCodeHashes[:k]...), id.RecoveryCodeHashes[k+1:]...)
 					if writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true) != nil {
+						return false
+					}
+					if s.model.Reload() != nil {
 						return false
 					}
 					s.accounts = next
@@ -527,6 +549,9 @@ func (s *accountStore) removeIdentity(accountID, identityID string) (loginIdenti
 		if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
 			return loginIdentity{}, err
 		}
+		if err := s.model.Reload(); err != nil {
+			return loginIdentity{}, err
+		}
 		s.accounts = next
 		return removed, nil
 	}
@@ -558,6 +583,9 @@ func (s *accountStore) deleteAccount(accountID string) ([]loginIdentity, error) 
 		return nil, err
 	}
 	if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
+		return nil, err
+	}
+	if err := s.model.Reload(); err != nil {
 		return nil, err
 	}
 	s.accounts = next
@@ -600,6 +628,9 @@ func (s *accountStore) setRole(id, name string, caps []string) error {
 		return err
 	}
 	if err := writeJSONAtomic(filepath.Join(s.dir, "roles.json"), next, true); err != nil {
+		return err
+	}
+	if err := s.model.Reload(); err != nil {
 		return err
 	}
 	s.roles = next
@@ -763,6 +794,9 @@ func (s *accountStore) resetAccounts() error {
 	defer s.mu.Unlock()
 	next := accountsFile{Version: configSchemaVersion, Accounts: []account{}}
 	if err := writeJSONAtomic(filepath.Join(s.dir, "users.json"), next, true); err != nil {
+		return err
+	}
+	if err := s.model.Reload(); err != nil {
 		return err
 	}
 	s.accounts = next

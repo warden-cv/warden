@@ -16,6 +16,9 @@ func TestSessionsAreBoundedAndIdentityStateIsRechecked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := accounts.createAccount("Backup Admin", "backup-admin", "administrator-password", []string{"administrator"}); err != nil {
+		t.Fatal(err)
+	}
 	auth := newAuth(accounts, false, dir)
 	var lastCookie *http.Cookie
 	for i := 0; i < maxSessionsPerAccount+5; i++ {
@@ -31,9 +34,9 @@ func TestSessionsAreBoundedAndIdentityStateIsRechecked(t *testing.T) {
 		t.Fatalf("sessions=%d", got)
 	}
 
-	accounts.mu.Lock()
-	accounts.accounts.Accounts[0].Identities[0].Enabled = false
-	accounts.mu.Unlock()
+	if err := accounts.model.SetIdentityEnabled(acct.ID, acct.Identities[0].ID, false); err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "http://warden/api/session", nil)
 	req.AddCookie(lastCookie)
 	if _, ok := auth.get(req); ok {
