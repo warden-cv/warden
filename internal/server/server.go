@@ -21,9 +21,9 @@ import (
 )
 
 type Config struct {
-	Listen, FileRoot, HomeDir, StaticDir, PasswordHash, Version, ConfigDir string
-	SecureCookies, TrustProxy                                              bool
-	StaticFS                                                               fs.FS
+	Listen, FileRoot, HomeDir, StaticDir, Version, ConfigDir string
+	SecureCookies, TrustProxy                                bool
+	StaticFS                                                 fs.FS
 }
 type app struct {
 	cfg         Config
@@ -144,7 +144,7 @@ func (a *app) setupStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method", 405)
 		return
 	}
-	jsonOut(w, map[string]any{"required": a.accounts.empty(), "legacyPasswordRequired": a.cfg.PasswordHash != "", "tokenRequired": !isLoopbackClient(r), "googleEnabled": a.googleReady(), "ok": true, "service": "warden"})
+	jsonOut(w, map[string]any{"required": a.accounts.empty(), "tokenRequired": !isLoopbackClient(r), "googleEnabled": a.googleReady(), "ok": true, "service": "warden"})
 }
 func (a *app) setup(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -155,17 +155,13 @@ func (a *app) setup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "setup already complete", 409)
 		return
 	}
-	var q struct{ DisplayName, Username, Password, LegacyPassword, SetupToken string }
+	var q struct{ DisplayName, Username, Password, SetupToken string }
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&q) != nil {
 		http.Error(w, "invalid json", 400)
 		return
 	}
 	if !isLoopbackClient(r) && subtle.ConstantTimeCompare([]byte(q.SetupToken), []byte(a.setupToken)) != 1 {
 		http.Error(w, "invalid setup token", 403)
-		return
-	}
-	if a.cfg.PasswordHash != "" && !verifyPassword(a.cfg.PasswordHash, q.LegacyPassword) {
-		http.Error(w, "existing Warden password is required", 403)
 		return
 	}
 	acct, err := a.accounts.createInitialAdmin(q.DisplayName, q.Username, q.Password)

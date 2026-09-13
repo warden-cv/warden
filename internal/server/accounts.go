@@ -103,6 +103,9 @@ func (s *accountStore) applyCandidate(users accountsFile, roles rolesFile) {
 	s.accounts = users
 	s.roles = roles
 	s.mu.Unlock()
+	if s.model != nil {
+		_ = s.model.Reload()
+	}
 }
 
 func (s *accountStore) reload() error {
@@ -111,9 +114,6 @@ func (s *accountStore) reload() error {
 		return err
 	}
 	s.applyCandidate(users, roles)
-	if s.model != nil {
-		return s.model.Reload()
-	}
 	return nil
 }
 

@@ -16,7 +16,7 @@ import (
 
 func testHash(password string) string {
 	salt := []byte("0123456789abcdef")
-	return "pbkdf2-sha256$100000$" + hex.EncodeToString(salt) + "$" + base64.RawStdEncoding.EncodeToString(pbkdf2([]byte(password), salt, 100000, 32))
+	return "pbkdf2-sha256$310000$" + hex.EncodeToString(salt) + "$" + base64.RawStdEncoding.EncodeToString(pbkdf2([]byte(password), salt, 310000, 32))
 }
 
 func TestPasswordVerification(t *testing.T) {

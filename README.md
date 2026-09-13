@@ -39,20 +39,13 @@ Warden intentionally keeps Nift as the build-time frontend layer. The Go backend
 go build -o warden ./cmd/warden
 ```
 
-Create a password hash (the cleartext password is not stored):
+Run Warden:
 
 ```sh
-./warden hash-password 'choose-a-strong-password'
-```
-
-Then run Warden:
-
-```sh
-export WARDEN_PASSWORD_HASH='pbkdf2-sha256$...'
 ./warden
 ```
 
-Open `http://127.0.0.1:7332`. Explorer and Terminal start in the server user's home directory, while the default Explorer/Editor filesystem boundary remains `/`, so the root breadcrumb can navigate to the whole machine. Use `--root /some/subtree` (or `WARDEN_FILE_ROOT`) when you intentionally want a narrower **file-management** view. This does not sandbox the PTY shell; terminal privilege must be controlled separately when Warden gains user/role levels.
+Open `http://127.0.0.1:7332` and create this installation's first administrator account. Explorer and Terminal start in the server user's home directory, while the default Explorer/Editor filesystem boundary remains `/`, so the root breadcrumb can navigate to the whole machine. Use `--root /some/subtree` (or `WARDEN_FILE_ROOT`) when you intentionally want a narrower **file-management** view. This does not sandbox the PTY shell; terminal privilege must be controlled separately when Warden gains user/role levels.
 
 ### Adaptive instance launcher
 
