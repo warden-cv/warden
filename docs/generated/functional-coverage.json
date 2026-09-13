@@ -1,0 +1,745 @@
+{
+  "schema_version": 1,
+  "project": "warden",
+  "operations": [
+    {
+      "operation": "warden.agent.cancel",
+      "website": true,
+      "method": "POST",
+      "route": "/api/agent/cancel",
+      "cli": "agent cancel",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "agent.run",
+      "input_schema": "warden.agent.cancel.request.v1",
+      "output_schema": "warden.agent.cancel.response.v1",
+      "tests": [
+        "internal/server/agent_test.go"
+      ]
+    },
+    {
+      "operation": "warden.agent.diagnostics",
+      "website": true,
+      "method": "GET",
+      "route": "/api/agent/run-diagnostics",
+      "cli": "agent diagnostics",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "agent.run",
+      "output_schema": "warden.agent.diagnostics.response.v1",
+      "tests": [
+        "internal/server/agent_test.go"
+      ]
+    },
+    {
+      "operation": "warden.agent.image",
+      "website": true,
+      "method": "GET",
+      "route": "/api/agent/image",
+      "cli": "agent image",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "agent.run",
+      "output_schema": "warden.agent.image.response.v1",
+      "tests": [
+        "internal/server/agent_test.go"
+      ]
+    },
+    {
+      "operation": "warden.agent.models",
+      "website": true,
+      "method": "GET",
+      "route": "/api/agent/models",
+      "cli": "agent models",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "ai.use",
+      "output_schema": "warden.agent.models.response.v1",
+      "tests": [
+        "internal/server/agent_test.go"
+      ]
+    },
+    {
+      "operation": "warden.agent.run",
+      "website": true,
+      "method": "POST",
+      "route": "/api/agent/run",
+      "cli": "agent run",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "agent.run",
+      "input_schema": "warden.agent.run.request.v1",
+      "output_schema": "warden.agent.run.response.v1",
+      "tests": [
+        "internal/server/agent_test.go"
+      ]
+    },
+    {
+      "operation": "warden.agent.status",
+      "website": true,
+      "method": "GET",
+      "route": "/api/agent/status",
+      "cli": "agent status",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "agent.run",
+      "output_schema": "warden.agent.status.response.v1",
+      "tests": [
+        "internal/server/agent_test.go"
+      ]
+    },
+    {
+      "operation": "warden.ai.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/ai",
+      "cli": "ai get",
+      "cli_observed": true,
+      "boundary": "session",
+      "output_schema": "warden.ai.read.response.v1",
+      "tests": [
+        "internal/server/ai_test.go"
+      ]
+    },
+    {
+      "operation": "warden.ai.update",
+      "website": true,
+      "method": "POST",
+      "route": "/api/ai",
+      "cli": "ai update",
+      "cli_observed": true,
+      "boundary": "session",
+      "input_schema": "warden.ai.update.request.v1",
+      "output_schema": "warden.ai.update.response.v1",
+      "tests": [
+        "internal/server/ai_test.go"
+      ]
+    },
+    {
+      "operation": "warden.alerts.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/alerts",
+      "cli": "alerts list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "monitor.read",
+      "output_schema": "warden.alerts.list.response.v1",
+      "tests": [
+        "internal/server/alerts_test.go"
+      ]
+    },
+    {
+      "operation": "warden.alerts.update",
+      "website": true,
+      "method": "POST",
+      "route": "/api/alerts",
+      "cli": "alerts update",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "monitor.read",
+      "input_schema": "warden.alerts.update.request.v1",
+      "output_schema": "warden.alerts.update.response.v1",
+      "tests": [
+        "internal/server/alerts_test.go"
+      ]
+    },
+    {
+      "operation": "warden.auth.login",
+      "website": true,
+      "method": "POST",
+      "route": "/api/login",
+      "cli": "auth login",
+      "cli_observed": true,
+      "boundary": "public",
+      "input_schema": "warden.auth.login.request.v1",
+      "output_schema": "warden.auth.login.response.v1",
+      "tests": [
+        "internal/server/security_test.go"
+      ]
+    },
+    {
+      "operation": "warden.auth.logout",
+      "website": true,
+      "method": "POST",
+      "route": "/api/logout",
+      "cli": "auth logout",
+      "cli_observed": true,
+      "boundary": "session",
+      "input_schema": "warden.auth.logout.request.v1",
+      "output_schema": "warden.auth.logout.response.v1",
+      "tests": [
+        "internal/server/server_test.go"
+      ]
+    },
+    {
+      "operation": "warden.auth.session",
+      "website": true,
+      "method": "GET",
+      "route": "/api/session",
+      "cli": "auth session",
+      "cli_observed": true,
+      "boundary": "public",
+      "output_schema": "warden.auth.session.response.v1",
+      "tests": [
+        "internal/server/server_test.go"
+      ]
+    },
+    {
+      "operation": "warden.auth.totp.login",
+      "website": true,
+      "method": "POST",
+      "route": "/api/login/totp",
+      "cli": "auth totp-login",
+      "cli_observed": true,
+      "boundary": "public",
+      "input_schema": "warden.auth.totp.login.request.v1",
+      "output_schema": "warden.auth.totp.login.response.v1",
+      "tests": [
+        "internal/server/security_test.go"
+      ]
+    },
+    {
+      "operation": "warden.config.export",
+      "website": true,
+      "method": "GET",
+      "route": "/api/warden/export",
+      "cli": "config export",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "settings.manage",
+      "output_schema": "warden.config.export.response.v1",
+      "tests": [
+        "internal/server/lifecycle_test.go"
+      ]
+    },
+    {
+      "operation": "warden.config.import",
+      "website": true,
+      "method": "POST",
+      "route": "/api/warden/import",
+      "cli": "config import",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "settings.manage",
+      "input_schema": "warden.config.import.request.v1",
+      "output_schema": "warden.config.import.response.v1",
+      "tests": [
+        "internal/server/lifecycle_test.go"
+      ]
+    },
+    {
+      "operation": "warden.config.secure-export",
+      "website": true,
+      "method": "POST",
+      "route": "/api/warden/export-secure",
+      "cli": "config secure-export",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "settings.manage",
+      "input_schema": "warden.config.secure-export.request.v1",
+      "output_schema": "warden.config.secure-export.response.v1",
+      "tests": [
+        "internal/server/backup_test.go"
+      ]
+    },
+    {
+      "operation": "warden.config.secure-import",
+      "website": true,
+      "method": "POST",
+      "route": "/api/warden/import-secure",
+      "cli": "config secure-import",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "settings.manage",
+      "input_schema": "warden.config.secure-import.request.v1",
+      "output_schema": "warden.config.secure-import.response.v1",
+      "tests": [
+        "internal/server/backup_test.go"
+      ]
+    },
+    {
+      "operation": "warden.conversation.delete",
+      "website": true,
+      "method": "DELETE",
+      "route": "/api/agent/conversation",
+      "cli": "conversation delete",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "agent.run",
+      "input_schema": "warden.conversation.delete.request.v1",
+      "output_schema": "warden.conversation.delete.response.v1",
+      "tests": [
+        "internal/server/conversations_test.go"
+      ]
+    },
+    {
+      "operation": "warden.conversation.update",
+      "website": true,
+      "method": "PUT",
+      "route": "/api/agent/conversation",
+      "cli": "conversation update",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "agent.run",
+      "input_schema": "warden.conversation.update.request.v1",
+      "output_schema": "warden.conversation.update.response.v1",
+      "tests": [
+        "internal/server/conversations_test.go"
+      ]
+    },
+    {
+      "operation": "warden.conversations.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/agent/conversations",
+      "cli": "conversations list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "agent.run",
+      "output_schema": "warden.conversations.list.response.v1",
+      "tests": [
+        "internal/server/conversations_test.go"
+      ]
+    },
+    {
+      "operation": "warden.file.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/file",
+      "cli": "file get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "files.read",
+      "output_schema": "warden.file.read.response.v1",
+      "tests": [
+        "internal/server/files_test.go"
+      ]
+    },
+    {
+      "operation": "warden.file.write",
+      "website": true,
+      "method": "PUT",
+      "route": "/api/file",
+      "cli": "file write",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "files.write",
+      "input_schema": "warden.file.write.request.v1",
+      "output_schema": "warden.file.write.response.v1",
+      "tests": [
+        "internal/server/files_test.go"
+      ]
+    },
+    {
+      "operation": "warden.files.archive",
+      "website": true,
+      "method": "GET",
+      "route": "/api/files/archive",
+      "cli": "files archive",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "files.read",
+      "output_schema": "warden.files.archive.response.v1",
+      "tests": [
+        "internal/server/archives_test.go"
+      ]
+    },
+    {
+      "operation": "warden.files.compress",
+      "website": true,
+      "method": "POST",
+      "route": "/api/files/compress",
+      "cli": "files compress",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "files.manage",
+      "input_schema": "warden.files.compress.request.v1",
+      "output_schema": "warden.files.compress.response.v1",
+      "tests": [
+        "internal/server/archives_test.go"
+      ]
+    },
+    {
+      "operation": "warden.files.extract",
+      "website": true,
+      "method": "POST",
+      "route": "/api/files/extract",
+      "cli": "files extract",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "files.manage",
+      "input_schema": "warden.files.extract.request.v1",
+      "output_schema": "warden.files.extract.response.v1",
+      "tests": [
+        "internal/server/archives_test.go"
+      ]
+    },
+    {
+      "operation": "warden.files.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/files",
+      "cli": "files list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "files.read",
+      "output_schema": "warden.files.list.response.v1",
+      "tests": [
+        "internal/server/files_test.go"
+      ]
+    },
+    {
+      "operation": "warden.files.mutate",
+      "website": true,
+      "method": "POST",
+      "route": "/api/files/mutate",
+      "cli": "files mutate",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "files.manage",
+      "input_schema": "warden.files.mutate.request.v1",
+      "output_schema": "warden.files.mutate.response.v1",
+      "tests": [
+        "internal/server/files_test.go"
+      ]
+    },
+    {
+      "operation": "warden.launcher.config.update",
+      "website": true,
+      "method": "PUT",
+      "route": "/api/launcher/config",
+      "cli": "launcher-config update",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "launcher.configure.all",
+      "input_schema": "warden.launcher.config.update.request.v1",
+      "output_schema": "warden.launcher.config.update.response.v1",
+      "tests": [
+        "internal/server/launcher_test.go"
+      ]
+    },
+    {
+      "operation": "warden.launcher.instances.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/launcher/instances",
+      "cli": "launcher-instances list",
+      "cli_observed": true,
+      "boundary": "public",
+      "output_schema": "warden.launcher.instances.list.response.v1",
+      "tests": [
+        "internal/server/launcher_test.go"
+      ]
+    },
+    {
+      "operation": "warden.monitor.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/monitor",
+      "cli": "monitor get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "monitor.read",
+      "output_schema": "warden.monitor.read.response.v1",
+      "tests": [
+        "internal/server/monitor_test.go"
+      ]
+    },
+    {
+      "operation": "warden.oauth.google.callback",
+      "website": false,
+      "method": "GET",
+      "route": "/api/oauth/google/callback",
+      "cli_observed": false,
+      "boundary": "public",
+      "output_schema": "warden.oauth.google.callback.response.v1",
+      "tests": [
+        "internal/server/google_test.go"
+      ]
+    },
+    {
+      "operation": "warden.oauth.google.start",
+      "website": true,
+      "method": "GET",
+      "route": "/api/oauth/google/start",
+      "cli_observed": false,
+      "boundary": "public",
+      "output_schema": "warden.oauth.google.start.response.v1",
+      "tests": [
+        "internal/server/google_test.go"
+      ]
+    },
+    {
+      "operation": "warden.roles.action",
+      "website": true,
+      "method": "POST",
+      "route": "/api/manage/roles/action",
+      "cli": "roles action",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "roles.manage",
+      "input_schema": "warden.roles.action.request.v1",
+      "output_schema": "warden.roles.action.response.v1",
+      "tests": [
+        "internal/server/manage_test.go"
+      ]
+    },
+    {
+      "operation": "warden.roles.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/manage/roles",
+      "cli": "roles list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "roles.manage",
+      "output_schema": "warden.roles.list.response.v1",
+      "tests": [
+        "internal/server/manage_test.go"
+      ]
+    },
+    {
+      "operation": "warden.security.read",
+      "website": true,
+      "method": "GET",
+      "route": "/api/security",
+      "cli": "security get",
+      "cli_observed": true,
+      "boundary": "session",
+      "output_schema": "warden.security.read.response.v1",
+      "tests": [
+        "internal/server/security_test.go"
+      ]
+    },
+    {
+      "operation": "warden.security.update",
+      "website": true,
+      "method": "POST",
+      "route": "/api/security",
+      "cli": "security update",
+      "cli_observed": true,
+      "boundary": "session",
+      "input_schema": "warden.security.update.request.v1",
+      "output_schema": "warden.security.update.response.v1",
+      "tests": [
+        "internal/server/security_test.go"
+      ]
+    },
+    {
+      "operation": "warden.setup.apply",
+      "website": true,
+      "method": "POST",
+      "route": "/api/setup",
+      "cli": "setup apply",
+      "cli_observed": true,
+      "boundary": "public",
+      "input_schema": "warden.setup.apply.request.v1",
+      "output_schema": "warden.setup.apply.response.v1",
+      "tests": [
+        "internal/server/server_test.go"
+      ]
+    },
+    {
+      "operation": "warden.setup.status",
+      "website": true,
+      "method": "GET",
+      "route": "/api/setup/status",
+      "cli": "setup status",
+      "cli_observed": true,
+      "boundary": "public",
+      "output_schema": "warden.setup.status.response.v1",
+      "tests": [
+        "internal/server/server_test.go"
+      ]
+    },
+    {
+      "operation": "warden.source.mutate",
+      "website": true,
+      "method": "POST",
+      "route": "/api/source-control/mutate",
+      "cli": "source-control mutate",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "source.write",
+      "input_schema": "warden.source.mutate.request.v1",
+      "output_schema": "warden.source.mutate.response.v1",
+      "tests": [
+        "internal/server/sourcecontrol_test.go"
+      ]
+    },
+    {
+      "operation": "warden.source.status",
+      "website": true,
+      "method": "GET",
+      "route": "/api/source-control/status",
+      "cli": "source-control status",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "source.read",
+      "output_schema": "warden.source.status.response.v1",
+      "tests": [
+        "internal/server/sourcecontrol_test.go"
+      ]
+    },
+    {
+      "operation": "warden.terminal-sessions.delete",
+      "website": true,
+      "method": "DELETE",
+      "route": "/api/terminal/sessions",
+      "cli": "terminal-sessions delete",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "terminal.open",
+      "input_schema": "warden.terminal-sessions.delete.request.v1",
+      "output_schema": "warden.terminal-sessions.delete.response.v1",
+      "tests": [
+        "internal/server/terminal_sessions_test.go"
+      ]
+    },
+    {
+      "operation": "warden.terminal-sessions.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/terminal/sessions",
+      "cli": "terminal-sessions list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "terminal.open",
+      "output_schema": "warden.terminal-sessions.list.response.v1",
+      "tests": [
+        "internal/server/terminal_sessions_test.go"
+      ]
+    },
+    {
+      "operation": "warden.terminal-sessions.update",
+      "website": true,
+      "method": "PUT",
+      "route": "/api/terminal/sessions",
+      "cli": "terminal-sessions update",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "terminal.open",
+      "input_schema": "warden.terminal-sessions.update.request.v1",
+      "output_schema": "warden.terminal-sessions.update.response.v1",
+      "tests": [
+        "internal/server/terminal_sessions_test.go"
+      ]
+    },
+    {
+      "operation": "warden.terminal.open",
+      "website": true,
+      "method": "GET",
+      "route": "/api/terminal",
+      "cli_observed": false,
+      "boundary": "capability",
+      "permission": "terminal.open",
+      "output_schema": "warden.terminal.open.response.v1",
+      "tests": [
+        "internal/server/terminal_test.go"
+      ]
+    },
+    {
+      "operation": "warden.users.action",
+      "website": true,
+      "method": "POST",
+      "route": "/api/manage/users/action",
+      "cli": "users action",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "accounts.manage",
+      "input_schema": "warden.users.action.request.v1",
+      "output_schema": "warden.users.action.response.v1",
+      "tests": [
+        "internal/server/manage_test.go"
+      ]
+    },
+    {
+      "operation": "warden.users.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/manage/users",
+      "cli": "users list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "accounts.manage",
+      "output_schema": "warden.users.list.response.v1",
+      "tests": [
+        "internal/server/manage_test.go"
+      ]
+    },
+    {
+      "operation": "warden.websites.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/websites",
+      "cli": "websites list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.read",
+      "output_schema": "warden.websites.list.response.v1",
+      "tests": [
+        "internal/server/websites_test.go"
+      ]
+    },
+    {
+      "operation": "warden.websites.update",
+      "website": true,
+      "method": "POST",
+      "route": "/api/websites",
+      "cli": "websites update",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "system.read",
+      "input_schema": "warden.websites.update.request.v1",
+      "output_schema": "warden.websites.update.response.v1",
+      "tests": [
+        "internal/server/websites_test.go"
+      ]
+    },
+    {
+      "operation": "warden.workspace.replace",
+      "website": true,
+      "method": "POST",
+      "route": "/api/workspace/replace",
+      "cli": "workspace replace",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "workspace.replace",
+      "input_schema": "warden.workspace.replace.request.v1",
+      "output_schema": "warden.workspace.replace.response.v1",
+      "tests": [
+        "internal/server/workspace_test.go"
+      ]
+    },
+    {
+      "operation": "warden.workspace.search",
+      "website": true,
+      "method": "GET",
+      "route": "/api/workspace/search",
+      "cli": "workspace search",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "workspace.search",
+      "output_schema": "warden.workspace.search.response.v1",
+      "tests": [
+        "internal/server/workspace_test.go"
+      ]
+    },
+    {
+      "operation": "warden.workspace.undo",
+      "website": true,
+      "method": "POST",
+      "route": "/api/workspace/replace/undo",
+      "cli": "workspace undo",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "workspace.replace",
+      "input_schema": "warden.workspace.undo.request.v1",
+      "output_schema": "warden.workspace.undo.response.v1",
+      "tests": [
+        "internal/server/workspace_test.go"
+      ]
+    }
+  ]
+}

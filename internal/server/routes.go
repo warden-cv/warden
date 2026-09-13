@@ -50,3 +50,49 @@ func (a *app) apiRoutes() []registeredRoute {
 		capability("/api/terminal/sessions", "terminal.open", a.terminalSessionsAPI),
 	}
 }
+
+// OperationRoute is the runtime API evidence used by the Phase-5 operation
+// coverage manifest. Methods reflect the handlers actually exposed on each
+// registered route; the /api/admin/ prefix is expanded into its supported
+// resource/action paths so coverage is expressed at callable-operation level.
+type OperationRoute struct {
+	Method     string
+	Path       string
+	Boundary   string
+	Capability string
+}
+
+func (a *app) OperationRouteInventory() []OperationRoute {
+	methods := map[string][]string{
+		"/api/setup/status": {http.MethodGet}, "/api/setup": {http.MethodPost}, "/api/login": {http.MethodPost}, "/api/login/totp": {http.MethodPost},
+		"/api/oauth/google/start": {http.MethodGet}, "/api/oauth/google/callback": {http.MethodGet}, "/api/launcher/instances": {http.MethodGet}, "/api/launcher/config": {http.MethodPut},
+		"/api/manage/users": {http.MethodGet}, "/api/manage/users/action": {http.MethodPost}, "/api/manage/roles": {http.MethodGet}, "/api/manage/roles/action": {http.MethodPost},
+		"/api/security": {http.MethodGet, http.MethodPost}, "/api/ai": {http.MethodGet, http.MethodPost},
+		"/api/agent/status": {http.MethodGet}, "/api/agent/run": {http.MethodPost}, "/api/agent/cancel": {http.MethodPost}, "/api/agent/run-diagnostics": {http.MethodGet}, "/api/agent/image": {http.MethodGet}, "/api/agent/models": {http.MethodGet},
+		"/api/agent/conversations": {http.MethodGet}, "/api/agent/conversation": {http.MethodPut, http.MethodDelete},
+		"/api/logout": {http.MethodPost}, "/api/session": {http.MethodGet}, "/api/monitor": {http.MethodGet}, "/api/alerts": {http.MethodGet, http.MethodPost}, "/api/websites": {http.MethodGet, http.MethodPost},
+		"/api/files": {http.MethodGet}, "/api/file": {http.MethodGet, http.MethodPut}, "/api/files/mutate": {http.MethodPost}, "/api/files/archive": {http.MethodGet}, "/api/files/compress": {http.MethodPost}, "/api/files/extract": {http.MethodPost},
+		"/api/workspace/search": {http.MethodGet}, "/api/workspace/replace": {http.MethodPost}, "/api/workspace/replace/undo": {http.MethodPost}, "/api/source-control/status": {http.MethodGet}, "/api/source-control/mutate": {http.MethodPost},
+		"/api/warden/export": {http.MethodGet}, "/api/warden/import": {http.MethodPost}, "/api/warden/export-secure": {http.MethodPost}, "/api/warden/import-secure": {http.MethodPost},
+		"/api/terminal": {http.MethodGet}, "/api/terminal/sessions": {http.MethodGet, http.MethodPut, http.MethodDelete},
+	}
+	out := make([]OperationRoute, 0, 80)
+	for _, r := range a.apiRoutes() {
+		if r.Policy.Path == "/api/admin/" {
+			continue
+		}
+		for _, method := range methods[r.Policy.Path] {
+			out = append(out, OperationRoute{Method: method, Path: r.Policy.Path, Boundary: r.Policy.Boundary, Capability: r.Policy.Capability})
+		}
+	}
+	for _, kind := range []string{"certs", "cron", "docker", "fail2ban", "firewall", "services", "ssh", "users", "warden", "access", "audit"} {
+		capability := requiredAdminCapability(kind, http.MethodGet)
+		out = append(out, OperationRoute{Method: http.MethodGet, Path: "/api/admin/" + kind, Boundary: "capability", Capability: capability})
+		if kind != "audit" {
+			out = append(out, OperationRoute{Method: http.MethodPost, Path: "/api/admin/" + kind + "/action", Boundary: "capability", Capability: requiredAdminCapability(kind, http.MethodPost)})
+		}
+	}
+	return out
+}
+
+func OperationRouteInventory() []OperationRoute { return (&app{}).OperationRouteInventory() }

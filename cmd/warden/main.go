@@ -8,7 +8,9 @@ import (
 	"strconv"
 
 	coreauth "github.com/gantry-tools/gantry-core/auth"
+	"github.com/gantry-tools/gantry-core/automation"
 	wardenassets "github.com/warden-cv/warden"
+	"github.com/warden-cv/warden/internal/operations"
 	"github.com/warden-cv/warden/internal/server"
 )
 
@@ -47,8 +49,7 @@ func main() {
 			return
 		default:
 			if os.Args[1][0] != '-' {
-				fmt.Fprintln(os.Stderr, "warden: unknown command", os.Args[1])
-				os.Exit(2)
+				os.Exit(automation.Run(os.Args[1:], operations.Contracts, automation.Options{Program: "warden", DefaultURL: "http://127.0.0.1:7332", CookieName: "warden_session", CSRFHeader: "X-Warden-CSRF", CSRFFields: []string{"csrf"}, SessionInfoPath: "/api/session"}))
 			}
 		}
 	}
