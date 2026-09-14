@@ -62,7 +62,7 @@ func TestAuthenticationResetRequiresActingAdministratorPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := accounts.createInitialAdmin("Admin", "admin", "administrator-password"); err != nil {
+	if _, err := accounts.createInitialAdmin("Admin", "admin", "admin@example.com", "administrator-password"); err != nil {
 		t.Fatal(err)
 	}
 	secrets, err := loadSecretStore(dir)

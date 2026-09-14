@@ -41,7 +41,7 @@ func TestRecoveryCodeCompletesLoginOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	acct, err := accounts.createInitialAdmin("Admin", "admin", "administrator-password")
+	acct, err := accounts.createInitialAdmin("Admin", "admin", "admin@example.com", "administrator-password")
 	if err != nil {
 		t.Fatal(err)
 	}

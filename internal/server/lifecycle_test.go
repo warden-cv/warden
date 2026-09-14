@@ -59,7 +59,7 @@ func TestPortableImportRequiresAdministrator(t *testing.T) {
 
 func TestResetInstanceDoesNotDeleteWorkspaceFiles(t *testing.T) {
 	a := newLifecycleTestApp(t)
-	if _, err := a.accounts.createInitialAdmin("Admin", "admin", "very-secure-password"); err != nil {
+	if _, err := a.accounts.createInitialAdmin("Admin", "admin", "admin@example.com", "very-secure-password"); err != nil {
 		t.Fatal(err)
 	}
 	workspace := t.TempDir()

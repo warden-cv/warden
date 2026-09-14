@@ -20,10 +20,10 @@ func TestAccountCanManageOwnPersistentEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := accounts.createInitialAdmin("Admin", "admin", "administrator-password"); err != nil {
+	if _, err := accounts.createInitialAdmin("Admin", "admin", "admin@example.com", "administrator-password"); err != nil {
 		t.Fatal(err)
 	}
-	user, err := accounts.createAccount("User", "user", "ordinary-user-password", nil)
+	user, err := accounts.createAccount("User", "user", "admin@example.com", "ordinary-user-password", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestPasswordChangeKeepsCurrentSessionAndRevokesOtherIdentitySessions(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	acct, err := accounts.createInitialAdmin("Admin", "admin", "administrator-password")
+	acct, err := accounts.createInitialAdmin("Admin", "admin", "admin@example.com", "administrator-password")
 	if err != nil {
 		t.Fatal(err)
 	}

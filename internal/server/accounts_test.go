@@ -14,14 +14,14 @@ func TestInitialAdminAndPersistentSession(t *testing.T) {
 	if !accounts.empty() {
 		t.Fatal("new account store should be empty")
 	}
-	acct, err := accounts.createInitialAdmin("Primary user", "nick", "a-long-enough-password")
+	acct, err := accounts.createInitialAdmin("Primary user", "nick", "admin@example.com", "a-long-enough-password")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if acct.ID == "" || len(acct.Roles) != 1 || acct.Roles[0] != "administrator" {
 		t.Fatalf("unexpected account: %#v", acct)
 	}
-	if _, err := accounts.createInitialAdmin("Other", "other", "another-long-password"); err == nil {
+	if _, err := accounts.createInitialAdmin("Other", "other", "admin@example.com", "another-long-password"); err == nil {
 		t.Fatal("second initial admin unexpectedly succeeded")
 	}
 
@@ -67,11 +67,11 @@ func TestCapabilitiesAndLastAdministratorInvariant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin, err := store.createInitialAdmin("Admin", "admin", "administrator-pass")
+	admin, err := store.createInitialAdmin("Admin", "admin", "admin@example.com", "administrator-pass")
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := store.createAccount("Developer", "dev", "developer-password", nil)
+	user, err := store.createAccount("Developer", "dev", "admin@example.com", "developer-password", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,14 +101,14 @@ func TestAccountIdentityAndDeletionInvariants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin, err := store.createInitialAdmin("Admin", "admin", "1234567890password")
+	admin, err := store.createInitialAdmin("Admin", "admin", "admin@example.com", "1234567890password")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.deleteAccount(admin.ID); err == nil {
 		t.Fatal("deleted final administrator")
 	}
-	user, err := store.createAccount("User", "user", "1234567890password", []string{"user"})
+	user, err := store.createAccount("User", "user", "admin@example.com", "1234567890password", []string{"user"})
 	if err != nil {
 		t.Fatal(err)
 	}

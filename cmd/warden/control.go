@@ -38,9 +38,10 @@ func runSetup(args []string) int {
 	dir := fs.String("config", server.DefaultConfigDir(), "configuration directory")
 	display := fs.String("display-name", "Administrator", "display name")
 	username := fs.String("username", "admin", "login username")
+	email := fs.String("email", "", "login email (optional)")
 	passwordFile := fs.String("password-file", "", "file containing the password")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *passwordFile == "" {
-		fmt.Fprintln(os.Stderr, "usage: warden setup --password-file FILE [--username NAME] [--display-name NAME] [--config DIR]")
+		fmt.Fprintln(os.Stderr, "usage: warden setup --password-file FILE [--username NAME] [--email EMAIL] [--display-name NAME] [--config DIR]")
 		return 2
 	}
 	password, err := os.ReadFile(*passwordFile)
@@ -49,7 +50,7 @@ func runSetup(args []string) int {
 		return 1
 	}
 	if err = os.MkdirAll(*dir, 0700); err == nil {
-		err = server.SetupAdministrator(*dir, *display, *username, strings.TrimRight(string(password), "\r\n"))
+		err = server.SetupAdministrator(*dir, *display, *username, *email, strings.TrimRight(string(password), "\r\n"))
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "warden:", err)

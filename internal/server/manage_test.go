@@ -9,7 +9,7 @@ import (
 
 func TestManageRootRequiresManagementCapability(t *testing.T) {
 	a := launcherTestApp(t)
-	if _, err := a.accounts.createInitialAdmin("Admin", "admin", "administrator-password"); err != nil {
+	if _, err := a.accounts.createInitialAdmin("Admin", "admin", "admin@example.com", "administrator-password"); err != nil {
 		t.Fatal(err)
 	}
 	static := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

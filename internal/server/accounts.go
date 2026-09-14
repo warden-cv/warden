@@ -148,9 +148,10 @@ func (s *accountStore) listRoles() []role {
 	return s.model.Roles()
 }
 
-func (s *accountStore) createInitialAdmin(display, username, password string) (account, error) {
+func (s *accountStore) createInitialAdmin(display, username, email, password string) (account, error) {
 	display = strings.TrimSpace(display)
 	username = strings.TrimSpace(username)
+	email = strings.TrimSpace(email)
 	if display == "" || username == "" || len(password) < 7 {
 		return account{}, errors.New("display name, username and a password of at least 7 characters are required")
 	}
@@ -164,7 +165,7 @@ func (s *accountStore) createInitialAdmin(display, username, password string) (a
 		return account{}, errors.New("setup is already complete")
 	}
 	now := time.Now().UTC()
-	a := account{ID: newID("acct"), DisplayName: display, Enabled: true, Roles: []string{"administrator"}, CreatedAt: now, Identities: []loginIdentity{{ID: newID("id"), Type: "password", Username: username, PasswordHash: hash, Enabled: true}}}
+	a := account{ID: newID("acct"), DisplayName: display, Enabled: true, Roles: []string{"administrator"}, CreatedAt: now, Identities: []loginIdentity{{ID: newID("id"), Type: "password", Username: username, Email: email, PasswordHash: hash, Enabled: true}}}
 	next := s.accounts
 	next.Accounts = append([]account(nil), a)
 	if err := validateAccounts(next, s.roles); err != nil {
@@ -181,12 +182,12 @@ func (s *accountStore) createInitialAdmin(display, username, password string) (a
 }
 
 // SetupAdministrator performs first-run setup for trusted local automation.
-func SetupAdministrator(dir, display, username, password string) error {
+func SetupAdministrator(dir, display, username, email, password string) error {
 	accounts, err := loadAccountStore(dir)
 	if err != nil {
 		return err
 	}
-	_, err = accounts.createInitialAdmin(display, username, password)
+	_, err = accounts.createInitialAdmin(display, username, email, password)
 	return err
 }
 
@@ -244,9 +245,10 @@ func (s *accountStore) hasCapability(accountID, key string) bool {
 	return coreauth.HasCapability(s.capabilities(accountID), key)
 }
 
-func (s *accountStore) createAccount(display, username, password string, roles []string) (account, error) {
+func (s *accountStore) createAccount(display, username, email, password string, roles []string) (account, error) {
 	display = strings.TrimSpace(display)
 	username = strings.TrimSpace(username)
+	email = strings.TrimSpace(email)
 	if display == "" || username == "" || len(password) < 7 {
 		return account{}, errors.New("display name, username and a password of at least 7 characters are required")
 	}
@@ -259,7 +261,7 @@ func (s *accountStore) createAccount(display, username, password string, roles [
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	a := account{ID: newID("acct"), DisplayName: display, Enabled: true, Roles: dedupeStrings(roles), CreatedAt: time.Now().UTC(), Identities: []loginIdentity{{ID: newID("id"), Type: "password", Username: username, PasswordHash: hash, Enabled: true}}}
+	a := account{ID: newID("acct"), DisplayName: display, Enabled: true, Roles: dedupeStrings(roles), CreatedAt: time.Now().UTC(), Identities: []loginIdentity{{ID: newID("id"), Type: "password", Username: username, Email: email, PasswordHash: hash, Enabled: true}}}
 	next := s.accounts
 	next.Accounts = append(append([]account(nil), s.accounts.Accounts...), a)
 	if err := validateAccounts(next, s.roles); err != nil {
@@ -722,7 +724,7 @@ func (a *app) accessAction(w http.ResponseWriter, r *http.Request) {
 	msg := "Access settings updated."
 	switch q.Action {
 	case "create-account":
-		_, err = a.accounts.createAccount(q.DisplayName, q.Username, q.Password, q.Roles)
+		_, err = a.accounts.createAccount(q.DisplayName, q.Username, q.Email, q.Password, q.Roles)
 		msg = "Account created."
 	case "update-account":
 		if q.Enabled == nil {

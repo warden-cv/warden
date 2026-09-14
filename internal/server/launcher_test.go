@@ -134,7 +134,7 @@ func TestApplicationIsMountedAtAppAndAssetsRemainStable(t *testing.T) {
 
 func TestLauncherConfigRequiresAdminCSRFAndReplacesAtomically(t *testing.T) {
 	a := launcherTestApp(t)
-	account, err := a.accounts.createInitialAdmin("Admin", "admin", "administrator-password")
+	account, err := a.accounts.createInitialAdmin("Admin", "admin", "admin@example.com", "administrator-password")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,13 +185,13 @@ func TestLauncherConfigRequiresAdminCSRFAndReplacesAtomically(t *testing.T) {
 
 func TestProductSettingsPermissionDoesNotGrantLauncherAdministration(t *testing.T) {
 	a := launcherTestApp(t)
-	if _, err := a.accounts.createInitialAdmin("Admin", "admin", "administrator-password"); err != nil {
+	if _, err := a.accounts.createInitialAdmin("Admin", "admin", "admin@example.com", "administrator-password"); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.accounts.setRole("settings-only", "Settings only", []string{"settings.manage"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.accounts.createAccount("Settings", "settings", "settings-password", []string{"settings-only"}); err != nil {
+	if _, err := a.accounts.createAccount("Settings", "settings", "admin@example.com", "settings-password", []string{"settings-only"}); err != nil {
 		t.Fatal(err)
 	}
 	loginRequest := httptest.NewRequest(http.MethodPost, "http://warden/api/login", nil)
