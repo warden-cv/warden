@@ -314,6 +314,9 @@ func (a *app) startDurableAgentRun(id, accountID, conversationID, prompt, worksp
 		return err
 	}
 	if _, err = tx.Exec("INSERT INTO agent_runs(id,account_id,conversation_id,state,prompt,started_at) VALUES(?,?,?,'running',?,?)", id, accountID, conversationID, prompt, now); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "constraint") || strings.Contains(strings.ToLower(err.Error()), "unique") {
+			return errors.New("agent is already running for this conversation")
+		}
 		return err
 	}
 	return tx.Commit()

@@ -330,6 +330,11 @@ var databaseMigrations = []databaseMigration{
 		);
 		CREATE UNIQUE INDEX launcher_instances_sort_idx ON launcher_instances(sort_order);`,
 	},
+	{
+		version: 12,
+		name:    "at most one running agent run per conversation",
+		sql:     `CREATE UNIQUE INDEX agent_runs_one_running ON agent_runs(account_id,conversation_id) WHERE state='running';`,
+	},
 }
 
 func openDatabase(configDir string) (*sql.DB, error) {
