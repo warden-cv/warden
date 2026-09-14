@@ -44,6 +44,7 @@ type app struct {
 	oauth       *oauthStateStore
 	runMu       sync.Mutex
 	activeRuns  map[string]*activeRun
+	startMu     sync.Mutex
 	// test hooks (nil in production) inject persistence failures deterministically.
 	failAgentRunEvent  func(runID, kind string) error
 	failFinishAgentRun func(runID string) error

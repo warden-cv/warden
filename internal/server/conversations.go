@@ -295,6 +295,12 @@ func supersedeDurableAssistantPrefixes(events []durableAgentEvent) []durableAgen
 }
 
 func (a *app) startDurableAgentRun(id, accountID, conversationID, prompt, workspace, provider, model string) error {
+	// The one-running-run guard is a read-then-write across a SQLite
+	// transaction; concurrent starts must serialize so the loser deterministically
+	// observes the winner's committed row (and returns the clean conflict)
+	// instead of a SQLITE_BUSY failure from a stale read snapshot.
+	a.startMu.Lock()
+	defer a.startMu.Unlock()
 	now := time.Now().UnixMilli()
 	tx, err := a.db.Begin()
 	if err != nil {
