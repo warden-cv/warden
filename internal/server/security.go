@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	coreauth "github.com/gantry-tools/gantry-core/auth"
 )
 
 type totpEnrollment struct {
@@ -77,7 +79,7 @@ func (a *app) security(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		_, identity, _ := a.accounts.identityByID(sess.IdentityID)
 		env := a.config.environmentSnapshot().Accounts[sess.AccountID]
-		jsonOut(w, map[string]any{"account": publicAccount(acct), "currentIdentity": identityView{ID: identity.ID, Type: identity.Type, Username: identity.Username, Email: identity.Email, Enabled: identity.Enabled, TOTPEnabled: identity.TOTPEnabled, RecoveryCodes: len(identity.RecoveryCodeHashes)}, "googleEnabled": a.googleReady(), "sessions": a.auth.listSessions(sess.AccountID), "currentSession": a.auth.currentSessionID(r), "environment": sortedEnvironment(env)})
+		jsonOut(w, map[string]any{"account": publicAccount(acct), "currentIdentity": identityView{ID: identity.ID, Type: identity.Type, Username: identity.Username, Email: identity.Email, Enabled: identity.Enabled, TOTPEnabled: identity.TOTPEnabled, RecoveryCodes: len(identity.RecoveryCodeHashes)}, "googleEnabled": a.googleReady(), "sessions": a.auth.listSessions(sess.AccountID), "currentSession": coreauth.DisplaySessionID(a.auth.currentSessionID(r)), "environment": sortedEnvironment(env)})
 		return
 	}
 	if r.Method != http.MethodPost {
