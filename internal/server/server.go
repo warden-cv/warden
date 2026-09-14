@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -12,9 +13,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	coreauth "github.com/gantry-tools/gantry-core/auth"
@@ -122,8 +125,24 @@ func Run(cfg Config) error {
 	mux := a.routes(static)
 	srv := &http.Server{Addr: cfg.Listen, Handler: securityHeaders(httpBoundary(proxyTrust(cfg.TrustProxy, mux))), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	log.Printf("Warden %s listening on http://%s (root %s)", cfg.Version, cfg.Listen, f.root)
+	// Graceful shutdown: on SIGINT/SIGTERM stop active agent runs (cancelling
+	// the child process group and persisting `interrupted`) before the HTTP
+	// server and database close. Without this, a service stop orphans the
+	// agent child process, which keeps running and billing the provider.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		a.stopActiveRuns()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
 	defer a.stopActiveRuns()
-	return srv.ListenAndServe()
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 func (a *app) routes(static http.Handler) *http.ServeMux {
