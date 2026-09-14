@@ -125,10 +125,14 @@ func (s *accountStore) empty() bool {
 	return s.model.Empty()
 }
 
-func (s *accountStore) findPassword(username string) (account, loginIdentity, bool) {
+func (s *accountStore) findPassword(identifier string) (account, loginIdentity, bool) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return account{}, loginIdentity{}, false
+	}
 	for _, candidate := range s.model.Accounts() {
 		for _, identity := range candidate.Identities {
-			if candidate.Enabled && identity.Enabled && identity.Type == "password" && strings.EqualFold(identity.Username, strings.TrimSpace(username)) {
+			if candidate.Enabled && identity.Enabled && identity.Type == "password" && (strings.EqualFold(identity.Username, identifier) || strings.EqualFold(identity.Email, identifier)) {
 				return candidate, identity, true
 			}
 		}
