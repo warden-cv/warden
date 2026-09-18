@@ -24,7 +24,7 @@ func permissionTestApp(t *testing.T) (*app, account, session, *http.Cookie) {
 	if _, err := accounts.createInitialAdmin("Admin", "admin", "admin@example.com", "administrator-password"); err != nil {
 		t.Fatal(err)
 	}
-	user, err := accounts.createAccount("Restricted", "restricted", "admin@example.com", "restricted-password", []string{"user"})
+	user, err := accounts.createAccount("Restricted", "restricted", "restricted@example.com", "restricted-password", []string{"user"})
 	if err != nil {
 		t.Fatal(err)
 	}

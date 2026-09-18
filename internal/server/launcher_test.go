@@ -191,7 +191,7 @@ func TestProductSettingsPermissionDoesNotGrantLauncherAdministration(t *testing.
 	if err := a.accounts.setRole("settings-only", "Settings only", []string{"settings.manage"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.accounts.createAccount("Settings", "settings", "admin@example.com", "settings-password", []string{"settings-only"}); err != nil {
+	if _, err := a.accounts.createAccount("Settings", "settings", "settings@example.com", "settings-password", []string{"settings-only"}); err != nil {
 		t.Fatal(err)
 	}
 	loginRequest := httptest.NewRequest(http.MethodPost, "http://warden/api/login", nil)

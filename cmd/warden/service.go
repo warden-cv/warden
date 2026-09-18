@@ -577,6 +577,24 @@ func buildWardenUnit(exe string, opts serviceOptions) string {
 	return header + content
 }
 
+// InstalledConfigDir returns the configuration directory recorded by the
+// installed managed service unit. The boolean is false when Warden is not
+// installed. A present but foreign, malformed or modified unit is an error so
+// destructive CLI operations never fall back to a different directory.
+func InstalledConfigDir() (string, bool, error) {
+	meta, err := readManagedUnit(userUnitPath("warden.service"))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("cannot use installed service configuration: %w", err)
+	}
+	if strings.TrimSpace(meta.config) == "" {
+		return "", false, fmt.Errorf("installed service records no configuration directory")
+	}
+	return meta.config, true, nil
+}
+
 func readManagedUnit(path string) (unitMeta, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

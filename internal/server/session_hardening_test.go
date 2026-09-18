@@ -16,7 +16,7 @@ func TestSessionsAreBoundedAndIdentityStateIsRechecked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := accounts.createAccount("Backup Admin", "backup-admin", "admin@example.com", "administrator-password", []string{"administrator"}); err != nil {
+	if _, err := accounts.createAccount("Backup Admin", "backup-admin", "backup-admin@example.com", "administrator-password", []string{"administrator"}); err != nil {
 		t.Fatal(err)
 	}
 	auth := newAuth(accounts, false, dir)

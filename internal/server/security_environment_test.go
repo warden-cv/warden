@@ -23,7 +23,7 @@ func TestAccountCanManageOwnPersistentEnvironment(t *testing.T) {
 	if _, err := accounts.createInitialAdmin("Admin", "admin", "admin@example.com", "administrator-password"); err != nil {
 		t.Fatal(err)
 	}
-	user, err := accounts.createAccount("User", "user", "admin@example.com", "ordinary-user-password", nil)
+	user, err := accounts.createAccount("User", "user", "user@example.com", "ordinary-user-password", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

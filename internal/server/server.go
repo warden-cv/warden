@@ -175,7 +175,7 @@ func (a *app) setup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "setup already complete", 409)
 		return
 	}
-	var q struct{ DisplayName, Username, Email, Password, SetupToken string }
+	var q struct{ Username, Email, Password, Confirm, SetupToken string }
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&q) != nil {
 		http.Error(w, "invalid json", 400)
 		return
@@ -184,7 +184,21 @@ func (a *app) setup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid setup token", 403)
 		return
 	}
-	acct, err := a.accounts.createInitialAdmin(q.DisplayName, q.Username, q.Email, q.Password)
+	q.Username = strings.TrimSpace(q.Username)
+	q.Email = strings.TrimSpace(q.Email)
+	if q.Username == "" {
+		http.Error(w, "username is required", 400)
+		return
+	}
+	if q.Email == "" || !strings.Contains(q.Email, "@") {
+		http.Error(w, "a valid email is required", 400)
+		return
+	}
+	if q.Password != q.Confirm {
+		http.Error(w, "passwords do not match", 400)
+		return
+	}
+	acct, err := a.accounts.createInitialAdmin(q.Username, q.Username, q.Email, q.Password)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
 		return

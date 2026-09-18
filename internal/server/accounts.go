@@ -728,7 +728,11 @@ func (a *app) accessAction(w http.ResponseWriter, r *http.Request) {
 	msg := "Access settings updated."
 	switch q.Action {
 	case "create-account":
-		_, err = a.accounts.createAccount(q.DisplayName, q.Username, q.Email, q.Password, q.Roles)
+		if strings.TrimSpace(q.Username) == "" || strings.TrimSpace(q.Email) == "" {
+			err = errors.New("username and email are required")
+		} else {
+			_, err = a.accounts.createAccount(q.Username, q.Username, q.Email, q.Password, q.Roles)
+		}
 		msg = "Account created."
 	case "update-account":
 		if q.Enabled == nil {

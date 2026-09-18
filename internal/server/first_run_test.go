@@ -45,7 +45,7 @@ func TestFirstRunSetupCreatesRecoverableAdministratorAndUnlocksManagement(t *tes
 	}
 
 	setup := httptest.NewRecorder()
-	setupRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/setup", strings.NewReader(`{"DisplayName":"Administrator","Username":"admin","Password":"administrator-password"}`))
+	setupRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/setup", strings.NewReader(`{"Username":"admin","Email":"admin@example.com","Password":"administrator-password","Confirm":"administrator-password"}`))
 	setupRequest.RemoteAddr = "127.0.0.1:1234"
 	a.setup(setup, setupRequest)
 	if setup.Code != http.StatusOK {

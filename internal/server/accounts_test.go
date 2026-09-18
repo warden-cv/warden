@@ -71,7 +71,7 @@ func TestCapabilitiesAndLastAdministratorInvariant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := store.createAccount("Developer", "dev", "admin@example.com", "developer-password", nil)
+	user, err := store.createAccount("Developer", "dev", "dev@example.com", "developer-password", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestAccountIdentityAndDeletionInvariants(t *testing.T) {
 	if _, err := store.deleteAccount(admin.ID); err == nil {
 		t.Fatal("deleted final administrator")
 	}
-	user, err := store.createAccount("User", "user", "admin@example.com", "1234567890password", []string{"user"})
+	user, err := store.createAccount("User", "user", "user@example.com", "1234567890password", []string{"user"})
 	if err != nil {
 		t.Fatal(err)
 	}
