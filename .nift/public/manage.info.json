@@ -11,6 +11,10 @@
   "pagination-template": "",
   "pagination-separator": "",
   "pagination-pages": 0,
-  "dependencies": ["content/manage.html"],
+  "project-fingerprint": "",
+  "hierarchy-fingerprint": "",
+  "dependencies": [
+    "content/manage.html"
+  ],
   "reqs": []
 }
