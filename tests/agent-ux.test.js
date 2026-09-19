@@ -134,6 +134,7 @@ function run(ctx, code, vars) {
   if (vars) { for (const k of Object.keys(vars)) ctx[k] = vars[k]; }
   return vm.runInContext(code, ctx);
 }
+const settle = (ms = 10) => new Promise((r) => setTimeout(r, ms));
 
 // Any asynchronous rejection after a test has been counted must still produce
 // a nonzero process result, never be silently masked.
@@ -833,6 +834,61 @@ test('workspace-less session runs against the server default root', async () => 
   if (run(ctx, "$('#agent-run').disabled") || run(ctx, "$('#editor-agent-run').disabled")) throw new Error('workspace-less session disabled Run');
   await run(ctx, 'runAgent("default root")');
   if (!sent || sent.workspace !== '') throw new Error('workspace-less run did not submit the default-root marker');
+});
+
+// Both Warden Copy session controls (standalone and embedded editor) share
+// the Cortex interaction contract: Copy session -> ✓ -> Copy session after
+// ~500ms, stable button width, no success toast, no checkmark on clipboard
+// failure, and no stale timer across repeated clicks.
+test('both Copy session controls show short-lived checkmark with stable width', async () => {
+  const ctx = loadContext();
+  let writes = 0;
+  ctx.navigator = { clipboard: { writeText: async (t) => { writes++; ctx.__copied = t; } } };
+  run(ctx, "agentSessions={a:{id:'a',workspace:'/w',events:[{kind:'user',text:'hello'},{kind:'assistant',text:'world'}],busy:false,attachments:[]}};activeAgentSessionId='a'");
+  for (const sel of ['#agent-copy-session', '#editor-agent-copy-session']) {
+    run(ctx, `$('${sel}').textContent='Copy session'`);
+    await run(ctx, `copyAgentSession($('${sel}'))`);
+    if (run(ctx, `$('${sel}').textContent`) !== '✓') throw new Error(sel + ' did not show the checkmark');
+    if (!run(ctx, `$('${sel}').style.width`)) throw new Error(sel + ' must pin the button width during the checkmark');
+  }
+  if (writes !== 2) throw new Error('expected exactly two clipboard writes, got ' + writes);
+  if (run(ctx, '__copied') !== 'You:\nhello\n\nAgent:\nworld') throw new Error('clipboard payload mismatch: ' + JSON.stringify(run(ctx, '__copied')));
+  await settle(600);
+  for (const sel of ['#agent-copy-session', '#editor-agent-copy-session']) {
+    if (run(ctx, `$('${sel}').textContent`) !== 'Copy session') throw new Error(sel + ' did not restore the label within ~500ms');
+    if (run(ctx, `$('${sel}').style.width`)) throw new Error(sel + ' must release the pinned width after restoring');
+  }
+  // The success toast must not appear (Cortex contract removes the copy toast).
+  if (ctx.toastCalls.some((m) => /copied/i.test(String(m)))) throw new Error('copy success emitted a toast');
+});
+
+test('Copy session shows no checkmark on clipboard failure', async () => {
+  const ctx = loadContext();
+  ctx.navigator = { clipboard: { writeText: async () => { throw new Error('blocked'); } } };
+  run(ctx, "agentSessions={a:{id:'a',workspace:'/w',events:[{kind:'user',text:'hello'}],busy:false,attachments:[]}};activeAgentSessionId='a'");
+  run(ctx, "$('#agent-copy-session').textContent='Copy session'");
+  let threw = false;
+  try { await run(ctx, 'copyAgentSession($(\'#agent-copy-session\'))'); } catch (e) { threw = true; }
+  if (threw !== true) throw new Error('clipboard failure must reject the copy promise');
+  if (run(ctx, "$('#agent-copy-session').textContent") !== 'Copy session') throw new Error('clipboard failure must not show the checkmark');
+  if (run(ctx, "$('#agent-copy-session').style.width")) throw new Error('clipboard failure must not pin the button width');
+});
+
+test('repeated Copy session clicks do not leave stale timers', async () => {
+  const ctx = loadContext();
+  ctx.navigator = { clipboard: { writeText: async () => {} } };
+  run(ctx, "agentSessions={a:{id:'a',workspace:'/w',events:[{kind:'user',text:'hello'}],busy:false,attachments:[]}};activeAgentSessionId='a'");
+  run(ctx, "$('#agent-copy-session').textContent='Copy session'");
+  await run(ctx, 'copyAgentSession($(\'#agent-copy-session\'))');
+  await settle(150);
+  // A second click resets the timer: the label must still be the checkmark at
+  // 150ms after the second click (the first 500ms timer was cleared), then
+  // restore ~500ms after the second click.
+  await run(ctx, 'copyAgentSession($(\'#agent-copy-session\'))');
+  await settle(150);
+  if (run(ctx, "$('#agent-copy-session').textContent") !== '✓') throw new Error('second click did not reset the feedback timer');
+  await settle(450);
+  if (run(ctx, "$('#agent-copy-session').textContent") !== 'Copy session') throw new Error('label did not restore after the second click');
 });
 
 // Run all registered tests sequentially and print a final summary. A single
