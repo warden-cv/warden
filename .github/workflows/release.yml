@@ -20,6 +20,7 @@ jobs:
           go vet ./...
           node tests/agent-ux.test.js
           node tests/editor-layout.test.js
+          node tests/monitor-layout.test.js
           node tests/reload-guard.test.js
           node tests/session-navigation.test.js
           node tests/markdown-render-smoke.js
