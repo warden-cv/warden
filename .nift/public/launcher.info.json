@@ -16,5 +16,9 @@
   "dependencies": [
     "content/launcher.html"
   ],
-  "reqs": []
+  "reqs": [
+    "public/assets/css/launcher.css",
+    "public/assets/images/favicon.svg",
+    "public/assets/js/launcher.js"
+  ]
 }

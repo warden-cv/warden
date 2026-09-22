@@ -16,5 +16,9 @@
   "dependencies": [
     "content/manage.html"
   ],
-  "reqs": []
+  "reqs": [
+    "public/assets/css/manage.css",
+    "public/assets/images/favicon.svg",
+    "public/assets/js/manage.js"
+  ]
 }
