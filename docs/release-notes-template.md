@@ -8,6 +8,8 @@ Warden {{VERSION}} is a {{RELEASE_KIND}}.
 - A browser-based server administration and coding-agent surface: system
   administration pages, the Warden Agent and editor agent panel, sessions and
   authenticated, audited mutations.
+- First-class OpenCode Go provider support alongside OpenCode Zen, using
+  OpenCode's native provider routing.
 - Checksum-verified release archives for Linux, macOS and Windows on amd64 and
   arm64, plus `checksums.txt`.
 

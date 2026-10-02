@@ -72,6 +72,7 @@ func TestLoadConfigStoreAddsNewDefaultAIProvidersToExistingConfig(t *testing.T) 
 
 	legacy := defaultAIConfig()
 	delete(legacy.Providers, "opencode")
+	delete(legacy.Providers, "opencode-go")
 	legacy.Providers["custom"] = aiProviderConfig{Label: "Custom", BaseURL: "https://example.com/v1"}
 	if err := writeJSONAtomic(filepath.Join(dir, "ai.json"), legacy, true); err != nil {
 		t.Fatal(err)
@@ -84,6 +85,11 @@ func TestLoadConfigStoreAddsNewDefaultAIProvidersToExistingConfig(t *testing.T) 
 	cfg := store.aiSnapshot()
 	if _, ok := cfg.Providers["opencode"]; !ok {
 		t.Fatal("OpenCode Zen provider was not added to existing AI config")
+	}
+	if p, ok := cfg.Providers["opencode-go"]; !ok {
+		t.Fatal("OpenCode Go provider was not added to existing AI config")
+	} else if p.Label != "OpenCode Go" || p.DefaultModel != "deepseek-v4-flash" {
+		t.Fatalf("OpenCode Go provider = %#v", p)
 	}
 	if _, ok := cfg.Providers["custom"]; !ok {
 		t.Fatal("existing custom provider was lost during default-provider migration")

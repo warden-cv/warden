@@ -41,13 +41,14 @@ type agentProviderRuntime struct {
 }
 
 var agentProviderRuntimes = map[string]agentProviderRuntime{
-	"opencode":   {OpenCodeID: "opencode", FallbackModel: "deepseek-v4-flash", NeedsKey: true},
-	"openrouter": {OpenCodeID: "openrouter", FallbackModel: "anthropic/claude-sonnet-4.5", NeedsKey: true},
-	"openai":     {OpenCodeID: "openai", FallbackModel: "gpt-5.2", NeedsKey: true},
-	"anthropic":  {OpenCodeID: "anthropic", FallbackModel: "claude-sonnet-4-20250514", NeedsKey: true},
-	"gemini":     {OpenCodeID: "google", FallbackModel: "gemini-2.5-pro", NeedsKey: true},
-	"deepseek":   {OpenCodeID: "deepseek", FallbackModel: "deepseek-chat", NeedsKey: true},
-	"ollama":     {OpenCodeID: "ollama", NeedsKey: false},
+	"opencode":    {OpenCodeID: "opencode", FallbackModel: "deepseek-v4-flash", NeedsKey: true},
+	"opencode-go": {OpenCodeID: "opencode-go", FallbackModel: "deepseek-v4-flash", NeedsKey: true},
+	"openrouter":  {OpenCodeID: "openrouter", FallbackModel: "anthropic/claude-sonnet-4.5", NeedsKey: true},
+	"openai":      {OpenCodeID: "openai", FallbackModel: "gpt-5.2", NeedsKey: true},
+	"anthropic":   {OpenCodeID: "anthropic", FallbackModel: "claude-sonnet-4-20250514", NeedsKey: true},
+	"gemini":      {OpenCodeID: "google", FallbackModel: "gemini-2.5-pro", NeedsKey: true},
+	"deepseek":    {OpenCodeID: "deepseek", FallbackModel: "deepseek-chat", NeedsKey: true},
+	"ollama":      {OpenCodeID: "ollama", NeedsKey: false},
 }
 
 type agentRunRequest struct {
@@ -1300,6 +1301,19 @@ func zenProviderConfig(selected string) map[string]any {
 	return providers
 }
 
+// goModels is the OpenCode Go catalogue snapshot from
+// https://opencode.ai/zen/go/v1/models on 2026-10-02. OpenCode Go is a
+// first-class OpenCode provider, so Warden uses the native opencode-go provider
+// identity and does not override its per-model protocol routing.
+var goModels = []string{
+	"grok-4.6", "glm-5.3-flash", "glm-5.3", "glm-5.2", "glm-5.1", "gpt-5.6-luna",
+	"kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "longcat-2.0", "mimo-v2.5", "mimo-v2.5-pro",
+	"minimax-m3", "minimax-m2.7", "minimax-m2.5", "muse-spark-1.3-contributor", "muse-spark-1.2-contributor",
+	"qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus",
+	"deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp",
+	"hy4-preview", "hy3",
+}
+
 // agentRunArgs builds the opencode run argv. The prompt must follow the "--"
 // separator: "--file" is an array option in opencode run, so bare words placed
 // after it would otherwise be consumed as further file paths.
@@ -1526,6 +1540,10 @@ func (a *app) agentModels(w http.ResponseWriter, r *http.Request) {
 	}
 	if providerID == "opencode" {
 		jsonOut(w, map[string]any{"provider": providerID, "models": zenModels})
+		return
+	}
+	if providerID == "opencode-go" {
+		jsonOut(w, map[string]any{"provider": providerID, "models": goModels})
 		return
 	}
 	model := strings.TrimSpace(provider.DefaultModel)

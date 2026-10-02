@@ -367,6 +367,67 @@ func TestAgentModelsZenUsesHardcodedCatalogue(t *testing.T) {
 	}
 }
 
+func TestOpenCodeGoConfigUsesNativeProvider(t *testing.T) {
+	a, _, _, _ := permissionTestApp(t)
+	runtime, provider, err := a.agentProvider("opencode-go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.OpenCodeID != "opencode-go" || provider.Label != "OpenCode Go" || provider.DefaultModel != "deepseek-v4-flash" {
+		t.Fatalf("runtime=%#v provider=%#v", runtime, provider)
+	}
+	cfgBytes, err := a.agentOpenCodeConfig("opencode-go", runtime, provider, "deepseek-v4-flash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(cfgBytes, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["model"] != "opencode-go/deepseek-v4-flash" {
+		t.Fatalf("model = %#v", cfg["model"])
+	}
+	providers, _ := cfg["provider"].(map[string]any)
+	entry, _ := providers["opencode-go"].(map[string]any)
+	opts, _ := entry["options"].(map[string]any)
+	if opts["apiKey"] != "{env:WARDEN_AGENT_API_KEY}" {
+		t.Fatalf("options = %#v", opts)
+	}
+	if _, ok := opts["baseURL"]; ok {
+		t.Fatalf("OpenCode Go should use OpenCode's native provider routing, got %#v", opts)
+	}
+}
+
+func TestAgentModelsGoUsesHardcodedCatalogue(t *testing.T) {
+	a, _, _, cookie := permissionTestApp(t)
+	req := httptest.NewRequest(http.MethodGet, "http://warden/api/agent/models?provider=opencode-go", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	a.agentModels(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d", rec.Code)
+	}
+	var out struct {
+		Models []string `json:"models"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Models) != len(goModels) {
+		t.Fatalf("models = %d, want %d", len(out.Models), len(goModels))
+	}
+	found := false
+	for _, model := range out.Models {
+		if model == "deepseek-v4-flash" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("deepseek-v4-flash missing from OpenCode Go catalogue")
+	}
+}
+
 func TestAgentImageServesOnlySessionImages(t *testing.T) {
 	a, user, _, cookie := permissionTestApp(t)
 	dir := filepath.Join(a.cfg.ConfigDir, "agent-sessions", user.ID, "sess1", "data")
