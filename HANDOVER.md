@@ -347,9 +347,12 @@ Once Auth, Monitor, Explorer, Editor and Terminal are mature and security-tested
 - This does **not** mean the current auth model is ready for Internet exposure. Before recommending public deployment, design real roles/authority boundaries, session revocation/2FA as appropriate, and attack the admin mutation surfaces adversarially.
 ## Current release state
 
-- Released stable: **v0.1.2** (stable public preview).
-- Current development: **0.1.3** on `main`. An ordinary development build
-  reports 0.1.3 with commit `unknown`; release builds override the default via
+- Released stable: **v0.1.3** (stable public preview). First-class OpenCode Go
+  provider support (native `opencode-go` routing, curated model catalogue, and
+  automatic addition to existing AI configuration) and the Nift frontend
+  asset-path correction are included in this release.
+- Current development: **0.1.4** on `main`. An ordinary development build
+  reports 0.1.4 with commit `unknown`; release builds override the default via
   `-ldflags -X main.version` and are never confused with the released version.
 
 # Release procedure

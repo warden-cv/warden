@@ -14,7 +14,7 @@ import (
 	"github.com/warden-cv/warden/internal/server"
 )
 
-var version = "0.1.3"
+var version = "0.1.4"
 
 func main() {
 	if len(os.Args) > 1 {
